@@ -13,9 +13,9 @@ import re
 
 # --- CONFIGURATION ---
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
-MODELS_TO_TRY = ["gemini-3.5-flash", "gemini-1.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b"]
+MODELS_TO_TRY = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-2.0-flash-exp", "gemini-3.5-flash"]
 
-st.set_page_config(page_title="🎬 Movie Recap AI Pro V2.7", page_icon="🎬", layout="centered")
+st.set_page_config(page_title="🎬 Movie Recap AI Pro V2.8", page_icon="🎬", layout="centered")
 
 # Session State Persistence
 if 'myanmar_text' not in st.session_state: st.session_state.myanmar_text = None
@@ -24,9 +24,9 @@ if 'srt_data' not in st.session_state: st.session_state.srt_data = None
 if 'processing_done' not in st.session_state: st.session_state.processing_done = False
 
 # Version Tag
-st.caption("🚀 Version 2.7 - Original Bot Timing Logic (Exact Match)")
+st.caption("🚀 Version 2.8 - Double-Gemini Sync (Perfect Timing)")
 st.title("🎬 Movie Recap AI Pro")
-st.markdown("English Video/Audio → Myanmar Movie Recap Style (Thiha Voice) + Exact SRT")
+st.markdown("English Video/Audio → Myanmar Movie Recap Style + Gemini-Powered SRT")
 
 # --- SIDEBAR SETTINGS ---
 with st.sidebar:
@@ -40,7 +40,7 @@ with st.sidebar:
     
     api_keys = [k for k in [key1, key2, key3, key4, key5] if k]
     
-    st.success(f"🎯 Primary Model: {MODELS_TO_TRY[0]}")
+    st.success(f"🎯 Sync Model: {MODELS_TO_TRY[0]}")
     
     st.subheader("🔊 Voice Settings")
     voice_choice = st.selectbox("Select Voice", ["Thiha (Male)", "Nilar (Female)"], index=0)
@@ -50,10 +50,8 @@ with st.sidebar:
     pitch = st.slider("Pitch", 1, 100, 50)
     
     if st.button("🧹 Clear All Data"):
-        st.session_state.myanmar_text = None
-        st.session_state.audio_data = None
-        st.session_state.srt_data = None
-        st.session_state.processing_done = False
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
         st.rerun()
 
 # --- UTILITIES ---
@@ -74,73 +72,13 @@ def pitch_to_edge_hz(pitch):
     val = int((pitch - 50) * 2)
     return f"+{val}Hz" if val >= 0 else f"{val}Hz"
 
-def format_srt_time(seconds):
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    millis = int((seconds % 1) * 1000)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
-
-# --- ORIGINAL BOT SRT LOGIC (EXACT COPY) ---
-def generate_srt_bot_logic(text, audio_duration=None):
-    clean_text = text.strip()
-    if not clean_text: return ""
-    
-    # EXACT SPLITTING FROM BOT
-    sentence_endings = ['။', '. ', '! ', '? ', '\n']
-    sentences = [clean_text]
-    for ending in sentence_endings:
-        new_s = []
-        for s in sentences:
-            parts = s.split(ending)
-            new_s.extend(parts)
-        sentences = new_s
-    
-    sentences = [s.strip() for s in sentences if s.strip()]
-    if not sentences: sentences = [clean_text]
-    
-    srt_lines = []
-    current_time = 0.5  # Bot initial delay
-    
-    if audio_duration and audio_duration > 0:
-        total_chars = sum(len(s) for s in sentences)
-        # Available time after removing initial delay and small gaps (0.1s) between sentences
-        available_time = audio_duration - 0.5 - (len(sentences) * 0.1)
-        if available_time < 0: available_time = audio_duration
-        
-        for i, sentence in enumerate(sentences):
-            char_ratio = len(sentence) / total_chars
-            duration = available_time * char_ratio
-            
-            start_time = current_time
-            end_time = current_time + duration
-            current_time = end_time + 0.1 # Bot small gap
-            
-            srt_lines.extend([str(i + 1), f"{format_srt_time(start_time)} --> {format_srt_time(end_time)}", sentence, ""])
-    else:
-        # Fallback to estimated timing from Bot
-        for i, sentence in enumerate(sentences):
-            duration = max(2.0, len(sentence) / 15.0) 
-            start_time = current_time
-            end_time = current_time + duration
-            current_time = end_time + 0.3
-            srt_lines.extend([str(i + 1), f"{format_srt_time(start_time)} --> {format_srt_time(end_time)}", sentence, ""])
-            
-    return "\n".join(srt_lines)
-
-async def _generate_audio(text, output_path, v_id, s, p):
-    rate = speed_to_edge_rate(s)
-    p_hz = pitch_to_edge_hz(p)
-    communicate = edge_tts.Communicate(text, v_id, rate=rate, pitch=p_hz)
-    await communicate.save(output_path)
-
 def gemini_generate_auto(contents, keys):
     last_error = ""
     for key in keys:
         for model in MODELS_TO_TRY:
             try:
                 url = f"{GEMINI_BASE_URL}/{model}:generateContent?key={key}"
-                payload = {"contents": contents, "generationConfig": {"temperature": 0.7, "maxOutputTokens": 8192}}
+                payload = {"contents": contents, "generationConfig": {"temperature": 0.3, "maxOutputTokens": 8192}}
                 response = requests.post(url, json=payload, timeout=300)
                 if response.status_code == 429: break 
                 if response.status_code == 404: continue 
@@ -152,21 +90,45 @@ def gemini_generate_auto(contents, keys):
                 continue
     raise Exception(f"All keys and models failed. Last error: {last_error}")
 
-def transcribe_and_translate(file_path, file_type, duration_sec, keys):
+def translate_step(file_path, file_type, duration_sec, keys):
     mime_type = "audio/mp3" if file_type == "audio" else "video/mp4"
-    duration_info = f"\n- TARGET LENGTH: {int(duration_sec)} seconds recap style." if duration_sec else ""
     prompt = f"""You are a professional movie recap expert and Myanmar translator. 
 Translate the content into Myanmar language in the dramatic storytelling style of "Thiha Voice".
-- NO extra content.
 - Dramatic tone (voice ကြမ်းကြမ်း၊ ဆွဲဆွဲငင်ငင်).
-- Use phrases like "ဆိုပြီး...", "ဒီမှာတော့...".{duration_info}
-Write ENTIRELY in Myanmar language in paragraphs."""
+- Use phrases like "ဆိုပြီး...", "ဒီမှာတော့...".
+Write ENTIRELY in Myanmar language."""
     with open(file_path, 'rb') as f:
         file_data = base64.b64encode(f.read()).decode('utf-8')
     contents = [{"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mime_type": mime_type, "data": file_data}}]}]
     return gemini_generate_auto(contents, keys)
 
-def smooth_progress(bar, text_element, start_val, end_val, label, speed=0.03):
+def sync_srt_step(audio_path, script_text, keys):
+    # This step uses Gemini to "listen" to the generated audio and align it with the script
+    with open(audio_path, 'rb') as f:
+        audio_data = base64.b64encode(f.read()).decode('utf-8')
+    
+    prompt = f"""You are an expert SRT subtitle creator. 
+I will provide a Myanmar audio file and its corresponding script.
+Your task is to listen to the audio and generate a perfectly timed SRT file.
+- Use the EXACT text from the script provided below.
+- Ensure the timestamps (00:00:00,000) match the spoken words exactly.
+- Keep each subtitle line short and readable.
+
+SCRIPT:
+{script_text}
+
+Output ONLY the SRT content."""
+
+    contents = [{"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mime_type": "audio/mp3", "data": audio_data}}]}]
+    return gemini_generate_auto(contents, keys)
+
+async def _generate_audio(text, output_path, v_id, s, p):
+    rate = speed_to_edge_rate(s)
+    p_hz = pitch_to_edge_hz(p)
+    communicate = edge_tts.Communicate(text, v_id, rate=rate, pitch=p_hz)
+    await communicate.save(output_path)
+
+def smooth_progress(bar, text_element, start_val, end_val, label, speed=0.02):
     for i in range(start_val, end_val + 1):
         bar.progress(i)
         text_element.text(f"⏳ {label} ({i}%)")
@@ -184,34 +146,33 @@ if uploaded_file is not None:
             status_text = st.empty()
             
             try:
-                # Step 1: Prep (1-15%)
-                smooth_progress(progress_bar, status_text, 0, 15, "ဖိုင်ကို စစ်ဆေးနေပါတယ်...")
+                # Step 1: Prep (1-10%)
+                smooth_progress(progress_bar, status_text, 0, 10, "ဖိုင်ကို စစ်ဆေးနေပါတယ်...")
                 suffix = "." + uploaded_file.name.split(".")[-1]
                 with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tfile:
                     tfile.write(uploaded_file.read())
                     temp_path = tfile.name
                 duration = get_duration(temp_path)
                 
-                # Step 2: AI (16-60%)
-                status_text.text(f"⏳ Gemini AI ဖြင့် ဘာသာပြန်နေပါတယ်... (16%)")
+                # Step 2: Translate (11-40%)
+                status_text.text("⏳ Gemini AI ဖြင့် ဘာသာပြန်နေပါတယ်... (11%)")
                 ftype = "video" if suffix.lower() in [".mp4", ".mov", ".avi"] else "audio"
-                st.session_state.myanmar_text = transcribe_and_translate(temp_path, ftype, duration, api_keys)
-                smooth_progress(progress_bar, status_text, 16, 60, "Gemini AI ဖြင့် ဘာသာပြန်နေပါတယ်...")
+                st.session_state.myanmar_text = translate_step(temp_path, ftype, duration, api_keys)
+                smooth_progress(progress_bar, status_text, 11, 40, "Gemini AI ဖြင့် ဘာသာပြန်နေပါတယ်...")
                 
-                # Step 3: Audio Generation (61-90%)
-                status_text.text("⏳ အသံဖိုင် ဖန်တီးနေပါတယ်... (61%)")
+                # Step 3: Audio (41-70%)
+                status_text.text("⏳ အသံဖိုင် (TTS) ထုတ်နေပါတယ်... (41%)")
                 audio_output = tempfile.mktemp(suffix='.mp3')
                 asyncio.run(_generate_audio(st.session_state.myanmar_text, audio_output, voice_id, speed, pitch))
                 if os.path.exists(audio_output):
                     with open(audio_output, "rb") as f:
                         st.session_state.audio_data = f.read()
-                smooth_progress(progress_bar, status_text, 61, 90, "အသံဖိုင် ဖန်တီးနေပါတယ်...")
+                smooth_progress(progress_bar, status_text, 41, 70, "အသံဖိုင် (TTS) ထုတ်နေပါတယ်...")
                 
-                # Step 4: SRT Generation (91-100%)
-                status_text.text("⏳ Subtitle (SRT) ဖိုင်ကို Bot Logic ဖြင့် တွက်ချက်နေပါတယ်... (91%)")
-                audio_dur = get_duration(audio_output) if os.path.exists(audio_output) else None
-                st.session_state.srt_data = generate_srt_bot_logic(st.session_state.myanmar_text, audio_duration=audio_dur)
-                smooth_progress(progress_bar, status_text, 91, 100, "Subtitle ဖိုင် ဖန်တီးနေပါတယ်...")
+                # Step 4: Gemini Sync SRT (71-100%)
+                status_text.text("⏳ Gemini ဖြင့် Subtitle Timing များကို အတိအကျ ညှိနေပါတယ်... (71%)")
+                st.session_state.srt_data = sync_srt_step(audio_output, st.session_state.myanmar_text, api_keys)
+                smooth_progress(progress_bar, status_text, 71, 100, "Subtitle Timing များကို အတိအကျ ညှိနေပါတယ်...")
                 
                 st.session_state.processing_done = True
                 status_text.text("✅ အားလုံး ပြီးစီးပါပြီ! (100%)")
@@ -240,8 +201,8 @@ if st.session_state.processing_done:
     
     with col2:
         if st.session_state.srt_data:
-            st.info("📝 SRT Subtitle Ready")
+            st.info("📝 Gemini-Synced SRT Ready")
             st.download_button("📥 Download SRT (CapCut)", st.session_state.srt_data, file_name="recap_subtitle.srt", mime="text/plain")
 
 st.markdown("---")
-st.caption("Developed for Myanmar Movie Recap Creators | Version 2.7 (Original Bot Logic)")
+st.caption("Developed for Myanmar Movie Recap Creators | Version 2.8 (Double-Gemini Workflow)")
