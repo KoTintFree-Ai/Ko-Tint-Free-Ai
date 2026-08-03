@@ -9,20 +9,23 @@ import requests
 import asyncio
 import edge_tts
 import subprocess
+import re
 
 # --- CONFIGURATION ---
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
-DEFAULT_MODEL = "gemini-3.5-flash"
+MODELS_TO_TRY = ["gemini-3.5-flash", "gemini-1.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b"]
 
-st.set_page_config(page_title="🎬 Movie Recap AI", page_icon="🎬", layout="centered")
+st.set_page_config(page_title="🎬 Movie Recap AI Pro V2", page_icon="🎬", layout="centered")
 
-st.title("🎬 Movie Recap AI Translator")
-st.markdown("English Video/Audio ကို Myanmar Movie Recap Style (Thiha Voice) ပြောင်းလဲပေးမည့် Website")
+# Version Tag to verify update
+st.caption("🚀 Version 2.0 - SRT & Progress Enabled")
+st.title("🎬 Movie Recap AI Pro")
+st.markdown("English Video/Audio → Myanmar Movie Recap Style (Thiha Voice) + SRT")
 
 # --- SIDEBAR SETTINGS ---
 with st.sidebar:
     st.header("⚙️ Settings")
-    st.subheader("🔑 Gemini API Keys")
+    st.subheader("🔑 Gemini API Keys (5 slots)")
     key1 = st.text_input("API Key 1", type="password")
     key2 = st.text_input("API Key 2", type="password")
     key3 = st.text_input("API Key 3", type="password")
@@ -31,7 +34,7 @@ with st.sidebar:
     
     api_keys = [k for k in [key1, key2, key3, key4, key5] if k]
     
-    model_name = st.text_input("Model Name", value=DEFAULT_MODEL)
+    st.success(f"🎯 Primary Model: {MODELS_TO_TRY[0]}")
     
     st.subheader("🔊 Voice Settings")
     voice_choice = st.selectbox("Select Voice", ["Thiha (Male)", "Nilar (Female)"], index=0)
@@ -64,48 +67,88 @@ async def _generate_audio(text, output_path, v_id, s, p):
     communicate = edge_tts.Communicate(text, v_id, rate=rate, pitch=p_hz)
     await communicate.save(output_path)
 
-def gemini_generate_with_rotation(contents, keys, model):
-    last_error = ""
-    for i, key in enumerate(keys):
-        try:
-            url = f"{GEMINI_BASE_URL}/{model}:generateContent?key={key}"
-            payload = {"contents": contents, "generationConfig": {"temperature": 0.7, "maxOutputTokens": 8192}}
-            response = requests.post(url, json=payload, timeout=300)
-            
-            if response.status_code == 429:
-                st.warning(f"⚠️ Key {i+1} is rate limited. Trying next key...")
-                continue
-                
-            response.raise_for_status()
-            result = response.json()
-            return result['candidates'][0]['content']['parts'][0]['text']
-        except Exception as e:
-            last_error = str(e)
-            st.warning(f"⚠️ Key {i+1} failed: {last_error}. Trying next key...")
-            continue
+def generate_srt(text, output_path, audio_duration=None):
+    clean_text = text.strip()
+    if not clean_text: return False
     
-    raise Exception(f"All API Keys failed. Last error: {last_error}")
+    # Split by Myanmar sentence markers
+    sentence_endings = ['။', '. ', '! ', '? ', '\n']
+    sentences = [clean_text]
+    for ending in sentence_endings:
+        new_s = []
+        for s in sentences:
+            parts = s.split(ending)
+            new_s.extend(parts)
+        sentences = new_s
+    
+    sentences = [s.strip() for s in sentences if s.strip()]
+    if not sentences: sentences = [clean_text]
+    
+    def format_srt_time(seconds):
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        millis = int((seconds % 1) * 1000)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
-def transcribe_and_translate(file_path, file_type, duration_sec, keys, model):
+    srt_lines = []
+    current_time = 0.5
+    
+    if audio_duration and audio_duration > 0:
+        total_chars = sum(len(s) for s in sentences)
+        available_time = audio_duration - 0.5 - (len(sentences) * 0.1)
+        if available_time < 0: available_time = audio_duration
+        
+        for i, sentence in enumerate(sentences):
+            char_ratio = len(sentence) / total_chars
+            duration = available_time * char_ratio
+            start_time = current_time
+            end_time = current_time + duration
+            current_time = end_time + 0.1
+            srt_lines.extend([str(i+1), f"{format_srt_time(start_time)} --> {format_srt_time(end_time)}", sentence, ""])
+    else:
+        for i, sentence in enumerate(sentences):
+            duration = max(2.0, len(sentence) / 15.0)
+            start_time = current_time
+            end_time = current_time + duration
+            current_time = end_time + 0.3
+            srt_lines.extend([str(i+1), f"{format_srt_time(start_time)} --> {format_srt_time(end_time)}", sentence, ""])
+    
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write("\n".join(srt_lines))
+    return True
+
+def gemini_generate_auto(contents, keys):
+    last_error = ""
+    for key in keys:
+        for model in MODELS_TO_TRY:
+            try:
+                url = f"{GEMINI_BASE_URL}/{model}:generateContent?key={key}"
+                payload = {"contents": contents, "generationConfig": {"temperature": 0.7, "maxOutputTokens": 8192}}
+                response = requests.post(url, json=payload, timeout=300)
+                if response.status_code == 429: break 
+                if response.status_code == 404: continue 
+                response.raise_for_status()
+                result = response.json()
+                return result['candidates'][0]['content']['parts'][0]['text']
+            except Exception as e:
+                last_error = str(e)
+                continue
+    raise Exception(f"All keys and models failed. Last error: {last_error}")
+
+def transcribe_and_translate(file_path, file_type, duration_sec, keys):
     mime_type = "audio/mp3" if file_type == "audio" else "video/mp4"
     duration_info = f"\n- TARGET LENGTH: {int(duration_sec)} seconds recap style." if duration_sec else ""
-    
     prompt = f"""You are a professional movie recap expert and Myanmar translator. 
 Translate the content into Myanmar language in the dramatic storytelling style of "Thiha Voice".
 - NO extra content.
 - Dramatic tone (voice ကြမ်းကြမ်း၊ ဆွဲဆွဲငင်ငင်).
 - Use phrases like "ဆိုပြီး...", "ဒီမှာတော့...".{duration_info}
-Write ENTIRELY in Myanmar language."""
-
-    file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-    
-    if file_size_mb < 19:
-        with open(file_path, 'rb') as f:
-            file_data = base64.b64encode(f.read()).decode('utf-8')
-        contents = [{"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mime_type": mime_type, "data": file_data}}]}]
-        return gemini_generate_with_rotation(contents, keys, model)
-    else:
-        return "⚠️ File size > 20MB is not supported in this version. Please use smaller files."
+Write ENTIRELY in Myanmar language in paragraphs."""
+    with open(file_path, 'rb') as f:
+        file_data = base64.b64encode(f.read()).decode('utf-8')
+    contents = [{"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mime_type": mime_type, "data": file_data}}]}]
+    return gemini_generate_auto(contents, keys)
 
 # --- MAIN UI ---
 uploaded_file = st.file_uploader("ဗီဒီယို သို့မဟုတ် အော်ဒီယိုဖိုင် ရွေးချယ်ပါ", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"])
@@ -115,46 +158,62 @@ if uploaded_file is not None:
         st.warning("⚠️ Sidebar မှာ အနည်းဆုံး API Key တစ်ခု ထည့်ပေးပါ")
     else:
         if st.button("🚀 Start Processing"):
-            with st.status("🔄 အလုပ်လုပ်နေပါတယ်... ခဏစောင့်ပေးပါ", expanded=True) as status:
-                try:
-                    # Save uploaded file to temp
-                    suffix = "." + uploaded_file.name.split(".")[-1]
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tfile:
-                        tfile.write(uploaded_file.read())
-                        temp_path = tfile.name
-                    
-                    st.write("📊 File Duration စစ်ဆေးနေပါတယ်...")
-                    duration = get_duration(temp_path)
-                    
-                    st.write("🤖 Gemini AI နဲ့ ဘာသာပြန်နေပါတယ်...")
-                    ftype = "video" if suffix.lower() in [".mp4", ".mov", ".avi"] else "audio"
-                    myanmar_text = transcribe_and_translate(temp_path, ftype, duration, api_keys, model_name)
-                    
-                    st.subheader("🇲🇲 Myanmar Recap Text")
-                    st.write(myanmar_text)
-                    
-                    st.write("🔊 အသံဖိုင် ဖန်တီးနေပါတယ်...")
-                    audio_output = tempfile.mktemp(suffix='.mp3')
-                    asyncio.run(_generate_audio(myanmar_text, audio_output, voice_id, speed, pitch))
-                    
-                    if os.path.exists(audio_output) and os.path.getsize(audio_output) > 0:
-                        st.subheader("🔊 Myanmar Audio")
-                        st.audio(audio_output)
-                        
-                        with open(audio_output, "rb") as f:
-                            st.download_button("📥 Download Audio", f, file_name="recap_audio.mp3")
-                    else:
-                        st.error("❌ အသံဖိုင် ဖန်တီးရာတွင် အမှားအယွင်းရှိခဲ့ပါသည်။")
-                    
-                    status.update(label="✅ အားလုံး ပြီးစီးပါပြီ!", state="complete")
-                    st.balloons()
-                    
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
-                finally:
-                    # Cleanup
-                    if 'temp_path' in locals() and os.path.exists(temp_path): os.remove(temp_path)
-                    if 'audio_output' in locals() and os.path.exists(audio_output): os.remove(audio_output)
+            # Progress Bar and Status
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            try:
+                # Step 1: File Prep (10%)
+                status_text.text("📊 အဆင့် ၁: ဖိုင်ကို စစ်ဆေးနေပါတယ်... (10%)")
+                progress_bar.progress(10)
+                suffix = "." + uploaded_file.name.split(".")[-1]
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tfile:
+                    tfile.write(uploaded_file.read())
+                    temp_path = tfile.name
+                duration = get_duration(temp_path)
+                
+                # Step 2: AI Translation (50%)
+                status_text.text(f"🤖 အဆင့် ၂: Gemini AI ဖြင့် ဘာသာပြန်နေပါတယ်... (50%)")
+                progress_bar.progress(50)
+                ftype = "video" if suffix.lower() in [".mp4", ".mov", ".avi"] else "audio"
+                myanmar_text = transcribe_and_translate(temp_path, ftype, duration, api_keys)
+                
+                st.subheader("🇲🇲 Myanmar Recap Text")
+                st.write(myanmar_text)
+                
+                # Step 3: Audio Generation (80%)
+                status_text.text("🔊 အဆင့် ၃: အသံဖိုင် ဖန်တီးနေပါတယ်... (80%)")
+                progress_bar.progress(80)
+                audio_output = tempfile.mktemp(suffix='.mp3')
+                asyncio.run(_generate_audio(myanmar_text, audio_output, voice_id, speed, pitch))
+                
+                if os.path.exists(audio_output):
+                    st.subheader("🔊 Myanmar Audio")
+                    st.audio(audio_output)
+                    with open(audio_output, "rb") as f:
+                        st.download_button("📥 Download Audio", f, file_name="recap_audio.mp3")
+                
+                # Step 4: SRT Generation (95%)
+                status_text.text("📝 အဆင့် ၄: Subtitle ဖိုင် ဖန်တီးနေပါတယ်... (95%)")
+                progress_bar.progress(95)
+                srt_output = tempfile.mktemp(suffix='.srt')
+                audio_dur = get_duration(audio_output) if os.path.exists(audio_output) else None
+                if generate_srt(myanmar_text, srt_output, audio_duration=audio_dur):
+                    st.subheader("📝 SRT Subtitle")
+                    with open(srt_output, "rb") as f:
+                        st.download_button("📥 Download SRT (CapCut)", f, file_name="recap_subtitle.srt", key="srt_download")
+                
+                # Step 5: Complete (100%)
+                status_text.text("✅ အားလုံး ပြီးစီးပါပြီ! (100%)")
+                progress_bar.progress(100)
+                st.balloons()
+                
+            except Exception as e:
+                st.error(f"❌ Error: {str(e)}")
+            finally:
+                if 'temp_path' in locals() and os.path.exists(temp_path): os.remove(temp_path)
+                if 'audio_output' in locals() and os.path.exists(audio_output): os.remove(audio_output)
+                if 'srt_output' in locals() and os.path.exists(srt_output): os.remove(srt_output)
 
 st.markdown("---")
-st.caption("Developed for Myanmar Movie Recap Creators | Powered by Gemini & Edge TTS")
+st.caption("Developed for Myanmar Movie Recap Creators | Version 2.0")
