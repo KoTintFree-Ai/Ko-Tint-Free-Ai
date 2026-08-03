@@ -15,18 +15,18 @@ import re
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 MODELS_TO_TRY = ["gemini-3.5-flash", "gemini-1.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b"]
 
-st.set_page_config(page_title="🎬 Movie Recap AI Pro V2.1", page_icon="🎬", layout="centered")
+st.set_page_config(page_title="🎬 Movie Recap AI Pro V2.2", page_icon="🎬", layout="centered")
 
-# Session State Initialization to prevent data loss on download/refresh
+# Session State Initialization
 if 'myanmar_text' not in st.session_state: st.session_state.myanmar_text = None
 if 'audio_data' not in st.session_state: st.session_state.audio_data = None
 if 'srt_data' not in st.session_state: st.session_state.srt_data = None
 if 'processing_done' not in st.session_state: st.session_state.processing_done = False
 
 # Version Tag
-st.caption("🚀 Version 2.1 - Persistent Data & Smooth Progress")
+st.caption("🚀 Version 2.2 - Improved SRT Timing Accuracy")
 st.title("🎬 Movie Recap AI Pro")
-st.markdown("English Video/Audio → Myanmar Movie Recap Style (Thiha Voice) + SRT")
+st.markdown("English Video/Audio → Myanmar Movie Recap Style (Thiha Voice) + Precise SRT")
 
 # --- SIDEBAR SETTINGS ---
 with st.sidebar:
@@ -80,18 +80,16 @@ async def _generate_audio(text, output_path, v_id, s, p):
     communicate = edge_tts.Communicate(text, v_id, rate=rate, pitch=p_hz)
     await communicate.save(output_path)
 
-def generate_srt(text, audio_duration=None):
+def generate_precise_srt(text, audio_duration=None):
     clean_text = text.strip()
     if not clean_text: return ""
-    sentence_endings = ['။', '. ', '! ', '? ', '\n']
-    sentences = [clean_text]
-    for ending in sentence_endings:
-        new_s = []
-        for s in sentences:
-            parts = s.split(ending)
-            new_s.extend(parts)
-        sentences = new_s
+    
+    # Improved sentence splitting for Myanmar language
+    # Split by common sentence endings and logical pauses
+    delimiters = r'[။\n!?;]+'
+    sentences = re.split(delimiters, clean_text)
     sentences = [s.strip() for s in sentences if s.strip()]
+    
     if not sentences: sentences = [clean_text]
     
     def format_srt_time(seconds):
@@ -102,25 +100,41 @@ def generate_srt(text, audio_duration=None):
         return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
     srt_lines = []
-    current_time = 0.5
+    current_time = 0.3 # Start slightly earlier
+    
     if audio_duration and audio_duration > 0:
+        # Calculate total weight (longer sentences get more time)
         total_chars = sum(len(s) for s in sentences)
-        available_time = audio_duration - 0.5 - (len(sentences) * 0.1)
-        if available_time < 0: available_time = audio_duration
+        # We leave 0.5s at the end for safety
+        usable_time = audio_duration - 0.5 
+        
         for i, sentence in enumerate(sentences):
+            # Calculate duration based on character length ratio
             char_ratio = len(sentence) / total_chars
-            duration = available_time * char_ratio
+            duration = usable_time * char_ratio
+            
+            # Ensure minimum duration for readability
+            duration = max(1.2, duration)
+            
             start_time = current_time
-            end_time = current_time + duration
-            current_time = end_time + 0.1
+            end_time = min(audio_duration, current_time + duration)
+            
+            # If this isn't the last sentence, add a tiny gap
+            if i < len(sentences) - 1:
+                current_time = end_time + 0.05
+            else:
+                current_time = end_time
+            
             srt_lines.extend([str(i+1), f"{format_srt_time(start_time)} --> {format_srt_time(end_time)}", sentence, ""])
     else:
+        # Fallback if audio duration is unknown
         for i, sentence in enumerate(sentences):
-            duration = max(2.0, len(sentence) / 15.0)
+            duration = max(2.0, len(sentence) / 10.0) # Assume 10 chars per second
             start_time = current_time
             end_time = current_time + duration
             current_time = end_time + 0.3
             srt_lines.extend([str(i+1), f"{format_srt_time(start_time)} --> {format_srt_time(end_time)}", sentence, ""])
+            
     return "\n".join(srt_lines)
 
 def gemini_generate_auto(contents, keys):
@@ -149,13 +163,13 @@ Translate the content into Myanmar language in the dramatic storytelling style o
 - NO extra content.
 - Dramatic tone (voice ကြမ်းကြမ်း၊ ဆွဲဆွဲငင်ငင်).
 - Use phrases like "ဆိုပြီး...", "ဒီမှာတော့...".{duration_info}
-Write ENTIRELY in Myanmar language in paragraphs."""
+Write ENTIRELY in Myanmar language in short, clear paragraphs."""
     with open(file_path, 'rb') as f:
         file_data = base64.b64encode(f.read()).decode('utf-8')
     contents = [{"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mime_type": mime_type, "data": file_data}}]}]
     return gemini_generate_auto(contents, keys)
 
-def smooth_progress(bar, text_element, start_val, end_val, label, speed=0.05):
+def smooth_progress(bar, text_element, start_val, end_val, label, speed=0.03):
     for i in range(start_val, end_val + 1):
         bar.progress(i)
         text_element.text(f"⏳ {label} ({i}%)")
@@ -197,9 +211,9 @@ if uploaded_file is not None:
                 smooth_progress(progress_bar, status_text, 61, 90, "အသံဖိုင် ဖန်တီးနေပါတယ်...")
                 
                 # Step 4: SRT (91-100%)
-                status_text.text(f"⏳ Subtitle ဖိုင် ဖန်တီးနေပါတယ်... (91%)")
+                status_text.text(f"⏳ Subtitle (SRT) ဖိုင်ကို အတိအကျ တွက်ချက်နေပါတယ်... (91%)")
                 audio_dur = get_duration(audio_output) if os.path.exists(audio_output) else None
-                st.session_state.srt_data = generate_srt(st.session_state.myanmar_text, audio_duration=audio_dur)
+                st.session_state.srt_data = generate_precise_srt(st.session_state.myanmar_text, audio_duration=audio_dur)
                 smooth_progress(progress_bar, status_text, 91, 100, "Subtitle ဖိုင် ဖန်တီးနေပါတယ်...")
                 
                 st.session_state.processing_done = True
@@ -212,20 +226,23 @@ if uploaded_file is not None:
             except Exception as e:
                 st.error(f"❌ Error: {str(e)}")
 
-# Display results from session state (Persistent)
+# Display results from session state
 if st.session_state.processing_done:
     st.markdown("---")
     st.subheader("🇲🇲 Myanmar Recap Result")
     st.write(st.session_state.myanmar_text)
     
-    if st.session_state.audio_data:
-        st.subheader("🔊 Myanmar Audio")
-        st.audio(st.session_state.audio_data, format="audio/mp3")
-        st.download_button("📥 Download Audio", st.session_state.audio_data, file_name="recap_audio.mp3", mime="audio/mp3")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.session_state.audio_data:
+            st.subheader("🔊 Myanmar Audio")
+            st.audio(st.session_state.audio_data, format="audio/mp3")
+            st.download_button("📥 Download Audio", st.session_state.audio_data, file_name="recap_audio.mp3", mime="audio/mp3")
     
-    if st.session_state.srt_data:
-        st.subheader("📝 SRT Subtitle")
-        st.download_button("📥 Download SRT (CapCut)", st.session_state.srt_data, file_name="recap_subtitle.srt", mime="text/plain")
+    with col2:
+        if st.session_state.srt_data:
+            st.subheader("📝 Precise SRT Subtitle")
+            st.download_button("📥 Download SRT (CapCut)", st.session_state.srt_data, file_name="recap_subtitle.srt", mime="text/plain")
 
 st.markdown("---")
-st.caption("Developed for Myanmar Movie Recap Creators | Version 2.1")
+st.caption("Developed for Myanmar Movie Recap Creators | Version 2.2")
