@@ -15,7 +15,7 @@ import re
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 MODELS_TO_TRY = ["gemini-3.5-flash", "gemini-1.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b"]
 
-st.set_page_config(page_title="🎬 Movie Recap AI Pro V2.4", page_icon="🎬", layout="centered")
+st.set_page_config(page_title="🎬 Movie Recap AI Pro V2.5", page_icon="🎬", layout="centered")
 
 # Session State Persistence
 if 'myanmar_text' not in st.session_state: st.session_state.myanmar_text = None
@@ -24,7 +24,7 @@ if 'srt_data' not in st.session_state: st.session_state.srt_data = None
 if 'processing_done' not in st.session_state: st.session_state.processing_done = False
 
 # Version Tag
-st.caption("🚀 Version 2.4 - Real-time Audio Sync (Perfect Timing)")
+st.caption("🚀 Version 2.5 - Fixed SubMaker Error (Manual Sync)")
 st.title("🎬 Movie Recap AI Pro")
 st.markdown("English Video/Audio → Myanmar Movie Recap Style (Thiha Voice) + Exact SRT")
 
@@ -74,43 +74,71 @@ def pitch_to_edge_hz(pitch):
     val = int((pitch - 50) * 2)
     return f"+{val}Hz" if val >= 0 else f"{val}Hz"
 
-# NEW: Real-time Sync Audio & SRT Generation
-async def generate_audio_and_srt_sync(text, audio_path, v_id, s, p):
+# MANUAL WordBoundary to SRT conversion for better compatibility
+async def generate_audio_and_srt_manual(text, audio_path, v_id, s, p):
     rate = speed_to_edge_rate(s)
     p_hz = pitch_to_edge_hz(p)
     communicate = edge_tts.Communicate(text, v_id, rate=rate, pitch=p_hz)
     
-    submaker = edge_tts.SubMaker()
+    word_boundaries = []
     with open(audio_path, "wb") as f:
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
                 f.write(chunk["data"])
             elif chunk["type"] == "WordBoundary":
-                submaker.feed(chunk)
+                # Collect timing and word data
+                word_boundaries.append({
+                    "start": chunk["offset"] / 10000000, # Convert to seconds
+                    "duration": chunk["duration"] / 10000000,
+                    "text": chunk["text"]
+                })
     
-    # Convert WebVTT format from SubMaker to SRT format
-    vtt_content = submaker.generate_subs()
-    srt_content = vtt_to_srt(vtt_content)
-    return srt_content
+    if not word_boundaries:
+        return ""
 
-def vtt_to_srt(vtt_content):
-    # Basic VTT to SRT conversion
-    lines = vtt_content.split('\n')
+    # Group words into sentences for better SRT readability
     srt_lines = []
     counter = 1
-    for line in lines:
-        if '-->' in line:
-            # Replace . with , for SRT compatibility
-            line = line.replace('.', ',')
-            # Remove leading 00: if present in some VTT formats
-            srt_lines.append(str(counter))
-            srt_lines.append(line)
-            counter += 1
-        elif line.strip() and not line.startswith('WEBVTT'):
-            srt_lines.append(line)
-        elif not line.strip() and srt_lines and srt_lines[-1] != "":
-            srt_lines.append("")
+    
+    # Simple grouping: Group words until a Myanmar sentence marker or a long pause
+    current_sentence = []
+    start_time = word_boundaries[0]["start"]
+    
+    for i, wb in enumerate(word_boundaries):
+        current_sentence.append(wb["text"])
+        end_time = wb["start"] + wb["duration"]
+        
+        # Condition to end a subtitle block: 
+        # 1. Myanmar sentence marker
+        # 2. End of list
+        # 3. Large gap between words (> 0.5s)
+        is_last = (i == len(word_boundaries) - 1)
+        has_marker = any(m in wb["text"] for m in ["။", "!", "?", " "])
+        large_gap = False
+        if not is_last:
+            large_gap = (word_boundaries[i+1]["start"] - end_time) > 0.5
+
+        if is_last or has_marker or large_gap or len(" ".join(current_sentence)) > 50:
+            sentence_text = "".join(current_sentence).strip()
+            if sentence_text:
+                srt_lines.append(str(counter))
+                srt_lines.append(f"{format_srt_time(start_time)} --> {format_srt_time(end_time)}")
+                srt_lines.append(sentence_text)
+                srt_lines.append("")
+                counter += 1
+            
+            if not is_last:
+                current_sentence = []
+                start_time = word_boundaries[i+1]["start"]
+                
     return "\n".join(srt_lines)
+
+def format_srt_time(seconds):
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millis = int((seconds % 1) * 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
 def gemini_generate_auto(contents, keys):
     last_error = ""
@@ -176,12 +204,12 @@ if uploaded_file is not None:
                 st.session_state.myanmar_text = transcribe_and_translate(temp_path, ftype, duration, api_keys)
                 smooth_progress(progress_bar, status_text, 16, 60, "Gemini AI ဖြင့် ဘာသာပြန်နေပါတယ်...")
                 
-                # Step 3: Audio & SRT Sync (61-100%)
+                # Step 3: Audio & SRT Manual Sync (61-100%)
                 status_text.text(f"⏳ အသံဖိုင်နှင့် Subtitle ကို အတိအကျ ညှိပြီး ထုတ်ပေးနေပါတယ်... (61%)")
                 audio_output = tempfile.mktemp(suffix='.mp3')
                 
-                # Using the NEW sync generation
-                st.session_state.srt_data = asyncio.run(generate_audio_and_srt_sync(st.session_state.myanmar_text, audio_output, voice_id, speed, pitch))
+                # Using the FIXED manual generation
+                st.session_state.srt_data = asyncio.run(generate_audio_and_srt_manual(st.session_state.myanmar_text, audio_output, voice_id, speed, pitch))
                 
                 if os.path.exists(audio_output):
                     with open(audio_output, "rb") as f:
@@ -218,4 +246,4 @@ if st.session_state.processing_done:
             st.download_button("📥 Download SRT (CapCut)", st.session_state.srt_data, file_name="recap_subtitle.srt", mime="text/plain")
 
 st.markdown("---")
-st.caption("Developed for Myanmar Movie Recap Creators | Version 2.4 (Real-time Sync)")
+st.caption("Developed for Myanmar Movie Recap Creators | Version 2.5 (Manual Sync)")
