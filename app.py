@@ -15,7 +15,7 @@ import re
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 MODELS_TO_TRY = ["gemini-3.5-flash", "gemini-1.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b"]
 
-st.set_page_config(page_title="🎬 Movie Recap AI Pro V2.6", page_icon="🎬", layout="centered")
+st.set_page_config(page_title="🎬 Movie Recap AI Pro V2.7", page_icon="🎬", layout="centered")
 
 # Session State Persistence
 if 'myanmar_text' not in st.session_state: st.session_state.myanmar_text = None
@@ -24,9 +24,9 @@ if 'srt_data' not in st.session_state: st.session_state.srt_data = None
 if 'processing_done' not in st.session_state: st.session_state.processing_done = False
 
 # Version Tag
-st.caption("🚀 Version 2.6 - Robust SRT System (Always Visible)")
+st.caption("🚀 Version 2.7 - Original Bot Timing Logic (Exact Match)")
 st.title("🎬 Movie Recap AI Pro")
-st.markdown("English Video/Audio → Myanmar Movie Recap Style (Thiha Voice) + SRT")
+st.markdown("English Video/Audio → Myanmar Movie Recap Style (Thiha Voice) + Exact SRT")
 
 # --- SIDEBAR SETTINGS ---
 with st.sidebar:
@@ -81,10 +81,12 @@ def format_srt_time(seconds):
     millis = int((seconds % 1) * 1000)
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
-# FALLBACK: Bot-style SRT logic
-def generate_srt_fallback(text, audio_duration=None):
+# --- ORIGINAL BOT SRT LOGIC (EXACT COPY) ---
+def generate_srt_bot_logic(text, audio_duration=None):
     clean_text = text.strip()
     if not clean_text: return ""
+    
+    # EXACT SPLITTING FROM BOT
     sentence_endings = ['။', '. ', '! ', '? ', '\n']
     sentences = [clean_text]
     for ending in sentence_endings:
@@ -93,80 +95,44 @@ def generate_srt_fallback(text, audio_duration=None):
             parts = s.split(ending)
             new_s.extend(parts)
         sentences = new_s
+    
     sentences = [s.strip() for s in sentences if s.strip()]
     if not sentences: sentences = [clean_text]
     
     srt_lines = []
-    current_time = 0.5
+    current_time = 0.5  # Bot initial delay
+    
     if audio_duration and audio_duration > 0:
         total_chars = sum(len(s) for s in sentences)
+        # Available time after removing initial delay and small gaps (0.1s) between sentences
         available_time = audio_duration - 0.5 - (len(sentences) * 0.1)
         if available_time < 0: available_time = audio_duration
+        
         for i, sentence in enumerate(sentences):
             char_ratio = len(sentence) / total_chars
             duration = available_time * char_ratio
+            
             start_time = current_time
             end_time = current_time + duration
-            current_time = end_time + 0.1
-            srt_lines.extend([str(i+1), f"{format_srt_time(start_time)} --> {format_srt_time(end_time)}", sentence, ""])
+            current_time = end_time + 0.1 # Bot small gap
+            
+            srt_lines.extend([str(i + 1), f"{format_srt_time(start_time)} --> {format_srt_time(end_time)}", sentence, ""])
     else:
+        # Fallback to estimated timing from Bot
         for i, sentence in enumerate(sentences):
-            duration = max(2.0, len(sentence) / 15.0)
+            duration = max(2.0, len(sentence) / 15.0) 
             start_time = current_time
             end_time = current_time + duration
             current_time = end_time + 0.3
-            srt_lines.extend([str(i+1), f"{format_srt_time(start_time)} --> {format_srt_time(end_time)}", sentence, ""])
+            srt_lines.extend([str(i + 1), f"{format_srt_time(start_time)} --> {format_srt_time(end_time)}", sentence, ""])
+            
     return "\n".join(srt_lines)
 
-# MAIN: Audio & SRT Sync with Fallback
-async def generate_audio_and_srt_pro(text, audio_path, v_id, s, p):
+async def _generate_audio(text, output_path, v_id, s, p):
     rate = speed_to_edge_rate(s)
     p_hz = pitch_to_edge_hz(p)
     communicate = edge_tts.Communicate(text, v_id, rate=rate, pitch=p_hz)
-    
-    word_boundaries = []
-    with open(audio_path, "wb") as f:
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                f.write(chunk["data"])
-            elif chunk["type"] == "WordBoundary":
-                word_boundaries.append({
-                    "start": chunk["offset"] / 10000000,
-                    "duration": chunk["duration"] / 10000000,
-                    "text": chunk["text"]
-                })
-    
-    # Try Manual Sync first
-    srt_content = ""
-    if word_boundaries:
-        srt_lines = []
-        counter = 1
-        current_sentence = []
-        start_time = word_boundaries[0]["start"]
-        for i, wb in enumerate(word_boundaries):
-            current_sentence.append(wb["text"])
-            end_time = wb["start"] + wb["duration"]
-            is_last = (i == len(word_boundaries) - 1)
-            has_marker = any(m in wb["text"] for m in ["။", "!", "?", " "])
-            large_gap = False
-            if not is_last:
-                large_gap = (word_boundaries[i+1]["start"] - end_time) > 0.5
-            if is_last or has_marker or large_gap or len(" ".join(current_sentence)) > 50:
-                sentence_text = "".join(current_sentence).strip()
-                if sentence_text:
-                    srt_lines.extend([str(counter), f"{format_srt_time(start_time)} --> {format_srt_time(end_time)}", sentence_text, ""])
-                    counter += 1
-                if not is_last:
-                    current_sentence = []
-                    start_time = word_boundaries[i+1]["start"]
-        srt_content = "\n".join(srt_lines)
-    
-    # If Manual Sync failed or is empty, use Fallback
-    if not srt_content:
-        audio_dur = get_duration(audio_path)
-        srt_content = generate_srt_fallback(text, audio_duration=audio_dur)
-        
-    return srt_content
+    await communicate.save(output_path)
 
 def gemini_generate_auto(contents, keys):
     last_error = ""
@@ -232,17 +198,20 @@ if uploaded_file is not None:
                 st.session_state.myanmar_text = transcribe_and_translate(temp_path, ftype, duration, api_keys)
                 smooth_progress(progress_bar, status_text, 16, 60, "Gemini AI ဖြင့် ဘာသာပြန်နေပါတယ်...")
                 
-                # Step 3: Audio & SRT (61-100%)
-                status_text.text(f"⏳ အသံဖိုင်နှင့် Subtitle ကို အတိအကျ ညှိပြီး ထုတ်ပေးနေပါတယ်... (61%)")
+                # Step 3: Audio Generation (61-90%)
+                status_text.text("⏳ အသံဖိုင် ဖန်တီးနေပါတယ်... (61%)")
                 audio_output = tempfile.mktemp(suffix='.mp3')
-                
-                st.session_state.srt_data = asyncio.run(generate_audio_and_srt_pro(st.session_state.myanmar_text, audio_output, voice_id, speed, pitch))
-                
+                asyncio.run(_generate_audio(st.session_state.myanmar_text, audio_output, voice_id, speed, pitch))
                 if os.path.exists(audio_output):
                     with open(audio_output, "rb") as f:
                         st.session_state.audio_data = f.read()
+                smooth_progress(progress_bar, status_text, 61, 90, "အသံဖိုင် ဖန်တီးနေပါတယ်...")
                 
-                smooth_progress(progress_bar, status_text, 61, 100, "အသံဖိုင်နှင့် Subtitle ကို အတိအကျ ညှိပြီး ထုတ်ပေးနေပါတယ်...")
+                # Step 4: SRT Generation (91-100%)
+                status_text.text("⏳ Subtitle (SRT) ဖိုင်ကို Bot Logic ဖြင့် တွက်ချက်နေပါတယ်... (91%)")
+                audio_dur = get_duration(audio_output) if os.path.exists(audio_output) else None
+                st.session_state.srt_data = generate_srt_bot_logic(st.session_state.myanmar_text, audio_duration=audio_dur)
+                smooth_progress(progress_bar, status_text, 91, 100, "Subtitle ဖိုင် ဖန်တီးနေပါတယ်...")
                 
                 st.session_state.processing_done = True
                 status_text.text("✅ အားလုံး ပြီးစီးပါပြီ! (100%)")
@@ -254,7 +223,7 @@ if uploaded_file is not None:
             except Exception as e:
                 st.error(f"❌ Error: {str(e)}")
 
-# Display results from session state (Always check if processing is done)
+# Display results from session state
 if st.session_state.processing_done:
     st.markdown("---")
     st.subheader("🇲🇲 Myanmar Recap Result")
@@ -273,8 +242,6 @@ if st.session_state.processing_done:
         if st.session_state.srt_data:
             st.info("📝 SRT Subtitle Ready")
             st.download_button("📥 Download SRT (CapCut)", st.session_state.srt_data, file_name="recap_subtitle.srt", mime="text/plain")
-        else:
-            st.warning("📝 SRT Generation failed, please try again.")
 
 st.markdown("---")
-st.caption("Developed for Myanmar Movie Recap Creators | Version 2.6 (Robust SRT)")
+st.caption("Developed for Myanmar Movie Recap Creators | Version 2.7 (Original Bot Logic)")
