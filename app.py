@@ -13,10 +13,9 @@ import re
 
 # --- CONFIGURATION ---
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
-# Re-ordered for speed: 1.5-flash is generally the fastest and most reliable
 MODELS_TO_TRY = ["gemini-1.5-flash", "gemini-3.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b"]
 
-st.set_page_config(page_title="🎬 Movie Recap AI Turbo V3.3", page_icon="🎬", layout="centered")
+st.set_page_config(page_title="🎬 Movie Recap AI Turbo V3.5", page_icon="🎬", layout="centered")
 
 # Session State Persistence
 if 'myanmar_text' not in st.session_state: st.session_state.myanmar_text = None
@@ -25,9 +24,9 @@ if 'srt_data' not in st.session_state: st.session_state.srt_data = None
 if 'processing_done' not in st.session_state: st.session_state.processing_done = False
 
 # Version Tag
-st.caption("🚀 Version 3.3 - Turbo Edition (Max Speed)")
+st.caption("🚀 Version 3.5 - Myanmar Error Handling & Turbo Speed")
 st.title("🎬 Movie Recap AI Turbo")
-st.markdown("English Video/Audio → Myanmar Movie Recap Style + Fast Processing")
+st.markdown("English Video/Audio → Myanmar Movie Recap Style + Myanmar Support")
 
 # --- SIDEBAR SETTINGS ---
 with st.sidebar:
@@ -68,13 +67,19 @@ with st.sidebar:
 
 # --- UTILITIES ---
 def get_duration(file_path):
+    if not file_path or not os.path.exists(file_path):
+        return None
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file_path],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
         )
-        return float(result.stdout)
-    except: return None
+        duration_str = result.stdout.strip()
+        if duration_str:
+            return float(duration_str)
+        return None
+    except:
+        return None
 
 def speed_to_edge_rate(speed):
     val = int((speed - 50) * 2)
@@ -85,33 +90,58 @@ def pitch_to_edge_hz(pitch):
     return f"+{val}Hz" if val >= 0 else f"{val}Hz"
 
 def format_srt_time(seconds):
+    if seconds is None: seconds = 0.0
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
     secs = int(seconds % 60)
     millis = int((seconds % 1) * 1000)
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
-async def generate_audio_and_srt_turbo(text, audio_path, v_id, s, p, target_duration=0):
+def translate_error_to_myanmar(error_msg):
+    error_msg = str(error_msg).lower()
+    if "429" in error_msg or "quota" in error_msg:
+        return "❌ Gemini API ရဲ့ အသုံးပြုမှု ကန့်သတ်ချက် (Quota) ပြည့်သွားပါပြီ။ ကျေးဇူးပြု၍ နောက်ထပ် API Key တစ်ခုကို စမ်းကြည့်ပါ သို့မဟုတ် ခဏစောင့်ပြီးမှ ပြန်ကြိုးစားပါ။"
+    elif "401" in error_msg or "403" in error_msg or "invalid api key" in error_msg:
+        return "❌ ထည့်သွင်းထားတဲ့ Gemini API Key မှားယွင်းနေပါတယ်။ Sidebar မှာ API Key ကို ပြန်စစ်ပေးပါ။"
+    elif "404" in error_msg:
+        return "❌ ရွေးချယ်ထားတဲ့ Gemini Model ကို ရှာမတွေ့ပါဘူး။"
+    elif "timeout" in error_msg:
+        return "❌ ချိတ်ဆက်မှု ကြာမြင့်နေပါတယ်။ အင်တာနက်လိုင်းကို စစ်ဆေးပြီး ပြန်ကြိုးစားကြည့်ပါ။"
+    elif "connection" in error_msg:
+        return "❌ Google Server နဲ့ ချိတ်ဆက်လို့မရပါဘူး။ အင်တာနက်လိုင်း ပြန်စစ်ပေးပါ။"
+    elif "ffmpeg" in error_msg or "ffprobe" in error_msg:
+        return "❌ အသံဖိုင်ကြာချိန်ကို ညှိလို့မရပါဘူး။ (FFmpeg Error)"
+    elif "int() argument" in error_msg:
+        return "❌ အသံဖိုင်ကြာချိန် တွက်ချက်ရာမှာ အမှားအယွင်း ရှိနေပါတယ်။ (NoneType Error)"
+    else:
+        return f"❌ အမှားအယွင်းတစ်ခု ဖြစ်ပွားခဲ့ပါတယ်: {error_msg}"
+
+async def generate_audio_and_srt_v35(text, audio_path, v_id, s, p, target_duration=0):
     rate = speed_to_edge_rate(s)
     p_hz = pitch_to_edge_hz(p)
     communicate = edge_tts.Communicate(text, v_id, rate=rate, pitch=p_hz)
     
     temp_audio = tempfile.mktemp(suffix='.mp3')
     word_boundaries = []
-    with open(temp_audio, "wb") as f:
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                f.write(chunk["data"])
-            elif chunk["type"] == "WordBoundary":
-                word_boundaries.append({
-                    "start": chunk["offset"] / 10000000,
-                    "duration": chunk["duration"] / 10000000,
-                    "text": chunk["text"]
-                })
+    try:
+        with open(temp_audio, "wb") as f:
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    f.write(chunk["data"])
+                elif chunk["type"] == "WordBoundary":
+                    word_boundaries.append({
+                        "start": chunk["offset"] / 10000000,
+                        "duration": chunk["duration"] / 10000000,
+                        "text": chunk["text"]
+                    })
+    except Exception as e:
+        if os.path.exists(temp_audio): os.remove(temp_audio)
+        raise Exception(f"Audio Generation Error: {str(e)}")
     
     actual_duration = get_duration(temp_audio)
-    if not actual_duration or actual_duration == 0:
-        return "", None
+    if actual_duration is None or actual_duration == 0:
+        if os.path.exists(temp_audio): os.remove(temp_audio)
+        raise Exception("အသံဖိုင်မှ ကြာချိန်ကို ရှာမတွေ့ပါဘူး။")
 
     speed_multiplier = 1.0
     if target_duration > 0:
@@ -123,13 +153,15 @@ async def generate_audio_and_srt_turbo(text, audio_path, v_id, s, p, target_dura
                 "-filter:a", f"atempo={speed_multiplier}", 
                 audio_path
             ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        except:
+        except Exception as e:
             import shutil
             shutil.copy(temp_audio, audio_path)
             speed_multiplier = 1.0
     else:
         import shutil
         shutil.copy(temp_audio, audio_path)
+
+    final_dur = get_duration(audio_path) or actual_duration
 
     srt_lines = []
     counter = 1
@@ -155,7 +187,7 @@ async def generate_audio_and_srt_turbo(text, audio_path, v_id, s, p, target_dura
                     start_time = word_boundaries[i+1]["start"] / speed_multiplier
                     
     if os.path.exists(temp_audio): os.remove(temp_audio)
-    return "\n".join(srt_lines), get_duration(audio_path)
+    return "\n".join(srt_lines), final_dur
 
 def gemini_generate_auto(contents, keys):
     last_error = ""
@@ -173,7 +205,7 @@ def gemini_generate_auto(contents, keys):
             except Exception as e:
                 last_error = str(e)
                 continue
-    raise Exception(f"All keys and models failed. Last error: {last_error}")
+    raise Exception(last_error)
 
 def translate_content(file_path, file_type, target_sec, keys):
     mime_type = "audio/mp3" if file_type == "audio" else "video/mp4"
@@ -200,7 +232,6 @@ if uploaded_file is not None:
             progress_bar = st.progress(0)
             status_text = st.empty()
             try:
-                # INSTANT UPDATES (No artificial delay)
                 status_text.text("📊 အဆင့် ၁: ဖိုင်ကို စစ်ဆေးနေပါတယ်... (10%)")
                 progress_bar.progress(10)
                 suffix = "." + uploaded_file.name.split(".")[-1]
@@ -217,21 +248,23 @@ if uploaded_file is not None:
                 progress_bar.progress(80)
                 audio_output = tempfile.mktemp(suffix='.mp3')
                 st.session_state.srt_data, final_dur = asyncio.run(
-                    generate_audio_and_srt_turbo(st.session_state.myanmar_text, audio_output, voice_id, speed, pitch, total_target_sec)
+                    generate_audio_and_srt_v35(st.session_state.myanmar_text, audio_output, voice_id, speed, pitch, total_target_sec)
                 )
                 if os.path.exists(audio_output):
                     with open(audio_output, "rb") as f:
                         st.session_state.audio_data = f.read()
                 
                 progress_bar.progress(100)
-                status_text.text(f"✅ အားလုံး ပြီးစီးပါပြီ! ({int(final_dur)}s)")
+                status_text.text(f"✅ အားလုံး ပြီးစီးပါပြီ! ({int(final_dur if final_dur else 0)}s)")
                 st.session_state.processing_done = True
                 st.balloons()
                 
                 if os.path.exists(temp_path): os.remove(temp_path)
                 if os.path.exists(audio_output): os.remove(audio_output)
             except Exception as e:
-                st.error(f"❌ Error: {str(e)}")
+                st.error(translate_error_to_myanmar(e))
+            finally:
+                if 'temp_path' in locals() and os.path.exists(temp_path): os.remove(temp_path)
 
 # Display results
 if st.session_state.processing_done:
@@ -251,4 +284,4 @@ if st.session_state.processing_done:
             st.download_button("📥 Download SRT (CapCut)", st.session_state.srt_data, file_name="recap_subtitle.srt", mime="text/plain")
 
 st.markdown("---")
-st.caption("Developed for Myanmar Movie Recap Creators | Version 3.3 Turbo")
+st.caption("Developed for Myanmar Movie Recap Creators | Version 3.5 Turbo (Myanmar Error Support)")
