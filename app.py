@@ -12,7 +12,7 @@ import subprocess
 
 # --- CONFIGURATION ---
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
-GEMINI_MODEL = "gemini-1.5-flash" # Use 1.5-flash for stability, or gemini-3.5-flash if preferred
+GEMINI_MODEL = "gemini-3.5-flash" # Reverted to 3.5 as per user's specific API requirements
 
 st.set_page_config(page_title="🎬 Movie Recap AI", page_icon="🎬", layout="centered")
 
@@ -23,6 +23,7 @@ st.markdown("English Video/Audio ကို Myanmar Movie Recap Style (Thiha Voic
 with st.sidebar:
     st.header("⚙️ Settings")
     api_key = st.text_input("Gemini API Key", type="password", help="Get your key from https://aistudio.google.com/")
+    model_name = st.text_input("Model Name", value=GEMINI_MODEL)
     
     st.subheader("🔊 Voice Settings")
     voice_choice = st.selectbox("Select Voice", ["Thiha (Male)", "Nilar (Female)"], index=0)
@@ -55,15 +56,15 @@ async def _generate_audio(text, output_path, v_id, s, p):
     communicate = edge_tts.Communicate(text, v_id, rate=rate, pitch=p_hz)
     await communicate.save(output_path)
 
-def gemini_generate(contents, key):
-    url = f"{GEMINI_BASE_URL}/{GEMINI_MODEL}:generateContent?key={key}"
+def gemini_generate(contents, key, model):
+    url = f"{GEMINI_BASE_URL}/{model}:generateContent?key={key}"
     payload = {"contents": contents, "generationConfig": {"temperature": 0.7, "maxOutputTokens": 8192}}
     response = requests.post(url, json=payload, timeout=300)
     response.raise_for_status()
     result = response.json()
     return result['candidates'][0]['content']['parts'][0]['text']
 
-def transcribe_and_translate(file_path, file_type, duration_sec, key):
+def transcribe_and_translate(file_path, file_type, duration_sec, key, model):
     mime_type = "audio/mp3" if file_type == "audio" else "video/mp4"
     duration_info = f"\n- TARGET LENGTH: {int(duration_sec)} seconds recap style." if duration_sec else ""
     
@@ -80,7 +81,7 @@ Write ENTIRELY in Myanmar language."""
         with open(file_path, 'rb') as f:
             file_data = base64.b64encode(f.read()).decode('utf-8')
         contents = [{"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mime_type": mime_type, "data": file_data}}]}]
-        return gemini_generate(contents, key)
+        return gemini_generate(contents, key, model)
     else:
         # Simplified large file logic for Streamlit
         st.info("Uploading large file to Gemini...")
@@ -109,7 +110,7 @@ if uploaded_file is not None:
                     
                     st.write("🤖 Gemini AI နဲ့ ဘာသာပြန်နေပါတယ်...")
                     ftype = "video" if suffix in [".mp4", ".mov", ".avi"] else "audio"
-                    myanmar_text = transcribe_and_translate(temp_path, ftype, duration, api_key)
+                    myanmar_text = transcribe_and_translate(temp_path, ftype, duration, api_key, model_name)
                     
                     st.subheader("🇲🇲 Myanmar Recap Text")
                     st.write(myanmar_text)
@@ -137,3 +138,4 @@ if uploaded_file is not None:
 
 st.markdown("---")
 st.caption("Developed for Myanmar Movie Recap Creators | Powered by Gemini & Edge TTS")
+
