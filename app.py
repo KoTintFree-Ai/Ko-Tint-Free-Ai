@@ -12,7 +12,7 @@ import subprocess
 
 # --- CONFIGURATION ---
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
-GEMINI_MODEL = "gemini-3.5-flash" # Reverted to 3.5 as per user's specific API requirements
+DEFAULT_MODEL = "gemini-3.5-flash"
 
 st.set_page_config(page_title="🎬 Movie Recap AI", page_icon="🎬", layout="centered")
 
@@ -22,8 +22,16 @@ st.markdown("English Video/Audio ကို Myanmar Movie Recap Style (Thiha Voic
 # --- SIDEBAR SETTINGS ---
 with st.sidebar:
     st.header("⚙️ Settings")
-    api_key = st.text_input("Gemini API Key", type="password", help="Get your key from https://aistudio.google.com/")
-    model_name = st.text_input("Model Name", value=GEMINI_MODEL)
+    st.subheader("🔑 Gemini API Keys")
+    key1 = st.text_input("API Key 1", type="password")
+    key2 = st.text_input("API Key 2", type="password")
+    key3 = st.text_input("API Key 3", type="password")
+    key4 = st.text_input("API Key 4", type="password")
+    key5 = st.text_input("API Key 5", type="password")
+    
+    api_keys = [k for k in [key1, key2, key3, key4, key5] if k]
+    
+    model_name = st.text_input("Model Name", value=DEFAULT_MODEL)
     
     st.subheader("🔊 Voice Settings")
     voice_choice = st.selectbox("Select Voice", ["Thiha (Male)", "Nilar (Female)"], index=0)
@@ -56,15 +64,29 @@ async def _generate_audio(text, output_path, v_id, s, p):
     communicate = edge_tts.Communicate(text, v_id, rate=rate, pitch=p_hz)
     await communicate.save(output_path)
 
-def gemini_generate(contents, key, model):
-    url = f"{GEMINI_BASE_URL}/{model}:generateContent?key={key}"
-    payload = {"contents": contents, "generationConfig": {"temperature": 0.7, "maxOutputTokens": 8192}}
-    response = requests.post(url, json=payload, timeout=300)
-    response.raise_for_status()
-    result = response.json()
-    return result['candidates'][0]['content']['parts'][0]['text']
+def gemini_generate_with_rotation(contents, keys, model):
+    last_error = ""
+    for i, key in enumerate(keys):
+        try:
+            url = f"{GEMINI_BASE_URL}/{model}:generateContent?key={key}"
+            payload = {"contents": contents, "generationConfig": {"temperature": 0.7, "maxOutputTokens": 8192}}
+            response = requests.post(url, json=payload, timeout=300)
+            
+            if response.status_code == 429:
+                st.warning(f"⚠️ Key {i+1} is rate limited. Trying next key...")
+                continue
+                
+            response.raise_for_status()
+            result = response.json()
+            return result['candidates'][0]['content']['parts'][0]['text']
+        except Exception as e:
+            last_error = str(e)
+            st.warning(f"⚠️ Key {i+1} failed: {last_error}. Trying next key...")
+            continue
+    
+    raise Exception(f"All API Keys failed. Last error: {last_error}")
 
-def transcribe_and_translate(file_path, file_type, duration_sec, key, model):
+def transcribe_and_translate(file_path, file_type, duration_sec, keys, model):
     mime_type = "audio/mp3" if file_type == "audio" else "video/mp4"
     duration_info = f"\n- TARGET LENGTH: {int(duration_sec)} seconds recap style." if duration_sec else ""
     
@@ -81,20 +103,16 @@ Write ENTIRELY in Myanmar language."""
         with open(file_path, 'rb') as f:
             file_data = base64.b64encode(f.read()).decode('utf-8')
         contents = [{"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mime_type": mime_type, "data": file_data}}]}]
-        return gemini_generate(contents, key, model)
+        return gemini_generate_with_rotation(contents, keys, model)
     else:
-        # Simplified large file logic for Streamlit
-        st.info("Uploading large file to Gemini...")
-        # (For production, implement resumable upload here)
-        # For this demo, we'll suggest using files < 20MB or implement the full logic
-        return "⚠️ File size > 20MB logic needs full implementation. Please use smaller files for now."
+        return "⚠️ File size > 20MB is not supported in this version. Please use smaller files."
 
 # --- MAIN UI ---
 uploaded_file = st.file_uploader("ဗီဒီယို သို့မဟုတ် အော်ဒီယိုဖိုင် ရွေးချယ်ပါ", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"])
 
 if uploaded_file is not None:
-    if not api_key:
-        st.warning("⚠️ Sidebar မှာ Gemini API Key အရင်ထည့်ပေးပါ")
+    if not api_keys:
+        st.warning("⚠️ Sidebar မှာ အနည်းဆုံး API Key တစ်ခု ထည့်ပေးပါ")
     else:
         if st.button("🚀 Start Processing"):
             with st.status("🔄 အလုပ်လုပ်နေပါတယ်... ခဏစောင့်ပေးပါ", expanded=True) as status:
@@ -109,22 +127,24 @@ if uploaded_file is not None:
                     duration = get_duration(temp_path)
                     
                     st.write("🤖 Gemini AI နဲ့ ဘာသာပြန်နေပါတယ်...")
-                    ftype = "video" if suffix in [".mp4", ".mov", ".avi"] else "audio"
-                    myanmar_text = transcribe_and_translate(temp_path, ftype, duration, api_key, model_name)
+                    ftype = "video" if suffix.lower() in [".mp4", ".mov", ".avi"] else "audio"
+                    myanmar_text = transcribe_and_translate(temp_path, ftype, duration, api_keys, model_name)
                     
                     st.subheader("🇲🇲 Myanmar Recap Text")
                     st.write(myanmar_text)
                     
                     st.write("🔊 အသံဖိုင် ဖန်တီးနေပါတယ်...")
-                    audio_path = temp_path + ".mp3"
-                    asyncio.run(_generate_audio(myanmar_text, audio_path, voice_id, speed, pitch))
+                    audio_output = tempfile.mktemp(suffix='.mp3')
+                    asyncio.run(_generate_audio(myanmar_text, audio_output, voice_id, speed, pitch))
                     
-                    if os.path.exists(audio_path):
+                    if os.path.exists(audio_output) and os.path.getsize(audio_output) > 0:
                         st.subheader("🔊 Myanmar Audio")
-                        st.audio(audio_path)
+                        st.audio(audio_output)
                         
-                        with open(audio_path, "rb") as f:
+                        with open(audio_output, "rb") as f:
                             st.download_button("📥 Download Audio", f, file_name="recap_audio.mp3")
+                    else:
+                        st.error("❌ အသံဖိုင် ဖန်တီးရာတွင် အမှားအယွင်းရှိခဲ့ပါသည်။")
                     
                     status.update(label="✅ အားလုံး ပြီးစီးပါပြီ!", state="complete")
                     st.balloons()
@@ -134,8 +154,7 @@ if uploaded_file is not None:
                 finally:
                     # Cleanup
                     if 'temp_path' in locals() and os.path.exists(temp_path): os.remove(temp_path)
-                    if 'audio_path' in locals() and os.path.exists(audio_path): os.remove(audio_path)
+                    if 'audio_output' in locals() and os.path.exists(audio_output): os.remove(audio_output)
 
 st.markdown("---")
 st.caption("Developed for Myanmar Movie Recap Creators | Powered by Gemini & Edge TTS")
-
