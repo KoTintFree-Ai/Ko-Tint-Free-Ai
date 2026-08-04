@@ -14,11 +14,8 @@ import shutil
 
 # --- CONFIGURATION ---
 API_VERSIONS = ["v1beta", "v1"]
-MODELS_TO_TRY = [
-    "gemini-1.5-flash", 
-    "gemini-1.5-flash-8b", 
-    "gemini-1.5-pro"
-]
+# Standard models to try in order of preference
+DEFAULT_MODELS = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", "gemini-pro"]
 
 st.set_page_config(
     page_title="Movie Recap AI Pro V6.2", 
@@ -40,10 +37,11 @@ st.markdown("""
 
 # Session State Initialization
 def init_state():
-    keys = ['myanmar_text', 'audio_data', 'srt_data', 'video_data', 'base_frame', 'last_uploaded', 'processing_done']
+    keys = ['myanmar_text', 'audio_data', 'srt_data', 'video_data', 'base_frame', 'last_uploaded', 'processing_done', 'valid_keys_info']
     for k in keys:
         if k not in st.session_state: st.session_state[k] = None
     if st.session_state.processing_done is None: st.session_state.processing_done = False
+    if st.session_state.valid_keys_info is None: st.session_state.valid_keys_info = {}
     if 'blur_y_pos' not in st.session_state: st.session_state.blur_y_pos = 85.0
     if 'blur_h_size' not in st.session_state: st.session_state.blur_h_size = 10.0
     if 'sub_y_pos' not in st.session_state: st.session_state.sub_y_pos = 85.0
@@ -52,7 +50,7 @@ def init_state():
 init_state()
 
 st.title("🎬 Movie Recap AI Pro V6.2")
-st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Professional Version)")
+st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Stable API Version)")
 
 # --- HELPER: +/- BUTTONS ---
 def plus_minus_control(label, key, min_val, max_val, step=1.0):
@@ -69,16 +67,16 @@ def plus_minus_control(label, key, min_val, max_val, step=1.0):
 def translate_error(err_msg, status_code=None):
     err_msg = str(err_msg).lower()
     if "api_key_invalid" in err_msg or "invalid api key" in err_msg or status_code == 403:
-        return "API Key မမှန်ကန်ပါ။ (ကျေးဇူးပြု၍ Key ကို ပြန်စစ်ပေးပါ)"
+        return "API Key မမှန်ကန်ပါ။ (Key ကို သေချာပြန်စစ်ပြီး ကူးထည့်ပေးပါ)"
     if "quota" in err_msg or "429" in err_msg or status_code == 429:
-        return "API Key အသုံးပြုမှု ပမာဏ ပြည့်သွားပါပြီ။ (နောက်ထပ် Key တစ်ခု ပြောင်းသုံးပေးပါ)"
+        return "API Key အသုံးပြုမှု ပမာဏ ပြည့်သွားပါပြီ။ (ခဏစောင့်ပါ သို့မဟုတ် Key အသစ်ပြောင်းသုံးပါ)"
     if "location" in err_msg or "not supported" in err_msg:
-        return "သင်၏ ဒေသ (Region) တွင် ဤ API ကို အသုံးပြု၍မရပါ။ (VPN သုံးရန် လိုအပ်နိုင်ပါသည်)"
+        return "သင်၏ ဒေသ (Region) တွင် ဤ API ကို ပိတ်ထားပါသည်။ (VPN သုံးရန် လိုအပ်ပါသည်)"
     if "404" in err_msg or status_code == 404:
-        return "API URL ကို ရှာမတွေ့ပါ။ (Model အမည် သို့မဟုတ် URL လွဲချော်နေပါသည်)"
+        return "API URL သို့မဟုတ် Model အမည်ကို ရှာမတွေ့ပါ။ (URL လွဲချော်နေပါသည်)"
     if "safety" in err_msg or "blocked" in err_msg:
-        return "မူပိုင်ခွင့် သို့မဟုတ် လုံုံခြုံရေး စည်းကမ်းချက်များကြောင့် Google မှ ပိတ်ပင်လိုက်ပါသည်။"
-    return f"အမည်မသိ အမှားအယွင်းတစ်ခု ဖြစ်ပေါ်နေပါသည်။ ({err_msg})"
+        return "မူပိုင်ခွင့် သို့မဟုတ် လုံခြုံရေး စည်းကမ်းချက်များကြောင့် Google မှ ဘာသာပြန်ရန် ငြင်းဆိုလိုက်ပါသည်။"
+    return f"အမှားအယွင်းတစ်ခု ဖြစ်ပေါ်နေပါသည်။ ({err_msg})"
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -95,23 +93,31 @@ with st.sidebar:
         if not api_keys:
             st.error("API Key အရင်ထည့်ပေးပါ။")
         else:
+            st.session_state.valid_keys_info = {}
             for i, k in enumerate(api_keys):
-                st.write(f"--- Key {i+1} စစ်ဆေးနေသည် ---")
+                st.write(f"--- Key {i+1} ကို စစ်ဆေးနေသည် ---")
                 success = False
                 for ver in API_VERSIONS:
-                    url = f"https://generativelanguage.googleapis.com/{ver}/models/gemini-1.5-flash?key={k}"
+                    # Robust check: List models instead of calling a specific one
+                    url = f"https://generativelanguage.googleapis.com/{ver}/models?key={k}"
                     try:
-                        r = requests.get(url, timeout=10)
+                        r = requests.get(url, timeout=15)
                         if r.status_code == 200:
-                            st.success(f"✅ Key {i+1} အလုပ်လုပ်ပါသည်။ ({ver})")
-                            success = True
-                            break
+                            models_data = r.json().get('models', [])
+                            available_models = [m['name'].split('/')[-1] for m in models_data if 'generateContent' in m.get('supportedGenerationMethods', [])]
+                            if available_models:
+                                st.success(f"✅ Key {i+1} အလုပ်လုပ်ပါသည်။ (Version: {ver})")
+                                st.session_state.valid_keys_info[k] = {"version": ver, "models": available_models}
+                                success = True
+                                break
+                            else:
+                                st.warning(f"⚠️ Key {i+1} သည် အလုပ်လုပ်သော်လည်း အသုံးပြုနိုင်သော Model မရှိပါ။")
                         else:
                             try: msg = r.json().get('error', {}).get('message', r.text)
                             except: msg = r.text
-                            st.error(f"❌ Key {i+1} အမှား: {translate_error(msg, r.status_code)}")
+                            st.error(f"❌ Key {i+1} ({ver}) အမှား: {translate_error(msg, r.status_code)}")
                     except Exception as e:
-                        st.error(f"❌ Key {i+1} ချိတ်ဆက်မှု မအောင်မြင်ပါ: {translate_error(str(e))}")
+                        st.error(f"❌ Key {i+1} ({ver}) ချိတ်ဆက်မှု မအောင်မြင်ပါ: {translate_error(str(e))}")
                 if success: st.info(f"Key {i+1} ကို စိတ်ချစွာ အသုံးပြုနိုင်ပါသည်။")
 
     st.markdown("---")
@@ -322,9 +328,14 @@ if up:
             srt_res = None
             errors = []
             
+            # Use detected info if available, otherwise try all
             for k in api_keys:
-                for ver in API_VERSIONS:
-                    for m in MODELS_TO_TRY:
+                info = st.session_state.valid_keys_info.get(k)
+                versions = [info['version']] if info else API_VERSIONS
+                models = info['models'] if info else DEFAULT_MODELS
+                
+                for ver in versions:
+                    for m in models:
                         try:
                             url = f"https://generativelanguage.googleapis.com/{ver}/models/{m}:generateContent?key={k}"
                             r = requests.post(url, json={"contents":cont}, timeout=300)
