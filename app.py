@@ -64,30 +64,34 @@ def plus_minus_control(label, key, min_val, max_val, step=1.0):
     if key not in st.session_state:
         st.session_state[key] = float(min_val)
         
+    # Format value for display (remove .0 if it exists)
+    def fmt_val(v):
+        return str(int(v)) if float(v) == int(v) else str(round(v, 1))
+
     # Synchronization callbacks
     def on_slider_change():
         st.session_state[key] = st.session_state[f"sld_{key}"]
-        st.session_state[f"txt_{key}"] = str(st.session_state[key])
+        st.session_state[f"txt_{key}"] = fmt_val(st.session_state[key])
 
     def on_text_change():
         try:
             new_val = float(st.session_state[f"txt_{key}"])
             st.session_state[key] = float(np.clip(new_val, min_val, max_val))
             st.session_state[f"sld_{key}"] = st.session_state[key]
-            st.session_state[f"txt_{key}"] = str(st.session_state[key])
+            st.session_state[f"txt_{key}"] = fmt_val(st.session_state[key])
         except:
-            st.session_state[f"txt_{key}"] = str(st.session_state[key])
+            st.session_state[f"txt_{key}"] = fmt_val(st.session_state[key])
 
     def on_btn_click(delta):
         st.session_state[key] = float(np.clip(st.session_state[key] + delta, min_val, max_val))
         st.session_state[f"sld_{key}"] = st.session_state[key]
-        st.session_state[f"txt_{key}"] = str(st.session_state[key])
+        st.session_state[f"txt_{key}"] = fmt_val(st.session_state[key])
 
     # Sync widget states with master state
     if f"sld_{key}" not in st.session_state or st.session_state[f"sld_{key}"] != st.session_state[key]:
         st.session_state[f"sld_{key}"] = st.session_state[key]
-    if f"txt_{key}" not in st.session_state or st.session_state[f"txt_{key}"] != str(st.session_state[key]):
-        st.session_state[f"txt_{key}"] = str(st.session_state[key])
+    if f"txt_{key}" not in st.session_state or st.session_state[f"txt_{key}"] != fmt_val(st.session_state[key]):
+        st.session_state[f"txt_{key}"] = fmt_val(st.session_state[key])
 
     col1, col2, col3 = st.columns([1, 4, 1])
     with col1:
@@ -197,14 +201,14 @@ with st.sidebar:
     st.markdown("---")
     blur_s = st.checkbox("မူရင်းစာတန်းထိုး ဝါးရန် (Blur)", value=True)
     if blur_s:
-        b_y = plus_minus_control("ဝါးမည့်နေရာ (Y %)", "blur_y_pos", 0.0, 100.0, 0.5)
-        b_h = plus_minus_control("ဝါးမည့်အကျယ် (H %)", "blur_h_size", 0.5, 30.0, 0.1)
+        b_y = plus_minus_control("ဝါးမည့်နေရာ (Y %)", "blur_y_pos", 0, 100, 1)
+        b_h = plus_minus_control("ဝါးမည့်အကျယ် (H %)", "blur_h_size", 1, 30, 1)
 
     st.markdown("---")
     burn_s = st.checkbox("မြန်မာစာတန်းထိုး ထည့်ရန်", value=True)
     if burn_s:
         f_s = plus_minus_control("စာလုံးအရွယ်အစား", "font_size", 5, 100, 1)
-        s_y = plus_minus_control("စာတန်းထိုးနေရာ (Y %)", "sub_y_pos", 0.0, 100.0, 0.5)
+        s_y = plus_minus_control("စာတန်းထိုးနေရာ (Y %)", "sub_y_pos", 0, 100, 1)
 
     st.markdown("---")
     if st.button("✨ နေရာ အလိုအလျောက် ရှာရန်"):
@@ -419,28 +423,35 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     if os.path.exists(raw): os.remove(raw)
     return res_srt, get_dur(out_p)
 
-def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sy):
+def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sx, sy):
+    """
+    Construct FFmpeg filter string.
+    sx, sy are absolute pixel coordinates for the subtitle overlay.
+    """
     base_parts = []
     if mir: base_parts.append("hflip")
     if scl: base_parts.append("scale=1.06*iw:-1,crop=iw/1.06:ih/1.06")
     base_str = ",".join(base_parts) if base_parts else "null"
 
+    y_p = by / 100
+    h_p = bh / 100
+
     if not blr:
-        res = f"[0:v]{base_str}"
+        fc = f"[0:v]{base_str}[main]"
         if brn and sp and os.path.exists(sp):
-            res += f",overlay=0:0"
-        return res + "[v]"
+            fc += f";[main][1:v]overlay={sx}:{sy}[v]"
+        else:
+            fc += ";[main]null[v]"
+        return fc
     else:
-        y_p = by / 100
-        h_p = bh / 100
         fc = f"[0:v]{base_str}[preblur];"
         fc += f"[preblur]split[main][to_blur];"
         fc += f"[to_blur]crop=iw:ih*{h_p}:0:ih*{y_p},boxblur=15[blurred];"
+        fc += f"[main][blurred]overlay=0:H*{y_p}[postblur]"
         if brn and sp and os.path.exists(sp):
-            fc += f"[main][blurred]overlay=0:H*{y_p}[postblur];"
-            fc += f"[postblur][1:v]overlay=0:0[v]"
+            fc += f";[postblur][1:v]overlay={sx}:{sy}[v]"
         else:
-            fc += f"[main][blurred]overlay=0:H*{y_p}[v]"
+            fc += ";[postblur]null[v]"
         return fc
 
 # --- MAIN UI ---
@@ -492,13 +503,11 @@ if up:
         x_p = (w - sw) // 2
         y_p = int(h * (st.session_state.sub_y_pos / 100)) - (sh // 2)
         
-        # Note: Preview uses a slightly different filter logic for simplicity
-        fc = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, burn_s, sub_p, st.session_state.font_size, st.session_state.sub_y_pos)
-        # Fix preview overlay position in filter string
-        if burn_s:
-            fc = fc.replace("overlay=0:0", f"overlay={x_p}:{y_p}")
+        # Pass calculated coordinates directly to get_filter
+        fc = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, burn_s, sub_p, st.session_state.font_size, x_p, y_p)
+        
         filter_script_p = tempfile.mktemp(suffix=".txt")
-        filter_str = fc if burn_s else fc.replace("[postblur][1:v]overlay=0:0", "[postblur]")
+        filter_str = fc
         with open(filter_script_p, "w", encoding="utf-8") as f: f.write(filter_str)
         inputs = ["-i", bp, "-i", sub_p] if burn_s else ["-i", bp]
         if len(filter_str) < 2000:
@@ -635,7 +644,8 @@ FORMATTING RULES:
                         safe_spath = spath.replace('\\', '/').replace(':', '\\\\').replace("'", "'\\\\\''")
                         overlay_filters.append(f"movie='{safe_spath}'[s{i}];[v][s{i}]overlay={x_pos}:{y_pos}:enable='between(t,{seg['start']},{seg['end']})'[v]")
 
-                    fcf = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, False, None, 0, 0)
+                    # For rendering, the base filter (mirror, scale, blur) comes first
+                    fcf = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, False, None, 0, 0, 0)
                     full_filter = fcf.replace("[v]", "[v0]")
                     for i, filt in enumerate(overlay_filters):
                         current_filt = filt.replace("[v]", f"[v{i}]", 1).replace("[v]", f"[v{i+1}]")
