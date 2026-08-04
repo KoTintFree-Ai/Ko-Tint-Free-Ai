@@ -23,7 +23,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FONT_PATH = os.path.join(SCRIPT_DIR, "Pyidaungsu.ttf")
 
 st.set_page_config(
-    page_title="Movie Recap AI Pro V8.0",
+    page_title="Movie Recap AI Pro V8.1",
     page_icon="🎬",
     layout="centered",
     initial_sidebar_state="expanded"
@@ -59,7 +59,7 @@ def init_state():
 
 init_state()
 
-st.title("🎬 Movie Recap AI Pro V8.0")
+st.title("🎬 Movie Recap AI Pro V8.1")
 st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Unicode & Wrap Fix)")
 
 # --- HELPER: SLIDER WITH PLUS/MINUS (V7.4) ---
@@ -544,15 +544,17 @@ if up:
                 # Clear previous results
                 for k in ['video_path', 'audio_path', 'srt_data']: st.session_state[k] = None
                 
-                stt.text("📊 အဆင့် ၁: အသံဖိုင်ကို ပြင်ဆင်နေပါသည်...")
+                stt.text("📊 အဆင့် ၁: အသံဖိုင်ကို အမြန်ဆုံးဖြစ်အောင် ချုံ့နေပါသည်...")
                 prg.progress(10)
                 tp = os.path.join(tempfile.gettempdir(), f"input_{fid}." + up.name.split(".")[-1])
                 ag = tempfile.mktemp(suffix=".mp3")
+                # Optimization: Compress audio to 16kHz mono 32kbps for faster upload to Gemini
                 if up.name.lower().endswith((".mp4", ".mov", ".avi")):
-                    subprocess.run(["ffmpeg", "-y", "-i", tp, "-vn", "-acodec", "libmp3lame", "-q:a", "4", ag], capture_output=True)
-                else: shutil.copy(tp, ag)
+                    subprocess.run(["ffmpeg", "-y", "-i", tp, "-vn", "-ar", "16000", "-ac", "1", "-b:a", "32k", ag], capture_output=True)
+                else:
+                    subprocess.run(["ffmpeg", "-y", "-i", tp, "-ar", "16000", "-ac", "1", "-b:a", "32k", ag], capture_output=True)
 
-                stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည် (Gemini)...")
+                stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည် (Gemini API)...")
                 prg.progress(30)
                 target_words = int(target_sec * 3.8)
                 prm = f"""Listen to this audio and translate it into a HIGH-ENERGY Myanmar Movie Recap style narration.
@@ -571,37 +573,47 @@ FORMATTING RULES:
 2. Each subtitle block should be a natural phrase (approx 15 words).
 3. The timestamps in your SRT output MUST span the entire range from 00:00:00,000 to {fmt_srt(target_sec)}.
 4. DO NOT include any preamble or conclusion. Just the SRT blocks."""
+                
                 with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
                 cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mpeg","data":b64}}]}]
 
                 srt_res = None
                 errors = []
-                for k in api_keys:
-                    info = st.session_state.valid_keys_info.get(k)
-                    versions = [info['version']] if info else API_VERSIONS
-                    models = info['models'] if info else DEFAULT_MODELS
-                    for ver in versions:
-                        for m in models:
-                            try:
-                                url = f"https://generativelanguage.googleapis.com/{ver}/models/{m}:generateContent?key={k}"
-                                r = requests.post(url, json={"contents":cont}, timeout=300)
-                                if r.status_code == 200:
-                                    data = r.json()
-                                    if 'candidates' in data and data['candidates'][0]['content']['parts']:
-                                        srt_res = data['candidates'][0]['content']['parts'][0]['text']
-                                        if srt_res:
-                                            st.session_state.active_key = k
-                                            with st.expander("📝 Narration Preview (AI က ရေးပေးထားသော စာသားများ)", expanded=True):
-                                                st.text_area("Narration Content", srt_res, height=200)
-                                            break
-                                else:
-                                    try: msg = r.json().get('error', {}).get('message', r.text)
-                                    except: msg = r.text
-                                    errors.append(f"{m}: {translate_error(msg, r.status_code)}")
-                            except Exception as e:
-                                errors.append(f"{m}: {translate_error(str(e))}")
+                
+                with st.status("🌐 Gemini API နှင့် ဆက်သွယ်ပြီး ဘာသာပြန်နေပါသည်...", expanded=True) as status:
+                    for k_idx, k in enumerate(api_keys):
+                        status.write(f"🔑 Key {k_idx+1} ကို အသုံးပြုနေပါသည်...")
+                        info = st.session_state.valid_keys_info.get(k)
+                        versions = [info['version']] if info else API_VERSIONS
+                        # Prioritize flash models for speed
+                        models = info['models'] if info else DEFAULT_MODELS
+                        models = sorted(models, key=lambda x: 0 if 'flash' in x.lower() else 1)
+                        
+                        for ver in versions:
+                            for m in models:
+                                try:
+                                    status.write(f"🤖 Model: {m} ဖြင့် ဘာသာပြန်နေပါသည်...")
+                                    url = f"https://generativelanguage.googleapis.com/{ver}/models/{m}:generateContent?key={k}"
+                                    # Optimized timeout: 180s is enough for flash models
+                                    r = requests.post(url, json={"contents":cont}, timeout=180)
+                                    if r.status_code == 200:
+                                        data = r.json()
+                                        if 'candidates' in data and data['candidates'][0]['content']['parts']:
+                                            srt_res = data['candidates'][0]['content']['parts'][0]['text']
+                                            if srt_res:
+                                                st.session_state.active_key = k
+                                                status.update(label="✅ ဘာသာပြန်ခြင်း ပြီးမြောက်ပါပြီ!", state="complete")
+                                                with st.expander("📝 Narration Preview (AI က ရေးပေးထားသော စာသားများ)", expanded=True):
+                                                    st.text_area("Narration Content", srt_res, height=200)
+                                                break
+                                    else:
+                                        try: msg = r.json().get('error', {}).get('message', r.text)
+                                        except: msg = r.text
+                                        errors.append(f"{m}: {translate_error(msg, r.status_code)}")
+                                except Exception as e:
+                                    errors.append(f"{m}: {translate_error(str(e))}")
+                            if srt_res: break
                         if srt_res: break
-                    if srt_res: break
 
                 if not srt_res:
                     st.error("❌ Gemini ဘာသာပြန်ခြင်း မအောင်မြင်ပါ")
