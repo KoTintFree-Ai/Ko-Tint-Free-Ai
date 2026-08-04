@@ -23,7 +23,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FONT_PATH = os.path.join(SCRIPT_DIR, "Pyidaungsu.ttf")
 
 st.set_page_config(
-    page_title="Movie Recap AI Pro V6.2",
+    page_title="Movie Recap AI Pro V7.3",
     page_icon="🎬",
     layout="centered",
     initial_sidebar_state="expanded"
@@ -42,76 +42,26 @@ st.markdown("""
 
 # Session State Initialization
 def init_state():
-    keys = ['myanmar_text', 'audio_path', 'srt_data', 'video_path', 'base_frame', 'last_uploaded', 'processing_done', 'valid_keys_info', 'active_key']
+    keys = ['myanmar_text', 'audio_path', 'srt_data', 'video_path', 'base_frame', 'last_uploaded', 'processing_done', 'api_key']
     for k in keys:
         if k not in st.session_state: st.session_state[k] = None
-    for i in range(1, 6):
-        if f'key_{i}' not in st.session_state: st.session_state[f'key_{i}'] = ""
     if st.session_state.processing_done is None: st.session_state.processing_done = False
-    if st.session_state.valid_keys_info is None: st.session_state.valid_keys_info = {}
-    if 'do_test_keys' not in st.session_state: st.session_state.do_test_keys = False
-    if 'blur_y_pos' not in st.session_state: st.session_state.blur_y_pos = 85.0
-    if 'blur_h_size' not in st.session_state: st.session_state.blur_h_size = 10.0
-    if 'sub_y_pos' not in st.session_state: st.session_state.sub_y_pos = 85.0
+    if 'blur_y_pos' not in st.session_state: st.session_state.blur_y_pos = 85
+    if 'blur_h_size' not in st.session_state: st.session_state.blur_h_size = 10
+    if 'sub_y_pos' not in st.session_state: st.session_state.sub_y_pos = 85
     if 'font_size' not in st.session_state: st.session_state.font_size = 22
+    if 'target_sec' not in st.session_state: st.session_state.target_sec = 150
 
 init_state()
 
-st.title("🎬 Movie Recap AI Pro V6.2")
+st.title("🎬 Movie Recap AI Pro V7.3")
 st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Unicode & Wrap Fix)")
 
-# --- HELPER: CONTROL WITH BUTTONS, SLIDER & TEXT INPUT (STABLE VERSION) ---
-def plus_minus_control(label, key, min_val, max_val, step=1.0):
+# --- HELPER: SIMPLE SLIDER CONTROL (V7.3) ---
+def simple_slider(label, key, min_val, max_val, step=1):
     st.write(f"**{label}**")
-    
-    if key not in st.session_state:
-        st.session_state[key] = float(min_val)
-        
-    # Format value for display (remove .0 if it exists)
-    def fmt_val(v):
-        if step >= 1.0: return str(int(round(float(v))))
-        return str(int(v)) if float(v) == int(v) else str(round(v, 1))
-
-    # Synchronization callbacks
-    def on_slider_change():
-        st.session_state[key] = st.session_state[f"sld_{key}"]
-        st.session_state[f"txt_{key}"] = fmt_val(st.session_state[key])
-
-    def on_text_change():
-        try:
-            new_val = float(st.session_state[f"txt_{key}"])
-            st.session_state[key] = float(np.clip(new_val, min_val, max_val))
-            st.session_state[f"sld_{key}"] = st.session_state[key]
-            st.session_state[f"txt_{key}"] = fmt_val(st.session_state[key])
-        except:
-            st.session_state[f"txt_{key}"] = fmt_val(st.session_state[key])
-
-    def on_btn_click(delta):
-        st.session_state[key] = float(np.clip(st.session_state[key] + delta, min_val, max_val))
-        st.session_state[f"sld_{key}"] = st.session_state[key]
-        st.session_state[f"txt_{key}"] = fmt_val(st.session_state[key])
-
-    # Sync widget states with master state
-    if f"sld_{key}" not in st.session_state or st.session_state[f"sld_{key}"] != st.session_state[key]:
-        st.session_state[f"sld_{key}"] = st.session_state[key]
-    if f"txt_{key}" not in st.session_state or st.session_state[f"txt_{key}"] != fmt_val(st.session_state[key]):
-        st.session_state[f"txt_{key}"] = fmt_val(st.session_state[key])
-
-    col1, col2, col3 = st.columns([1, 4, 1])
-    with col1:
-        st.button("➖", key=f"btn_min_{key}", on_click=on_btn_click, args=(-step,))
-    with col2:
-        st.slider(label, float(min_val), float(max_val), step=float(step), 
-                  key=f"sld_{key}", on_change=on_slider_change, label_visibility="collapsed")
-    with col3:
-        st.button("➕", key=f"btn_pls_{key}", on_click=on_btn_click, args=(step,))
-        
-    col_l, col_i = st.columns([3, 1])
-    with col_l: st.caption("နံပါတ် အတိအကျ ရိုက်ရန် (Enter နှိပ်ပါ)")
-    with col_i:
-        st.text_input(label, key=f"txt_{key}", on_change=on_text_change, label_visibility="collapsed")
-        
-    return st.session_state[key]
+    val = st.slider(label, min_val, max_val, step=step, key=key, label_visibility="collapsed")
+    return val
 
 # --- ERROR TRANSLATOR ---
 def translate_error(err_msg, status_code=None):
@@ -159,82 +109,26 @@ with st.sidebar:
         st.rerun()
     
     st.markdown("---")
-    st.subheader("🔑 Gemini API Keys (၅ ခုအထိ)")
+    st.subheader("🔑 Gemini API Key")
+    api_key = st.text_input("Gemini API Key ကို ဤနေရာတွင် ထည့်ပါ", type="password", key="api_key")
     
-    # Improved API Key Status Indicator
-    if st.session_state.active_key:
-        active_idx = 0
-        if st.session_state.active_key == st.session_state.get('key_1'): active_idx = 1
-        elif st.session_state.active_key == st.session_state.get('key_2'): active_idx = 2
-        elif st.session_state.active_key == st.session_state.get('key_3'): active_idx = 3
-        elif st.session_state.active_key == st.session_state.get('key_4'): active_idx = 4
-        elif st.session_state.active_key == st.session_state.get('key_5'): active_idx = 5
-        
-        if active_idx > 0:
-            st.success(f"🟢 လက်ရှိအသုံးပြုနေသော Key: API Key {active_idx}")
-    else:
-        st.info("💡 Key ထည့်ပြီး စတင်လုပ်ဆောင်ပါ")
-
-    # Bulk Paste Area
-    with st.expander("📋 Key အများအပြား တစ်ခါတည်းထည့်ရန်"):
-        bulk_text = st.text_area("ဒီနေရာမှာ Key များကို တစ်ကြောင်းချင်းစီ Paste ချလိုက်ပါ", height=100)
-        if st.button("📥 အားလုံးထဲသို့ ဖြည့်သွင်းရန်"):
-            keys = [k.strip() for k in bulk_text.replace(',', '\n').split('\n') if k.strip()]
-            for i in range(5):
-                st.session_state[f"key_{i+1}"] = keys[i] if i < len(keys) else ""
-            st.rerun()
-            
-    k1 = st.text_input("API Key 1", type="password", key="key_1")
-    k2 = st.text_input("API Key 2", type="password", key="key_2")
-    k3 = st.text_input("API Key 3", type="password", key="key_3")
-    k4 = st.text_input("API Key 4", type="password", key="key_4")
-    k5 = st.text_input("API Key 5", type="password", key="key_5")
-    api_keys = [k for k in [k1, k2, k3, k4, k5] if k]
-
-    col_key1, col_key2 = st.columns(2)
-    with col_key1:
-        if st.button("🔌 စမ်းသပ်ရန်"):
-            st.session_state.do_test_keys = True
-    with col_key2:
-        if st.button("🗑️ အားလုံးဖျက်ရန်"):
-            for i in range(5): st.session_state[f"key_{i+1}"] = ""
-            st.session_state.active_key = None
-            st.rerun()
-
-    if st.session_state.do_test_keys:
-        if not api_keys:
+    if st.button("🔌 Key စမ်းသပ်ရန်"):
+        if not api_key:
             st.error("API Key အရင်ထည့်ပေးပါ။")
-            st.session_state.do_test_keys = False
         else:
-            st.session_state.valid_keys_info = {}
-            test_progress = st.progress(0)
-            for i, k in enumerate(api_keys):
-                st.write(f"🔍 Key {i+1} ကို စစ်ဆေးနေသည်...")
-                test_progress.progress((i + 1) / len(api_keys))
+            with st.spinner("Key ကို စစ်ဆေးနေသည်..."):
                 success = False
-                # Try both versions
                 for ver in API_VERSIONS:
                     try:
-                        url = f"https://generativelanguage.googleapis.com/{ver}/models?key={k}"
+                        url = f"https://generativelanguage.googleapis.com/{ver}/models?key={api_key}"
                         r = requests.get(url, timeout=15)
                         if r.status_code == 200:
-                            data = r.json()
-                            models_data = data.get('models', [])
-                            available_models = [m['name'].split('/')[-1] for m in models_data if 'generateContent' in m.get('supportedGenerationMethods', [])]
-                            if available_models:
-                                st.session_state.valid_keys_info[k] = {"version": ver, "models": available_models}
-                                st.success(f"✅ Key {i+1} အောင်မြင်ပါသည်။ ({len(available_models)} models)")
-                                if not st.session_state.active_key:
-                                    st.session_state.active_key = k
-                                success = True
-                                break
-                        else:
-                            st.warning(f"⚠️ Key {i+1} ({ver}): {r.status_code}")
-                    except Exception as e:
-                        st.warning(f"❌ Key {i+1} ({ver}) Error: {str(e)}")
-            st.session_state.do_test_keys = False
-            st.success("စစ်ဆေးမှု ပြီးဆုံးပါပြီ။")
-            st.rerun()
+                            st.success(f"✅ API Key အလုပ်လုပ်ပါသည်။ (Version: {ver})")
+                            success = True
+                            break
+                    except: continue
+                if not success:
+                    st.error("❌ API Key မမှန်ကန်ပါ သို့မဟုတ် အလုပ်မလုပ်ပါ။")
 
     st.markdown("---")
     st.subheader("🎬 ဗီဒီယို ပုံစံညှိရန်")
@@ -244,20 +138,19 @@ with st.sidebar:
     st.markdown("---")
     blur_s = st.checkbox("မူရင်းစာတန်းထိုး ဝါးရန် (Blur)", value=True)
     if blur_s:
-        b_y = plus_minus_control("ဝါးမည့်နေရာ (Y %)", "blur_y_pos", 0, 100, 1)
-        b_h = plus_minus_control("ဝါးမည့်အကျယ် (H %)", "blur_h_size", 1, 30, 1)
+        b_y = simple_slider("ဝါးမည့်နေရာ (Y %)", "blur_y_pos", 0, 100, 1)
+        b_h = simple_slider("ဝါးမည့်အကျယ် (H %)", "blur_h_size", 1, 30, 1)
     else:
-        # Reset if disabled to avoid coordinate confusion
-        st.session_state.blur_y_pos = 85.0
-        st.session_state.blur_h_size = 10.0
+        st.session_state.blur_y_pos = 85
+        st.session_state.blur_h_size = 10
 
     st.markdown("---")
     burn_s = st.checkbox("မြန်မာစာတန်းထိုး ထည့်ရန်", value=True)
     if burn_s:
-        f_s = plus_minus_control("စာလုံးအရွယ်အစား", "font_size", 5, 100, 1)
-        s_y = plus_minus_control("စာတန်းထိုးနေရာ (Y %)", "sub_y_pos", 0, 100, 1)
+        f_s = simple_slider("စာလုံးအရွယ်အစား", "font_size", 5, 100, 1)
+        s_y = simple_slider("စာတန်းထိုးနေရာ (Y %)", "sub_y_pos", 0, 100, 1)
     else:
-        st.session_state.sub_y_pos = 85.0
+        st.session_state.sub_y_pos = 85
 
     st.markdown("---")
     if st.button("✨ နေရာ အလိုအလျောက် ရှာရန်"):
@@ -269,12 +162,9 @@ with st.sidebar:
     fit_dur = st.toggle("သတ်မှတ်အချိန်အတွင်း အပြီးပြောရန်", value=True)
     target_sec = 0
     if fit_dur:
-        c1, c2 = st.columns(2)
-        with c1: tm = st.number_input("မိနစ်", 0, 60, value=st.session_state.get('target_min', 2))
-        with c2: ts = st.number_input("စက္ကန့်", 0, 59, value=st.session_state.get('target_sec', 30))
-        st.session_state.target_min = tm
-        st.session_state.target_sec = ts
-        target_sec = (tm * 60) + ts
+        target_sec = st.slider("Target Duration (စက္ကန့်)", 10, 600, st.session_state.target_sec)
+        st.session_state.target_sec = target_sec
+        st.info(f"သတ်မှတ်ထားသော အချိန်: {target_sec // 60} မိနစ် {target_sec % 60} စက္ကန့်")
 
     st.markdown("---")
     st.subheader("🔊 အသံ ဆက်တင်များ")
@@ -282,23 +172,6 @@ with st.sidebar:
     v_id = "my-MM-ThihaNeural" if "သီဟ" in v_choice else "my-MM-NilarNeural"
     v_speed = st.slider("အသံနှုန်း", 1, 100, 55)
     v_pitch = st.slider("Pitch", 1, 100, 50)
-
-    if st.button("🧹 အားလုံးဖျက်ရန်"):
-        # Preserve API keys and UI settings
-        preserved = {}
-        for k in list(st.session_state.keys()):
-            if any(x in k for x in ['key_', 'valid_keys_info', 'active_key', 'blur_', 'sub_', 'font_', 'fit_dur', 'target_']):
-                preserved[k] = st.session_state[k]
-        
-        # Clear everything else
-        for k in list(st.session_state.keys()):
-            if k not in preserved: del st.session_state[k]
-            
-        # Re-initialize basic state
-        for k, v in preserved.items():
-            st.session_state[k] = v
-        init_state()
-        st.rerun()
 
 # --- UTILITIES ---
 def create_subtitle_image(text, font_size):
@@ -396,53 +269,37 @@ def parse_srt_text(text):
     text = re.sub(r'```srt?', '', text, flags=re.IGNORECASE)
     text = re.sub(r'```', '', text).strip()
     
-    # Clean up common non-narration text
-    text = re.sub(r'(?i)here is the .* narration.*:', '', text)
-    text = re.sub(r'(?i)movie recap narration:', '', text)
-    
-    # 1. Try to extract narration text by ignoring timestamps and indices
+    # 1. Extract all lines that are not timestamps or indices
     lines = text.split('\n')
-    segments = []
-    current_seg = []
-    
+    all_text = []
     for line in lines:
         line = line.strip()
-        if not line:
-            if current_seg:
-                segments.append(' '.join(current_seg))
-                current_seg = []
-            continue
-            
-        # If it's a timestamp or just a block number, it's a boundary
-        if '-->' in line or re.match(r'^\d+$', line):
-            if current_seg:
-                segments.append(' '.join(current_seg))
-                current_seg = []
-            continue
+        if not line: continue
+        # Skip timestamps like 00:00:00,000 --> 00:00:05,000
+        if '-->' in line: continue
+        # Skip numeric indices
+        if re.match(r'^\d+$', line): continue
+        # Skip common preamble
+        if re.match(r'(?i)here is|narration:|recap:', line): continue
         
-        # Otherwise, it's part of the narration
-        current_seg.append(line)
+        all_text.append(line)
+    
+    full_content = ' '.join(all_text)
+    
+    # 2. Split by Myanmar and common punctuation to get clean segments
+    # This ensures we don't miss any text.
+    segments = []
+    # Split by Burmese full stop (။), comma (၊), and English equivalents
+    parts = re.split(r'([။၊.!?;])', full_content)
+    
+    current = ""
+    for i in range(0, len(parts)-1, 2):
+        seg = (parts[i] + parts[i+1]).strip()
+        if seg: segments.append(seg)
+    if len(parts) % 2 != 0 and parts[-1].strip():
+        segments.append(parts[-1].strip())
         
-    if current_seg:
-        segments.append(' '.join(current_seg))
-            
-    # 2. Final cleanup and sentence splitting for better TTS handling
-    final_segments = []
-    for s in segments:
-        s = re.sub(r'<[^>]*>', '', s) # Remove HTML
-        s = s.replace('-->', '').strip()
-        if not s or re.match(r'^[\d:,.\s]+$', s): continue
-        
-        # Split very long segments into sentences for more natural TTS
-        parts = re.split(r'([။।.!?;])', s)
-        combined = ""
-        for i in range(0, len(parts)-1, 2):
-            combined = (parts[i] + parts[i+1]).strip()
-            if combined: final_segments.append(combined)
-        if len(parts) % 2 != 0 and parts[-1].strip():
-            final_segments.append(parts[-1].strip())
-            
-    return [s for s in final_segments if s]
+    return [s for s in segments if s]
 
 async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     rate = f"+{int((spd-50)*2)}%" if spd>=50 else f"{int((spd-50)*2)}%"
@@ -476,21 +333,12 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
                 continue
         
         if success:
-            # Trim silence VERY conservatively
-            p_trimmed = tempfile.mktemp(suffix=".mp3")
-            subprocess.run(["ffmpeg", "-y", "-i", p, "-af", "silenceremove=start_periods=1:start_silence=0.01:start_threshold=-40dB:detection=peak,silenceremove=stop_periods=1:stop_silence=0.01:stop_threshold=-40dB:detection=peak", p_trimmed], capture_output=True)
-            
-            d = get_dur(p_trimmed)
-            if d > 0:
-                raw_segments.append({'path': p_trimmed, 'dur': d, 'text': clean_txt})
+            # V7.2: Disable silence removal entirely for Myanmar to ensure no words are lost
+            d_orig = get_dur(p)
+            if d_orig > 0:
+                raw_segments.append({'path': p, 'dur': d_orig, 'text': clean_txt})
             else:
-                d_orig = get_dur(p)
-                if d_orig > 0:
-                    raw_segments.append({'path': p, 'dur': d_orig, 'text': clean_txt})
-                    if os.path.exists(p_trimmed): os.remove(p_trimmed)
-                    p = None
-            
-            if p and os.path.exists(p): os.remove(p)
+                if os.path.exists(p): os.remove(p)
         
     status_text.empty()
     if not raw_segments: raise Exception("အသံဖိုင် ထုတ်လုပ်ခြင်း မအောင်မြင်ပါ။ စာသားများကို ပြန်လည်စစ်ဆေးပေးပါ။")
@@ -555,16 +403,33 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
         
         if os.path.exists(seg['path']): os.remove(seg['path'])
     
-    # 4. Final Concat
+    # 4. Final Concat - V7.2: Use Filter Complex for maximum reliability with re-encoding
     if len(final_temp_files) == 1:
         shutil.copy(final_temp_files[0], out_p)
     else:
-        l_p = tempfile.mktemp(suffix=".txt")
-        with open(l_p, "w", encoding='utf-8') as f:
-            f.write("\n".join([f"file '{os.path.abspath(p)}'" for p in final_temp_files]))
-        # Use concat demuxer with re-encoding to be safe
-        subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", l_p, "-ac", "2", "-ar", "44100", "-b:a", "192k", out_p], capture_output=True)
-        if os.path.exists(l_p): os.remove(l_p)
+        # For many segments, use a flat two-stage filter complex approach
+        if len(final_temp_files) <= 50:
+            inputs = []
+            for f in final_temp_files: inputs.extend(["-i", f])
+            filter_complex = "".join([f"[{i}:a]" for i in range(len(final_temp_files))]) + f"concat=n={len(final_temp_files)}:v=0:a=1[a]"
+            subprocess.run(["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_complex, "-map", "[a]", "-ac", "2", "-ar", "44100", "-b:a", "192k", out_p], capture_output=True)
+        else:
+            group_files = []
+            for i in range(0, len(final_temp_files), 50):
+                chunk = final_temp_files[i:i+50]
+                temp_chunk = tempfile.mktemp(suffix=".mp3")
+                inputs = []
+                for f in chunk: inputs.extend(["-i", f])
+                filter_complex = "".join([f"[{i}:a]" for i in range(len(chunk))]) + f"concat=n={len(chunk)}:v=0:a=1[a]"
+                subprocess.run(["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_complex, "-map", "[a]", "-ac", "2", "-ar", "44100", "-b:a", "192k", temp_chunk], capture_output=True)
+                group_files.append(temp_chunk)
+            
+            inputs = []
+            for f in group_files: inputs.extend(["-i", f])
+            filter_complex = "".join([f"[{i}:a]" for i in range(len(group_files))]) + f"concat=n={len(group_files)}:v=0:a=1[a]"
+            subprocess.run(["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_complex, "-map", "[a]", "-ac", "2", "-ar", "44100", "-b:a", "192k", out_p], capture_output=True)
+            for f in group_files: 
+                if os.path.exists(f): os.remove(f)
     
     for p in final_temp_files:
         if os.path.exists(p): os.remove(p)
@@ -678,23 +543,18 @@ if up:
         if os.path.exists(bp): os.remove(bp)
         if os.path.exists(sub_p): os.remove(sub_p)
 
-    if not api_keys: st.warning("⚠️ Sidebar တွင် Gemini API Key ထည့်ပေးပါ")
+    if not st.session_state.api_key: st.warning("⚠️ Sidebar တွင် Gemini API Key ထည့်ပေးပါ")
     elif st.button("🚀 စတင်လုပ်ဆောင်ရန်"):
         # Check if ffmpeg is available
         ffmpeg_path = shutil.which("ffmpeg")
         if not ffmpeg_path:
             st.error("❌ FFmpeg မရရှိပါ။ packages.txt ဖိုင်တွင် ffmpeg ပါရှိကြောင်း သေချာပါစေ။")
-            st.info("GitHub repo မှာ packages.txt ဖိုင်ကို အောက်ပါအတိုင်း ထားပါ:\n```\nffmpeg\nlibraqm-dev\nlibharfbuzz-dev\nlibfribidi-dev\n```")
         else:
             prg = st.progress(0); stt = st.empty()
             try:
-                if st.session_state.video_path and os.path.exists(st.session_state.video_path):
-                    try: os.remove(st.session_state.video_path)
-                    except: pass
-                if st.session_state.audio_path and os.path.exists(st.session_state.audio_path):
-                    try: os.remove(st.session_state.audio_path)
-                    except: pass
-
+                # Clear previous results
+                for k in ['video_path', 'audio_path', 'srt_data']: st.session_state[k] = None
+                
                 stt.text("📊 အဆင့် ၁: အသံဖိုင်ကို ပြင်ဆင်နေပါသည်...")
                 prg.progress(10)
                 tp = os.path.join(tempfile.gettempdir(), f"input_{fid}." + up.name.split(".")[-1])
@@ -705,7 +565,6 @@ if up:
 
                 stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည် (Gemini)...")
                 prg.progress(30)
-                # Refined word count for Myanmar (average 3.0 to 4.0 words per second for fast recap)
                 target_words = int(target_sec * 3.8)
                 prm = f"""Listen to this audio and translate it into a HIGH-ENERGY Myanmar Movie Recap style narration.
 TARGET DURATION: {target_sec} seconds.
@@ -728,32 +587,25 @@ FORMATTING RULES:
 
                 srt_res = None
                 errors = []
-                for k in api_keys:
-                    info = st.session_state.valid_keys_info.get(k)
-                    versions = [info['version']] if info else API_VERSIONS
-                    models = info['models'] if info else DEFAULT_MODELS
-                    for ver in versions:
-                        for m in models:
-                            try:
-                                url = f"https://generativelanguage.googleapis.com/{ver}/models/{m}:generateContent?key={k}"
-                                r = requests.post(url, json={"contents":cont}, timeout=300)
-                                if r.status_code == 200:
-                                    data = r.json()
-                                    if 'candidates' in data and data['candidates'][0]['content']['parts']:
-                                        srt_res = data['candidates'][0]['content']['parts'][0]['text']
-                                        if srt_res:
-                                            st.session_state.active_key = k
-                                            # Show narration preview
-                                            with st.expander("📝 Narration Preview (AI က ရေးပေးထားသော စာသားများ)", expanded=True):
-                                                st.text_area("Narration Content", srt_res, height=200)
-                                            break
-                                    else: errors.append(f"Key {api_keys.index(k)+1} - {m}: အဖြေမထွက်ပါ။")
-                                else:
-                                    try: msg = r.json().get('error', {}).get('message', r.text)
-                                    except: msg = r.text
-                                    errors.append(f"Key {api_keys.index(k)+1} - {m}: {translate_error(msg, r.status_code)}")
-                            except Exception as e: errors.append(f"Key {api_keys.index(k)+1} - {m}: {translate_error(str(e))}")
-                        if srt_res: break
+                k = st.session_state.api_key
+                for ver in API_VERSIONS:
+                    for m in DEFAULT_MODELS:
+                        try:
+                            url = f"https://generativelanguage.googleapis.com/{ver}/models/{m}:generateContent?key={k}"
+                            r = requests.post(url, json={"contents":cont}, timeout=300)
+                            if r.status_code == 200:
+                                data = r.json()
+                                if 'candidates' in data and data['candidates'][0]['content']['parts']:
+                                    srt_res = data['candidates'][0]['content']['parts'][0]['text']
+                                    if srt_res:
+                                        with st.expander("📝 Narration Preview (AI က ရေးပေးထားသော စာသားများ)", expanded=True):
+                                            st.text_area("Narration Content", srt_res, height=200)
+                                        break
+                            else:
+                                try: msg = r.json().get('error', {}).get('message', r.text)
+                                except: msg = r.text
+                                errors.append(f"{m}: {translate_error(msg, r.status_code)}")
+                        except Exception as e: errors.append(f"{m}: {translate_error(str(e))}")
                     if srt_res: break
 
                 if not srt_res:
