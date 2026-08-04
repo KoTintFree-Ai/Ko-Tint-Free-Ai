@@ -43,6 +43,8 @@ if 'audio_data' not in st.session_state: st.session_state.audio_data = None
 if 'srt_data' not in st.session_state: st.session_state.srt_data = None
 if 'video_data' not in st.session_state: st.session_state.video_data = None
 if 'processing_done' not in st.session_state: st.session_state.processing_done = False
+if 'base_frame' not in st.session_state: st.session_state.base_frame = None
+if 'last_uploaded' not in st.session_state: st.session_state.last_uploaded = None
 
 st.title("🎬 Movie Recap AI Pro V4.4")
 st.markdown("English Video → Myanmar Movie Recap (Final Render Fix)")
@@ -68,7 +70,7 @@ with st.sidebar:
     if 'blur_h_size' not in st.session_state: st.session_state.blur_h_size = 10.0
     
     blur_y_pos = st.slider("Blur Y Position (%)", 0.0, 100.0, st.session_state.blur_y_pos) if blur_subtitles else 85.0
-    blur_h_size = st.slider("Blur Height (%)", 1.0, 50.0, st.session_state.blur_h_size) if blur_subtitles else 10.0
+    blur_h_size = st.slider("Blur Height (%)", 0.5, 30.0, st.session_state.blur_h_size, step=0.1) if blur_subtitles else 10.0
     
     # Sync slider back to session state
     st.session_state.blur_y_pos = blur_y_pos
@@ -76,7 +78,7 @@ with st.sidebar:
     burn_myanmar_subs = st.checkbox("Burn Myanmar Subtitles", value=True)
     
     auto_detect_btn = st.button("✨ Auto Detect Subtitle Area")
-    preview_btn = st.button("🖼️ Preview Blur Area")
+    show_preview = st.checkbox("👀 Live Preview Blur Area", value=True)
     
     st.markdown("---")
     st.subheader("⏱️ Duration Control")
@@ -205,8 +207,8 @@ def auto_detect_subtitle_y(video_path):
         
         # Calculate row-wise variance to find text areas (text has high contrast/variance)
         row_variance = np.var(arr, axis=1)
-        # Find rows where variance is above a threshold
-        threshold = np.mean(row_variance) * 1.5
+        # Find rows where variance is above a higher threshold for tighter detection
+        threshold = np.mean(row_variance) * 2.0
         text_rows = np.where(row_variance > threshold)[0]
         
         if len(text_rows) > 0:
@@ -217,8 +219,8 @@ def auto_detect_subtitle_y(video_path):
             actual_y_start = int(height * 0.6) + y_start_in_crop
             actual_y_end = int(height * 0.6) + y_end_in_crop
             
-            # Add some padding
-            padding = 10
+            # Add minimal padding for a tighter fit
+            padding = 5
             final_y = max(0, actual_y_start - padding)
             final_h = min(height, (actual_y_end - actual_y_start) + (padding * 2))
             
@@ -239,7 +241,7 @@ def get_blur_filter(mirror, scale, blur, blur_y, blur_h, burn_subs=False, srt_pa
         y_start = blur_y / 100.0
         h_ratio = blur_h / 100.0
         base_v = ",".join(v_filters) if v_filters else "null"
-        fc = f"[0:v]{base_v},split[m][b];[b]crop=iw:ih*{h_ratio}:0:ih*{y_start},boxblur=20:10[blurred];[m][blurred]overlay=0:main_h*{y_start}"
+        fc = f"[0:v]{base_v},split[m][b];[b]crop=iw:ih*{h_ratio}:0:ih*{y_start},boxblur=15:5[blurred];[m][blurred]overlay=0:main_h*{y_start}"
         if burn_subs and srt_path:
             rel_srt = os.path.relpath(srt_path)
             srt_esc = rel_srt.replace("\\", "/").replace(":", "\\:").replace("'", "'\\''")
@@ -309,7 +311,29 @@ def translate_content(audio_path, target_sec, keys):
 uploaded_file = st.file_uploader("ဗီဒီယို သို့မဟုတ် အော်ဒီယိုဖိုင် ရွေးချယ်ပါ", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"])
 
 if uploaded_file is not None:
-    # Save uploaded file temporarily for preview
+    # Handle new file upload
+    file_id = uploaded_file.name + str(uploaded_file.size)
+    if st.session_state.last_uploaded != file_id:
+        st.session_state.last_uploaded = file_id
+        st.session_state.base_frame = None
+        # Save temporarily to extract frame
+        suffix = "." + uploaded_file.name.split(".")[-1]
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tfile:
+            tfile.write(uploaded_file.getvalue())
+            temp_path = os.path.abspath(tfile.name)
+        
+        if suffix.lower() in [".mp4", ".mov", ".avi"]:
+            base_img = tempfile.mktemp(suffix='.jpg')
+            # Extract frame at 5s or 10%
+            duration = get_duration(temp_path)
+            sample_t = duration * 0.1 if duration else 5
+            subprocess.run(["ffmpeg", "-y", "-ss", str(sample_t), "-i", temp_path, "-frames:v", "1", base_img], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if os.path.exists(base_img):
+                with open(base_img, "rb") as f: st.session_state.base_frame = f.read()
+                os.remove(base_img)
+        os.remove(temp_path)
+
+    # Temporary path for current processing
     suffix = "." + uploaded_file.name.split(".")[-1]
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tfile:
         tfile.write(uploaded_file.getvalue())
@@ -323,23 +347,27 @@ if uploaded_file is not None:
             st.success(f"✅ Detected! Y: {det_y:.1f}%, Height: {det_h:.1f}%")
             st.rerun()
 
-    if preview_btn:
-        st.subheader("🖼️ Blur Area Preview")
-        preview_img = tempfile.mktemp(suffix='.jpg')
+    if show_preview and st.session_state.base_frame:
+        st.subheader("🖼️ Blur Area Preview (Real-time)")
+        # Apply current blur settings to base_frame
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as bfile:
+            bfile.write(st.session_state.base_frame)
+            bpath = os.path.abspath(bfile.name)
+        
+        preview_out = tempfile.mktemp(suffix='.jpg')
         fc = get_blur_filter(mirror_video, scale_video, blur_subtitles, blur_y_pos, blur_h_size)
-        # Extract frame at 5s and apply filter
-        cmd = [
-            "ffmpeg", "-y", "-ss", "00:00:05", "-i", temp_preview_path,
-            "-vf", fc.replace("[0:v]", "").replace("[v]", ""), # Simplify filter for single -vf
-            "-frames:v", "1", preview_img
-        ]
+        # Simplify filter for single image (remove [0:v] and [v])
+        fc_simple = fc.replace("[0:v]", "").replace("[v]", "")
+        
         try:
-            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if os.path.exists(preview_img):
-                st.image(preview_img, caption="Blur Preview (at 5 seconds)")
-                os.remove(preview_img)
+            subprocess.run(["ffmpeg", "-y", "-i", bpath, "-vf", fc_simple, preview_out], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if os.path.exists(preview_out):
+                st.image(preview_out, caption=f"Live Preview: Y={blur_y_pos:.1f}%, H={blur_h_size:.1f}%")
+                os.remove(preview_out)
         except Exception as e:
             st.error(f"Preview Error: {e}")
+        finally:
+            if os.path.exists(bpath): os.remove(bpath)
         
     if not api_keys: st.warning("⚠️ Sidebar တွင် API Key ထည့်ပေးပါ")
     else:
