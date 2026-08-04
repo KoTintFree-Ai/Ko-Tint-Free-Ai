@@ -19,7 +19,7 @@ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 MODELS_TO_TRY = ["gemini-1.5-flash", "gemini-3.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b"]
 
 st.set_page_config(
-    page_title="Movie Recap AI Pro V4.4", 
+    page_title="Movie Recap AI Pro V5.0", 
     page_icon="🎬", 
     layout="centered",
     initial_sidebar_state="expanded"
@@ -46,7 +46,7 @@ if 'processing_done' not in st.session_state: st.session_state.processing_done =
 if 'base_frame' not in st.session_state: st.session_state.base_frame = None
 if 'last_uploaded' not in st.session_state: st.session_state.last_uploaded = None
 
-st.title("🎬 Movie Recap AI Pro V4.4")
+st.title("🎬 Movie Recap AI Pro V5.0")
 st.markdown("English Video → Myanmar Movie Recap (Final Render Fix)")
 
 # --- SIDEBAR SETTINGS ---
@@ -246,11 +246,8 @@ def get_blur_filter(mirror, scale, blur, blur_y, blur_h, burn_subs=False, srt_pa
             rel_srt = os.path.relpath(srt_path)
             srt_esc = rel_srt.replace("\\", "/").replace(":", "\\:").replace("'", "'\\''")
             # Add font support for Myanmar characters
-            fc += f",subtitles='{srt_esc}':force_style='Fontname=Pyidaungsu,FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'"
-            if os.path.exists("Pyidaungsu.ttf"):
-                fc = fc[:-1] + f",fontsdir=.,FontFile=Pyidaungsu.ttf'[v]"
-            else:
-                fc += "[v]"
+            font_dir = os.getcwd().replace("\\", "/").replace(":", "\\:")
+            fc += f",subtitles='{srt_esc}':fontsdir='{font_dir}':force_style='FontName=Pyidaungsu,FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'[v]"
         else:
             fc += "[v]"
     else:
@@ -259,11 +256,8 @@ def get_blur_filter(mirror, scale, blur, blur_y, blur_h, burn_subs=False, srt_pa
             rel_srt = os.path.relpath(srt_path)
             srt_esc = rel_srt.replace("\\", "/").replace(":", "\\:").replace("'", "'\\''")
             # Add font support for Myanmar characters
-            fc += f",subtitles='{srt_esc}':force_style='Fontname=Pyidaungsu,FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'"
-            if os.path.exists("Pyidaungsu.ttf"):
-                fc = fc[:-1] + f",fontsdir=.,FontFile=Pyidaungsu.ttf'[v]"
-            else:
-                fc += "[v]"
+            font_dir = os.getcwd().replace("\\", "/").replace(":", "\\:")
+            fc += f",subtitles='{srt_esc}':fontsdir='{font_dir}':force_style='FontName=Pyidaungsu,FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'[v]"
         else:
             fc += "[v]"
     return fc
