@@ -46,7 +46,7 @@ if 'processing_done' not in st.session_state: st.session_state.processing_done =
 if 'base_frame' not in st.session_state: st.session_state.base_frame = None
 if 'last_uploaded' not in st.session_state: st.session_state.last_uploaded = None
 
-# Default values for sliders
+# Default values for sliders in session state
 if 'blur_y_pos' not in st.session_state: st.session_state.blur_y_pos = 85.0
 if 'blur_h_size' not in st.session_state: st.session_state.blur_h_size = 10.0
 if 'sub_y_pos' not in st.session_state: st.session_state.sub_y_pos = 85.0
@@ -59,15 +59,17 @@ st.markdown("English Video → Myanmar Movie Recap (Enhanced Preview)")
 def plus_minus_control(label, key, min_val, max_val, step=1.0):
     st.write(f"**{label}**")
     col1, col2, col3 = st.columns([1, 3, 1])
+    
+    def update_val(delta):
+        st.session_state[key] = float(np.clip(st.session_state[key] + delta, min_val, max_val))
+
     with col1:
-        if st.button("➖", key=f"minus_{key}"):
-            st.session_state[key] = max(min_val, st.session_state[key] - step)
+        st.button("➖", key=f"btn_minus_{key}", on_click=update_val, args=(-step,))
     with col2:
-        val = st.slider(label, min_val, max_val, float(st.session_state[key]), step=step, key=f"slider_{key}", label_visibility="collapsed")
-        st.session_state[key] = val
+        # Use key directly so the slider is bound to the session state variable
+        st.slider(label, min_val, max_val, key=key, step=step, label_visibility="collapsed")
     with col3:
-        if st.button("➕", key=f"plus_{key}"):
-            st.session_state[key] = min(max_val, st.session_state[key] + step)
+        st.button("➕", key=f"btn_plus_{key}", on_click=update_val, args=(step,))
     return st.session_state[key]
 
 # --- SIDEBAR SETTINGS ---
@@ -150,7 +152,7 @@ def get_duration(file_path):
 def extract_audio(video_path):
     audio_path = tempfile.mktemp(suffix=".mp3")
     try:
-        subprocess.run(["ffmpeg", "-y", "-i", video_path, "-vn", "-acodec", "libmp3lame", "-q:a", "4", audio_path], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(["ffmpeg", "-y", "-i", video_path, "-vn", "-acodec", "libmp3lame", "-q:a", "4", audio_path], check=True, capture_output=True)
         return audio_path
     except: return None
 
@@ -245,7 +247,9 @@ def get_blur_filter(mirror, scale, blur, blur_y, blur_h, burn_subs=False, srt_pa
         base_v = ",".join(v_filters) if v_filters else "null"
         fc = f"[0:v]{base_v},split[m][b];[b]crop=iw:ih*{h_ratio}:0:ih*{y_start},boxblur=15:5[blurred];[m][blurred]overlay=0:main_h*{y_start}"
     else:
-        fc = "[0:v]" + ("," + ",".join(v_filters) if v_filters else "")
+        # If no filters, use null to avoid invalid filter complex
+        base_v = ",".join(v_filters) if v_filters else "null"
+        fc = f"[0:v]{base_v}"
 
     if burn_subs and srt_path:
         srt_esc = os.path.relpath(srt_path).replace("\\", "/").replace(":", "\\:").replace("'", "'\\''")
