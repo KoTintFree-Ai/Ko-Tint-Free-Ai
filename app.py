@@ -159,11 +159,9 @@ with st.sidebar:
         st.rerun()
 
 # --- UTILITIES ---
-def create_subtitle_image(text, width, height, font_size, y_pos_pct):
-    """Render Myanmar text onto a transparent image using Pillow for perfect Unicode shaping"""
-    img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-
+def create_subtitle_image(text, font_size):
+    """Render Myanmar text onto a small transparent image (Optimized for Memory)"""
+    # Load font
     font = None
     try:
         font = ImageFont.truetype(FONT_PATH, font_size, layout_engine=ImageFont.Layout.RAQM)
@@ -176,21 +174,31 @@ def create_subtitle_image(text, width, height, font_size, y_pos_pct):
             except Exception:
                 font = ImageFont.load_default()
 
+    # Calculate dimensions
+    temp_draw = ImageDraw.Draw(Image.new('RGBA', (1, 1)))
     lines = text.split('\n')
-    line_heights = [draw.textbbox((0, 0), line, font=font)[3] for line in lines]
-    total_text_height = sum(line_heights) + (len(lines) - 1) * 10
-    current_y = int(height * (y_pos_pct / 100)) - (total_text_height // 2)
+    line_bboxes = [temp_draw.textbbox((0, 0), line, font=font) for line in lines]
+    
+    max_w = max([b[2] - b[0] for b in line_bboxes]) + 20
+    line_h = max([b[3] - b[1] for b in line_bboxes]) + 10
+    total_h = line_h * len(lines) + 10
 
-    for line in lines:
-        bbox = draw.textbbox((0, 0), line, font=font)
+    img = Image.new('RGBA', (int(max_w), int(total_h)), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    
+    current_y = 5
+    for i, line in enumerate(lines):
+        bbox = line_bboxes[i]
         w = bbox[2] - bbox[0]
-        x = (width - w) // 2
+        x = (max_w - w) // 2
+        # Outline for readability
         for offset in [(-2,-2), (2,-2), (-2,2), (2,2)]:
-            draw.text((x+offset[0], current_y+offset[1]), line, font=font, fill=(0,0,0,200))
+            draw.text((x+offset[0], current_y+offset[1]), line, font=font, fill=(0,0,0,255))
+        # Main text (Yellow)
         draw.text((x, current_y), line, font=font, fill=(255, 255, 0, 255))
-        current_y += bbox[3] + 10
+        current_y += line_h
 
-    return img
+    return img, max_w, total_h
 
 def normalize_myanmar(text):
     if not text: return text
@@ -396,11 +404,20 @@ if up:
             bf.write(st.session_state.base_frame); bp = bf.name
         with Image.open(bp) as base_img:
             w, h = base_img.size
-            sub_img = create_subtitle_image("မြန်မာစာ ယူနီကုတ်\nစမ်းသပ်ကြည့်ရှုခြင်း", w, h, st.session_state.font_size, st.session_state.sub_y_pos)
+            sub_img, sw, sh = create_subtitle_image("မြန်မာစာ ယူနီကုတ်\nစမ်းသပ်ကြည့်ရှုခြင်း", st.session_state.font_size)
             sub_p = tempfile.mktemp(suffix=".png")
             sub_img.save(sub_p)
         po = tempfile.mktemp(suffix=".jpg")
+        
+        # Calculate preview overlay position
+        x_p = (w - sw) // 2
+        y_p = int(h * (st.session_state.sub_y_pos / 100)) - (sh // 2)
+        
+        # Note: Preview uses a slightly different filter logic for simplicity
         fc = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, burn_s, sub_p, st.session_state.font_size, st.session_state.sub_y_pos)
+        # Fix preview overlay position in filter string
+        if burn_s:
+            fc = fc.replace("overlay=0:0", f"overlay={x_p}:{y_p}")
         filter_script_p = tempfile.mktemp(suffix=".txt")
         filter_str = fc if burn_s else fc.replace("[postblur][1:v]overlay=0:0", "[postblur]")
         with open(filter_script_p, "w", encoding="utf-8") as f: f.write(filter_str)
@@ -520,12 +537,17 @@ FORMATTING RULES:
                     overlay_filters = []
                     temp_imgs = []
                     for i, seg in enumerate(segments):
-                        simg = create_subtitle_image(seg['text'], vw, vh, st.session_state.font_size, st.session_state.sub_y_pos)
+                        simg, sw, sh = create_subtitle_image(seg['text'], st.session_state.font_size)
                         spath = os.path.join(sub_dir, f"sub_{i}.png")
                         simg.save(spath)
                         temp_imgs.append(spath)
+                        
+                        # Calculate center position
+                        x_pos = (vw - sw) // 2
+                        y_pos = int(vh * (st.session_state.sub_y_pos / 100)) - (sh // 2)
+                        
                         safe_spath = spath.replace('\\', '/').replace(':', '\\\\').replace("'", "'\\\\\''")
-                        overlay_filters.append(f"movie='{safe_spath}'[s{i}];[v][s{i}]overlay=0:0:enable='between(t,{seg['start']},{seg['end']})'[v]")
+                        overlay_filters.append(f"movie='{safe_spath}'[s{i}];[v][s{i}]overlay={x_pos}:{y_pos}:enable='between(t,{seg['start']},{seg['end']})'[v]")
 
                     fcf = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, False, None, 0, 0)
                     full_filter = fcf.replace("[v]", "[v0]")
@@ -546,7 +568,7 @@ FORMATTING RULES:
 
                     if res.returncode != 0:
                         if len(full_filter) < 5000:
-                            cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "--filter_complex", full_filter, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
+                            cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex", full_filter, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
                             res = subprocess.run(cmd, capture_output=True, text=True)
 
                     if os.path.exists(filter_script): os.remove(filter_script)
