@@ -52,7 +52,7 @@ def init_state():
 init_state()
 
 st.title("🎬 Movie Recap AI Pro V6.2")
-st.markdown("English Video → Myanmar Movie Recap (API Debug Version)")
+st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Professional Version)")
 
 # --- HELPER: +/- BUTTONS ---
 def plus_minus_control(label, key, min_val, max_val, step=1.0):
@@ -65,10 +65,25 @@ def plus_minus_control(label, key, min_val, max_val, step=1.0):
     with col3: st.button("➕", key=f"plus_{key}", on_click=update_val, args=(step,))
     return st.session_state[key]
 
+# --- ERROR TRANSLATOR ---
+def translate_error(err_msg, status_code=None):
+    err_msg = str(err_msg).lower()
+    if "api_key_invalid" in err_msg or "invalid api key" in err_msg or status_code == 403:
+        return "API Key မမှန်ကန်ပါ။ (ကျေးဇူးပြု၍ Key ကို ပြန်စစ်ပေးပါ)"
+    if "quota" in err_msg or "429" in err_msg or status_code == 429:
+        return "API Key အသုံးပြုမှု ပမာဏ ပြည့်သွားပါပြီ။ (နောက်ထပ် Key တစ်ခု ပြောင်းသုံးပေးပါ)"
+    if "location" in err_msg or "not supported" in err_msg:
+        return "သင်၏ ဒေသ (Region) တွင် ဤ API ကို အသုံးပြု၍မရပါ။ (VPN သုံးရန် လိုအပ်နိုင်ပါသည်)"
+    if "404" in err_msg or status_code == 404:
+        return "API URL ကို ရှာမတွေ့ပါ။ (Model အမည် သို့မဟုတ် URL လွဲချော်နေပါသည်)"
+    if "safety" in err_msg or "blocked" in err_msg:
+        return "မူပိုင်ခွင့် သို့မဟုတ် လုံုံခြုံရေး စည်းကမ်းချက်များကြောင့် Google မှ ပိတ်ပင်လိုက်ပါသည်။"
+    return f"အမည်မသိ အမှားအယွင်းတစ်ခု ဖြစ်ပေါ်နေပါသည်။ ({err_msg})"
+
 # --- SIDEBAR ---
 with st.sidebar:
-    st.header("⚙️ Settings")
-    st.subheader("🔑 Gemini API Keys")
+    st.header("⚙️ ဆက်တင်များ")
+    st.subheader("🔑 Gemini API Keys (၅ ခုအထိ)")
     k1 = st.text_input("API Key 1", type="password", key="key_1")
     k2 = st.text_input("API Key 2", type="password", key="key_2")
     k3 = st.text_input("API Key 3", type="password", key="key_3")
@@ -76,74 +91,69 @@ with st.sidebar:
     k5 = st.text_input("API Key 5", type="password", key="key_5")
     api_keys = [k for k in [k1, k2, k3, k4, k5] if k]
     
-    if st.button("🔌 Check API Connection"):
+    if st.button("🔌 API ချိတ်ဆက်မှု စမ်းသပ်ရန်"):
         if not api_keys:
             st.error("API Key အရင်ထည့်ပေးပါ။")
         else:
             for i, k in enumerate(api_keys):
-                st.write(f"--- Key {i+1} Testing ---")
+                st.write(f"--- Key {i+1} စစ်ဆေးနေသည် ---")
                 success = False
                 for ver in API_VERSIONS:
                     url = f"https://generativelanguage.googleapis.com/{ver}/models/gemini-1.5-flash?key={k}"
                     try:
                         r = requests.get(url, timeout=10)
                         if r.status_code == 200:
-                            st.success(f"✅ Key {i+1} ({ver}) is Working!")
+                            st.success(f"✅ Key {i+1} အလုပ်လုပ်ပါသည်။ ({ver})")
                             success = True
                             break
                         else:
-                            try: 
-                                err_data = r.json()
-                                msg = err_data.get('error', {}).get('message', r.text)
-                                reason = err_data.get('error', {}).get('status', 'Unknown')
-                            except: 
-                                msg = r.text
-                                reason = "Unknown"
-                            st.error(f"❌ Key {i+1} ({ver}) Error: {r.status_code}\n\nReason: {reason}\n\nMessage: {msg}")
+                            try: msg = r.json().get('error', {}).get('message', r.text)
+                            except: msg = r.text
+                            st.error(f"❌ Key {i+1} အမှား: {translate_error(msg, r.status_code)}")
                     except Exception as e:
-                        st.error(f"❌ Key {i+1} ({ver}) Connection Failed: {str(e)}")
-                if success: st.info(f"Key {i+1} ကို အသုံးပြုနိုင်ပါသည်။")
+                        st.error(f"❌ Key {i+1} ချိတ်ဆက်မှု မအောင်မြင်ပါ: {translate_error(str(e))}")
+                if success: st.info(f"Key {i+1} ကို စိတ်ချစွာ အသုံးပြုနိုင်ပါသည်။")
 
     st.markdown("---")
-    st.subheader("🎬 Video Layout")
-    mirror_v = st.checkbox("Mirror Video", value=True)
-    scale_v = st.checkbox("Scale Video (106%)", value=True)
+    st.subheader("🎬 ဗီဒီယို ပုံစံညှိရန်")
+    mirror_v = st.checkbox("ဗီဒီယို ဘယ်ပြန်ညာပြန်လှန်ရန် (Mirror)", value=True)
+    scale_v = st.checkbox("ဗီဒီယို အနည်းငယ်ချဲ့ရန် (Scale 106%)", value=True)
     
     st.markdown("---")
-    blur_s = st.checkbox("Blur Original Subtitles", value=True)
+    blur_s = st.checkbox("မူရင်း စာတန်းထိုးများကို ဝါးရန် (Blur)", value=True)
     if blur_s:
-        b_y = plus_minus_control("Blur Y Position (%)", "blur_y_pos", 0.0, 100.0, 0.5)
-        b_h = plus_minus_control("Blur Height (%)", "blur_h_size", 0.5, 30.0, 0.1)
+        b_y = plus_minus_control("ဝါးမည့်နေရာ (Y Position %)", "blur_y_pos", 0.0, 100.0, 0.5)
+        b_h = plus_minus_control("ဝါးမည့် အကျယ် (Height %)", "blur_h_size", 0.5, 30.0, 0.1)
     
     st.markdown("---")
-    burn_s = st.checkbox("Burn Myanmar Subtitles", value=True)
+    burn_s = st.checkbox("မြန်မာစာတန်းထိုး ထည့်ရန် (Burn Subtitles)", value=True)
     if burn_s:
-        f_s = plus_minus_control("Myanmar Font Size", "font_size", 5, 100, 1)
-        s_y = plus_minus_control("Subtitle Y Position (%)", "sub_y_pos", 0.0, 100.0, 0.5)
+        f_s = plus_minus_control("စာလုံးအရွယ်အစား (Font Size)", "font_size", 5, 100, 1)
+        s_y = plus_minus_control("စာတန်းထိုးနေရာ (Y Position %)", "sub_y_pos", 0.0, 100.0, 0.5)
     
     st.markdown("---")
-    if st.button("✨ Auto Detect Area"):
+    if st.button("✨ နေရာ အလိုအလျောက် ရှာရန်"):
         st.session_state.do_detect = True
-    show_prev = st.checkbox("👀 Live Preview", value=True)
+    show_prev = st.checkbox("👀 ပုံစံ ကြိုတင်ကြည့်ရန် (Live Preview)", value=True)
     
     st.markdown("---")
-    st.subheader("⏱️ Duration Control")
-    fit_dur = st.toggle("Fit to Target Duration", value=True)
+    st.subheader("⏱️ အချိန် ကြာမြင့်မှု ထိန်းချုပ်ရန်")
+    fit_dur = st.toggle("သတ်မှတ်ထားသော အချိန်အတွင်း အပြီးပြောရန်", value=True)
     target_sec = 0
     if fit_dur:
         c1, c2 = st.columns(2)
-        with c1: tm = st.number_input("Min", 0, 60, 2)
-        with c2: ts = st.number_input("Sec", 0, 59, 30)
+        with c1: tm = st.number_input("မိနစ်", 0, 60, 2)
+        with c2: ts = st.number_input("စက္ကန့်", 0, 59, 30)
         target_sec = (tm * 60) + ts
     
     st.markdown("---")
-    st.subheader("🔊 Voice Settings")
-    v_choice = st.selectbox("Select Voice", ["Thiha (Male)", "Nilar (Female)"])
-    v_id = "my-MM-ThihaNeural" if "Thiha" in v_choice else "my-MM-NilarNeural"
-    v_speed = st.slider("Base Speed", 1, 100, 55)
-    v_pitch = st.slider("Pitch", 1, 100, 50)
+    st.subheader("🔊 အသံ ဆက်တင်များ")
+    v_choice = st.selectbox("အသံရွေးချယ်ပါ", ["သီဟ (အမျိုးသားသံ)", "နီလာ (အမျိုးသမီးသံ)"])
+    v_id = "my-MM-ThihaNeural" if "သီဟ" in v_choice else "my-MM-NilarNeural"
+    v_speed = st.slider("အသံနှုန်း (Speed)", 1, 100, 55)
+    v_pitch = st.slider("အသံ အနိမ့်အမြင့် (Pitch)", 1, 100, 50)
     
-    if st.button("🧹 Clear All Data"):
+    if st.button("🧹 အချက်အလက်များ အားလုံးဖျက်ရန်"):
         for k in list(st.session_state.keys()): del st.session_state[k]
         st.rerun()
 
@@ -291,7 +301,7 @@ if up:
         if os.path.exists(ps): os.remove(ps)
 
     if not api_keys: st.warning("⚠️ Sidebar တွင် Gemini API Key ထည့်ပေးပါ")
-    elif st.button("🚀 Start Process"):
+    elif st.button("🚀 စတင်လုပ်ဆောင်ရန် (Start Process)"):
         prg = st.progress(0); stt = st.empty()
         try:
             stt.text("📊 အဆင့် ၁: အသံဖိုင်ကို ပြင်ဆင်နေပါသည်...")
@@ -323,17 +333,12 @@ if up:
                                 if 'candidates' in data and data['candidates'][0]['content']['parts']:
                                     srt_res = data['candidates'][0]['content']['parts'][0]['text']
                                     if srt_res: break
-                                else: errors.append(f"Model {m} ({ver}): အဖြေမထွက်ပါ။ (Safety Filter ဖြစ်နိုင်သည်)")
+                                else: errors.append(f"Key {api_keys.index(k)+1} - {m}: အဖြေမထွက်ပါ။ (Safety Filter ကြောင့် ဖြစ်နိုင်သည်)")
                             else:
-                                try: 
-                                    err_data = r.json()
-                                    msg = err_data.get('error', {}).get('message', r.text)
-                                    status = err_data.get('error', {}).get('status', 'Unknown')
-                                except: 
-                                    msg = r.text
-                                    status = "Unknown"
-                                errors.append(f"Key {api_keys.index(k)+1} - {m} ({ver}): {r.status_code} ({status}) - {msg}")
-                        except Exception as e: errors.append(f"Model {m} ({ver}): {str(e)}")
+                                try: msg = r.json().get('error', {}).get('message', r.text)
+                                except: msg = r.text
+                                errors.append(f"Key {api_keys.index(k)+1} - {m}: {translate_error(msg, r.status_code)}")
+                        except Exception as e: errors.append(f"Key {api_keys.index(k)+1} - {m}: {translate_error(str(e))}")
                     if srt_res: break
                 if srt_res: break
             
@@ -372,14 +377,14 @@ if up:
 if st.session_state.processing_done:
     st.markdown("---")
     if st.session_state.video_data:
-        st.subheader("🎥 Final Video")
+        st.subheader("🎥 တည်းဖြတ်ပြီး ဗီဒီယို")
         st.video(st.session_state.video_data)
-        st.download_button("📥 Download Video", st.session_state.video_data, "recap_final.mp4", "video/mp4")
+        st.download_button("📥 ဗီဒီယိုကို သိမ်းဆည်းရန်", st.session_state.video_data, "recap_final.mp4", "video/mp4")
     c1, c2 = st.columns(2)
     with c1:
         if st.session_state.audio_data:
             st.audio(st.session_state.audio_data)
-            st.download_button("📥 Download Audio", st.session_state.audio_data, "recap_audio.mp3", "audio/mp3")
+            st.download_button("📥 အသံဖိုင်ကို သိမ်းဆည်းရန်", st.session_state.audio_data, "recap_audio.mp3", "audio/mp3")
     with c2:
         if st.session_state.srt_data:
-            st.download_button("📥 Download SRT", st.session_state.srt_data, "recap.srt", "text/plain")
+            st.download_button("📥 စာတန်းထိုး (SRT) ကို သိမ်းဆည်းရန်", st.session_state.srt_data, "recap.srt", "text/plain")
