@@ -57,38 +57,52 @@ init_state()
 st.title("🎬 Movie Recap AI Pro V6.2")
 st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Unicode & Wrap Fix)")
 
-# --- HELPER: SYNC CALLBACK ---
-def sync_widgets(src_key, dst_key):
-    st.session_state[dst_key] = st.session_state[src_key]
-
-# --- HELPER: CONTROL WITH SLIDER & NUMBER INPUT ---
+# --- HELPER: CONTROL WITH BUTTONS, SLIDER & NUMBER INPUT ---
 def plus_minus_control(label, key, min_val, max_val, step=1.0):
     st.write(f"**{label}**")
-    col_s, col_n = st.columns([3, 1])
     
-    slider_key = f"sld_{key}"
-    number_key = f"num_{key}"
+    # Master value management
+    if key not in st.session_state:
+        st.session_state[key] = float(min_val)
     
-    # Initialize widget keys from master session state
-    if slider_key not in st.session_state:
-        st.session_state[slider_key] = float(st.session_state[key])
-    if number_key not in st.session_state:
-        st.session_state[number_key] = float(st.session_state[key])
-        
-    f_min, f_max, f_step = float(min_val), float(max_val), float(step)
+    val = float(st.session_state[key])
     
-    with col_s:
-        st.slider(label, f_min, f_max, step=f_step, key=slider_key, 
-                  on_change=sync_widgets, args=(slider_key, number_key),
-                  label_visibility="collapsed")
-        
-    with col_n:
-        st.number_input(label, f_min, f_max, step=f_step, key=number_key,
-                        on_change=sync_widgets, args=(number_key, slider_key),
-                        label_visibility="collapsed")
+    # Row 1: Slider and Buttons
+    col1, col2, col3 = st.columns([1, 4, 1])
+    
+    def update_val(new_v):
+        st.session_state[key] = float(np.clip(new_v, min_val, max_val))
+        # Clear specific widget keys to force update on next rerun
+        if f"num_in_{key}" in st.session_state: del st.session_state[f"num_in_{key}"]
+        if f"sld_in_{key}" in st.session_state: del st.session_state[f"sld_in_{key}"]
+
+    with col1:
+        if st.button("➖", key=f"btn_min_{key}"):
+            update_val(val - step)
+            st.rerun()
             
-    # Update master state and return
-    st.session_state[key] = st.session_state[slider_key]
+    with col2:
+        # Slider updates master value directly via key
+        new_sl_val = st.slider(label, float(min_val), float(max_val), value=val, step=float(step), key=f"sld_in_{key}", label_visibility="collapsed")
+        if new_sl_val != val:
+            st.session_state[key] = new_sl_val
+            st.rerun()
+            
+    with col3:
+        if st.button("➕", key=f"btn_pls_{key}"):
+            update_val(val + step)
+            st.rerun()
+
+    # Row 2: Number Input for precise entry
+    col_label, col_input = st.columns([3, 1])
+    with col_label:
+        st.caption(f"Precise {label}")
+    with col_input:
+        new_nm_val = st.number_input(label, float(min_val), float(max_val), value=val, step=float(step), key=f"num_in_{key}", label_visibility="collapsed")
+        if new_nm_val != val:
+            st.session_state[key] = new_nm_val
+            st.rerun()
+            
     return st.session_state[key]
 
 # --- ERROR TRANSLATOR ---
