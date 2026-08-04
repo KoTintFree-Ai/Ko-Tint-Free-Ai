@@ -13,13 +13,11 @@ import re
 import shutil
 
 # --- CONFIGURATION ---
-# Multi-version support to prevent 404 errors
 API_VERSIONS = ["v1beta", "v1"]
 MODELS_TO_TRY = [
     "gemini-1.5-flash", 
     "gemini-1.5-flash-8b", 
-    "gemini-1.5-pro",
-    "gemini-1.0-pro"
+    "gemini-1.5-pro"
 ]
 
 st.set_page_config(
@@ -54,7 +52,7 @@ def init_state():
 init_state()
 
 st.title("🎬 Movie Recap AI Pro V6.2")
-st.markdown("English Video → Myanmar Movie Recap (Stable API Fix)")
+st.markdown("English Video → Myanmar Movie Recap (API Debug Version)")
 
 # --- HELPER: +/- BUTTONS ---
 def plus_minus_control(label, key, min_val, max_val, step=1.0):
@@ -82,19 +80,29 @@ with st.sidebar:
         if not api_keys:
             st.error("API Key အရင်ထည့်ပေးပါ။")
         else:
-            found = False
-            for k in api_keys:
-                # Test with a simple model
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash?key={k}"
-                try:
-                    r = requests.get(url)
-                    if r.status_code == 200:
-                        st.success(f"✅ Key {api_keys.index(k)+1} is Working!")
-                        found = True
-                    else:
-                        st.error(f"❌ Key {api_keys.index(k)+1} Error: {r.status_code}")
-                except: st.error(f"❌ Key {api_keys.index(k)+1} Connection Failed")
-            if found: st.info("API ချိတ်ဆက်မှု အောင်မြင်ပါသည်။")
+            for i, k in enumerate(api_keys):
+                st.write(f"--- Key {i+1} Testing ---")
+                success = False
+                for ver in API_VERSIONS:
+                    url = f"https://generativelanguage.googleapis.com/{ver}/models/gemini-1.5-flash?key={k}"
+                    try:
+                        r = requests.get(url, timeout=10)
+                        if r.status_code == 200:
+                            st.success(f"✅ Key {i+1} ({ver}) is Working!")
+                            success = True
+                            break
+                        else:
+                            try: 
+                                err_data = r.json()
+                                msg = err_data.get('error', {}).get('message', r.text)
+                                reason = err_data.get('error', {}).get('status', 'Unknown')
+                            except: 
+                                msg = r.text
+                                reason = "Unknown"
+                            st.error(f"❌ Key {i+1} ({ver}) Error: {r.status_code}\n\nReason: {reason}\n\nMessage: {msg}")
+                    except Exception as e:
+                        st.error(f"❌ Key {i+1} ({ver}) Connection Failed: {str(e)}")
+                if success: st.info(f"Key {i+1} ကို အသုံးပြုနိုင်ပါသည်။")
 
     st.markdown("---")
     st.subheader("🎬 Video Layout")
@@ -304,7 +312,6 @@ if up:
             srt_res = None
             errors = []
             
-            # Try different API versions and Models
             for k in api_keys:
                 for ver in API_VERSIONS:
                     for m in MODELS_TO_TRY:
@@ -316,15 +323,16 @@ if up:
                                 if 'candidates' in data and data['candidates'][0]['content']['parts']:
                                     srt_res = data['candidates'][0]['content']['parts'][0]['text']
                                     if srt_res: break
-                                else: errors.append(f"Model {m} ({ver}): အဖြေမထွက်ပါ။")
-                            elif r.status_code == 404:
-                                errors.append(f"Model {m} ({ver}): URL Not Found (404)")
-                            elif r.status_code == 429:
-                                errors.append(f"Model {m} ({ver}): Quota ပြည့်သွားပါပြီ (429)")
+                                else: errors.append(f"Model {m} ({ver}): အဖြေမထွက်ပါ။ (Safety Filter ဖြစ်နိုင်သည်)")
                             else:
-                                try: msg = r.json().get('error', {}).get('message', r.text)
-                                except: msg = r.text
-                                errors.append(f"Model {m} ({ver}): Error {r.status_code} - {msg}")
+                                try: 
+                                    err_data = r.json()
+                                    msg = err_data.get('error', {}).get('message', r.text)
+                                    status = err_data.get('error', {}).get('status', 'Unknown')
+                                except: 
+                                    msg = r.text
+                                    status = "Unknown"
+                                errors.append(f"Key {api_keys.index(k)+1} - {m} ({ver}): {r.status_code} ({status}) - {msg}")
                         except Exception as e: errors.append(f"Model {m} ({ver}): {str(e)}")
                     if srt_res: break
                 if srt_res: break
