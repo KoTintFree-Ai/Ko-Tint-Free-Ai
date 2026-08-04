@@ -314,7 +314,11 @@ def parse_srt_text(text):
     
     # Aggressive SRT cleaning
     # Remove timestamps like 00:00:00,000 --> 00:00:05,000
+    # Aggressively remove any timestamp-like patterns and SRT index numbers
     text = re.sub(r'\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}', '', text)
+    text = re.sub(r'^\s*\d+\s*$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\[\d{1,2}:\d{1,2}:\d{1,2}\.\d{3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{3}\]', '', text)
+    text = re.sub(r'\(\d{1,2}:\d{1,2}:\d{1,2}\.\d{3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{3}\)', '', text)
     
     lines = text.split('\n')
     clean_lines = []
@@ -324,7 +328,12 @@ def parse_srt_text(text):
         # Skip lines that are just numbers (SRT indices)
         if re.match(r'^\d+$', line): continue
         # Skip lines like "1.", "(1)", etc.
+        # Skip lines that are just numbers (SRT indices) or common timestamp patterns
+        if re.match(r'^\d+$', line): continue
         if re.match(r'^\(?\d+[\.\)]\s*$', line): continue
+        if re.match(r'^\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}$', line): continue
+        if re.match(r'^\[\d{1,2}:\d{1,2}:\d{1,2}\.\d{3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{3}\]$', line): continue
+        if re.match(r'^\(\d{1,2}:\d{1,2}:\d{1,2}\.\d{3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{3}\)$', line): continue
         # Skip common headers
         if re.match(r'(?i)^(here is|narration|recap|script|translation):', line): continue
         
