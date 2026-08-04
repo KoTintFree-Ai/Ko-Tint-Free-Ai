@@ -393,35 +393,36 @@ def fmt_srt(s):
 
 def parse_srt_text(text):
     # Remove markdown code blocks if present
-    text = re.sub(r'```srt?', '', text)
+    text = re.sub(r'```srt?', '', text, flags=re.IGNORECASE)
     text = re.sub(r'```', '', text).strip()
     
-    # Split by double newline or by subtitle index pattern
-    blocks = re.split(r'\n\s*\n|\n(?=\d+\s*\n\d{2}:)', text)
+    # Very aggressive splitting: look for any line that looks like a timestamp or a block index
+    # We want to extract the actual narration text.
+    blocks = re.split(r'\n\d+\s*\n|\n\d{2}:\d{2}:\d{2}', text)
     segments = []
     for block in blocks:
         lines = block.strip().split('\n')
-        if not lines: continue
-        
-        # Look for the text part (usually after the timestamp line)
         content_lines = []
-        found_timestamp = False
         for line in lines:
-            if '-->' in line:
-                found_timestamp = True
+            line = line.strip()
+            # Skip lines that are just timestamps or numbers
+            if '-->' in line or re.match(r'^[\d:,.\s\->]+$', line):
                 continue
-            if found_timestamp:
-                content_lines.append(line)
-            elif not re.match(r'^\d+$', line.strip()):
-                # If no timestamp yet and not just a number, it might be plain text
+            if line:
                 content_lines.append(line)
         
         content = ' '.join(content_lines).strip()
         if content:
-            # Clean up any remaining SRT artifacts from the text
-            content = re.sub(r'<[^>]*>', '', content) # Remove HTML tags
+            # Clean up any remaining SRT artifacts or HTML tags
+            content = re.sub(r'<[^>]*>', '', content)
             segments.append(content)
             
+    # If the aggressive split failed to find anything, try splitting by sentences
+    if not segments:
+        text_clean = re.sub(r'\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,.]\d{3}', '', text)
+        text_clean = re.sub(r'^\d+$', '', text_clean, flags=re.MULTILINE)
+        segments = [s.strip() for s in re.split(r'[။।.!?;]', text_clean) if s.strip()]
+        
     return [s.strip() for s in segments if s.strip()]
 
 async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
@@ -514,16 +515,30 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     if target > 0 and cur_time < target:
         diff = target - cur_time
         p_final_gap = tempfile.mktemp(suffix=".mp3")
-        subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=mono", "-t", str(diff), p_final_gap], capture_output=True)
+        # Ensure silence matches voice sample rate (24k is standard for edge-tts)
+        subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", "-t", str(diff), p_final_gap], capture_output=True)
         if os.path.exists(p_final_gap):
             final_temp_files.append(p_final_gap)
             cur_time += diff
             
-    # 4. Final Concat (Avoid -c copy to ensure perfect duration)
-    l_p = tempfile.mktemp(suffix=".txt")
-    with open(l_p, "w", encoding='utf-8') as f: f.write("\n".join([f"file '{p}'" for p in final_temp_files]))
-    # Re-encode during concat for precise timing
-    subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", l_p, "-c:a", "libmp3lame", "-q:a", "4", out_p], capture_output=True)
+    # 4. Final Concat
+    if len(final_temp_files) == 1:
+        shutil.copy(final_temp_files[0], out_p)
+    else:
+        l_p = tempfile.mktemp(suffix=".txt")
+        with open(l_p, "w", encoding='utf-8') as f: 
+            f.write("\n".join([f"file '{os.path.abspath(p)}'" for p in final_temp_files]))
+        
+        # Use a more robust concat method that handles potential stream mismatches
+        # First try concat demuxer with re-encoding
+        res = subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", l_p, "-ac", "2", "-ar", "44100", "-b:a", "192k", out_p], capture_output=True)
+        
+        # Fallback if concat demuxer fails
+        if not os.path.exists(out_p) or os.path.getsize(out_p) < 1000:
+            filter_complex = "".join([f"[{i}:a]" for i in range(len(final_temp_files))]) + f"concat=n={len(final_temp_files)}:v=0:a=1[a]"
+            inputs = []
+            for p in final_temp_files: inputs.extend(["-i", p])
+            subprocess.run(["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_complex, "-map", "[a]", "-ac", "2", "-ar", "44100", "-b:a", "192k", out_p], capture_output=True)
     
     for p in final_temp_files:
         if os.path.exists(p): os.remove(p)
@@ -758,8 +773,11 @@ FORMATTING RULES:
                         x_pos = (vw - sw) // 2
                         y_pos = int(vh * (st.session_state.sub_y_pos / 100)) - (sh // 2)
                         
-                        safe_spath = spath.replace('\\', '/').replace(':', '\\\\').replace("'", "'\\\\\''")
-                        overlay_filters.append(f"movie='{safe_spath}'[s{i}];[v][s{i}]overlay={x_pos}:{y_pos}:enable='between(t,{seg['start']},{seg['end']})'[v]")
+                        # More robust path escaping for FFmpeg movie filter on Linux
+                        # The movie filter path needs ':' and ',' and '[' and ']' escaped.
+                        # Using filename= is safer.
+                        safe_spath = spath.replace("'", "'\\''").replace(":", "\\:")
+                        overlay_filters.append(f"movie=filename='{safe_spath}'[s{i}];[v][s{i}]overlay={x_pos}:{y_pos}:enable='between(t,{seg['start']},{seg['end']})'[v]")
 
                     # Calculate absolute pixel coordinates for blur during rendering
                     by_px_r = int(vh * (st.session_state.blur_y_pos / 100))
