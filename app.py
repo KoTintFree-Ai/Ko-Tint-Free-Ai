@@ -155,19 +155,28 @@ with st.sidebar:
         st.rerun()
 
 # --- UTILITIES ---
-def wrap_text(text, max_len=45):
-    # Auto wrap Myanmar text to prevent long lines
-    if len(text) <= max_len: return text
+def wrap_text(text, max_len=30):
+    """Intelligently wrap Myanmar text to prevent long lines"""
+    if len(text) <= max_len:
+        return text
+    
+    # Split by spaces first
     words = text.split(' ')
     lines = []
     cur_line = ""
+    
     for w in words:
-        if len(cur_line + w) <= max_len:
-            cur_line += (w + " ")
+        test_line = cur_line + (" " if cur_line else "") + w
+        if len(test_line) <= max_len:
+            cur_line = test_line
         else:
-            lines.append(cur_line.strip())
-            cur_line = w + " "
-    lines.append(cur_line.strip())
+            if cur_line:
+                lines.append(cur_line)
+            cur_line = w
+    
+    if cur_line:
+        lines.append(cur_line)
+    
     return "\n".join(lines)
 
 def get_dur(p):
@@ -182,19 +191,38 @@ def fmt_srt(s):
     return f"{time.strftime('%H:%M:%S', time.gmtime(s))},{m:03d}"
 
 def parse_srt_text(text):
-    blocks = re.split(r'\n\s*\n', text.strip())
+    """Parse SRT or plain text and extract subtitle segments"""
+    # Remove any leading/trailing whitespace
+    text = text.strip()
+    
+    # Try to parse as SRT format first
+    blocks = re.split(r'\n\s*\n', text)
     segments = []
-    for b in blocks:
-        lines = b.strip().split('\n')
-        if len(lines) >= 3:
-            for i, l in enumerate(lines):
-                if '-->' in l:
-                    segments.append(" ".join(lines[i+1:]))
-                    break
-        elif len(lines) > 0:
-            clean = re.sub(r'^\d+|^[\d:,.\s-->]+', '', b).strip()
-            if clean: segments.append(clean)
-    return [s for s in segments if s.strip()]
+    
+    for block in blocks:
+        lines = block.strip().split('\n')
+        
+        # Look for SRT format (has --> marker)
+        found_srt = False
+        for i, line in enumerate(lines):
+            if '-->' in line:
+                # Collect all lines after the timestamp as subtitle text
+                subtitle_text = ' '.join(lines[i+1:]).strip()
+                if subtitle_text:
+                    segments.append(subtitle_text)
+                found_srt = True
+                break
+        
+        # If not SRT format, treat the whole block as text (skip if it's just a number)
+        if not found_srt and len(lines) > 0:
+            # Remove leading numbers (SRT index)
+            text_content = '\n'.join(lines)
+            text_content = re.sub(r'^\d+\s*\n', '', text_content).strip()
+            if text_content and not re.match(r'^[\d:,.\s-->]+$', text_content):
+                segments.append(text_content)
+    
+    # Filter out empty segments
+    return [s.strip() for s in segments if s.strip()]
 
 async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     rate = f"+{int((spd-50)*2)}%" if spd>=50 else f"{int((spd-50)*2)}%"
@@ -207,8 +235,8 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     for idx, txt in enumerate(segments):
         clean_txt = re.sub(r'^\d+\s*', '', txt).strip()
         if not clean_txt: continue
-        # Wrap long lines for SRT
-        wrapped_txt = wrap_text(clean_txt)
+        # Wrap long lines for SRT (max 30 chars per line)
+        wrapped_txt = wrap_text(clean_txt, max_len=30)
         p = tempfile.mktemp(suffix=".mp3")
         try:
             communicate = edge_tts.Communicate(clean_txt, vid, rate=rate, pitch=pitch)
@@ -260,8 +288,9 @@ def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sy):
     if brn and sp and os.path.exists(sp):
         se = os.path.abspath(sp).replace("\\","/").replace(":","\\:").replace("'","'\\''")
         mv = int((100 - sy) * 10)
-        # Professional Unicode styling with Pyidaungsu
-        fc += f",subtitles='{se}':fontsdir='{os.getcwd()}':force_style='Fontname=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv}'"
+        # Professional Unicode styling with Pyidaungsu - use fontfile instead of fontdir
+        font_path = os.path.abspath("Pyidaungsu.ttf").replace("\\","/").replace(":","\\:").replace("'","'\\''")
+        fc += f",subtitles='{se}':fontfile='{font_path}':force_style='FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv}'"
     if not fc.endswith("[v]"): fc += "[v]"
     return fc
 
@@ -306,7 +335,7 @@ if up:
             bf.write(st.session_state.base_frame); bp = bf.name
         ps = os.path.abspath("preview.srt")
         with open(ps, "w", encoding="utf-8") as f: 
-            f.write("1\n00:00:00,000 --> 00:00:10,000\nမြန်မာစာ ယူနီကုတ် စမ်းသပ်ကြည့်ရှုခြင်း\n(Unicode Line Wrapping Test)")
+            f.write("1\n00:00:00,000 --> 00:00:10,000\nမြန်မာစာ ယူနီကုတ်\nစမ်းသပ်ကြည့်ရှုခြင်း")
         po = tempfile.mktemp(suffix=".jpg")
         fc = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, burn_s, ps, st.session_state.font_size, st.session_state.sub_y_pos)
         fcs = fc.replace("[0:v]", "").replace("[v]", "").strip(",")
@@ -330,8 +359,16 @@ if up:
             
             stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည် (Gemini)...")
             prg.progress(30)
-            # Added explicit instruction for shorter sentences
-            prm = f"Listen to this audio and translate it into a Myanmar Movie Recap style. Target duration: {target_sec}s. Output ONLY valid SRT format. Use Myanmar language. IMPORTANT: Keep each subtitle line short and concise (maximum 10-12 words per line)."
+            # Improved instruction for better SRT formatting with shorter lines
+            prm = f"""Listen to this audio and translate it into a Myanmar Movie Recap style narration.
+Target duration: {target_sec} seconds.
+Output ONLY valid SRT subtitle format with proper timing.
+IMPORTANT RULES:
+1. Each subtitle line must be SHORT (maximum 8-10 words per line)
+2. Break long sentences into multiple lines within the same subtitle block
+3. Use proper SRT format: index, timestamp, subtitle text, blank line
+4. Keep Myanmar language natural and conversational
+5. Do NOT include any text outside the SRT format"""
             with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
             cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mpeg","data":b64}}]}]
             
