@@ -48,16 +48,14 @@ def init_state():
 init_state()
 
 st.title("🎬 Movie Recap AI Pro V6.2")
-st.markdown("English Video → Myanmar Movie Recap (Final Stable Version)")
+st.markdown("English Video → Myanmar Movie Recap (Professional Sync)")
 
 # --- HELPER: +/- BUTTONS ---
 def plus_minus_control(label, key, min_val, max_val, step=1.0):
     st.write(f"**{label}**")
     col1, col2, col3 = st.columns([1, 3, 1])
-    
     def update_val(delta):
         st.session_state[key] = float(np.clip(st.session_state[key] + delta, min_val, max_val))
-
     with col1: st.button("➖", key=f"minus_{key}", on_click=update_val, args=(-step,))
     with col2: st.slider(label, min_val, max_val, key=key, step=step, label_visibility="collapsed")
     with col3: st.button("➕", key=f"plus_{key}", on_click=update_val, args=(step,))
@@ -67,8 +65,12 @@ def plus_minus_control(label, key, min_val, max_val, step=1.0):
 with st.sidebar:
     st.header("⚙️ Settings")
     st.subheader("🔑 Gemini API Keys")
-    api_keys = [st.text_input(f"Key {i+1}", type="password", key=f"api_key_{i}") for i in range(3)]
-    api_keys = [k for k in api_keys if k]
+    k1 = st.text_input("API Key 1", type="password", key="key_1")
+    k2 = st.text_input("API Key 2", type="password", key="key_2")
+    k3 = st.text_input("API Key 3", type="password", key="key_3")
+    k4 = st.text_input("API Key 4", type="password", key="key_4")
+    k5 = st.text_input("API Key 5", type="password", key="key_5")
+    api_keys = [k for k in [k1, k2, k3, k4, k5] if k]
     
     st.markdown("---")
     st.subheader("🎬 Video Layout")
@@ -126,23 +128,16 @@ def fmt_srt(s):
     return f"{time.strftime('%H:%M:%S', time.gmtime(s))},{m:03d}"
 
 def parse_srt_text(text):
-    # Robust parsing of Gemini output
     blocks = re.split(r'\n\s*\n', text.strip())
     segments = []
     for b in blocks:
         lines = b.strip().split('\n')
         if len(lines) >= 3:
-            # Check if second line is a timestamp
-            if '-->' in lines[1]:
-                segments.append(" ".join(lines[2:]))
-            else:
-                # Try to find timestamp line
-                for i, l in enumerate(lines):
-                    if '-->' in l:
-                        segments.append(" ".join(lines[i+1:]))
-                        break
+            for i, l in enumerate(lines):
+                if '-->' in l:
+                    segments.append(" ".join(lines[i+1:]))
+                    break
         elif len(lines) > 0:
-            # Fallback for non-SRT blocks
             clean = re.sub(r'^\d+|^[\d:,.\s-->]+', '', b).strip()
             if clean: segments.append(clean)
     return [s for s in segments if s.strip()]
@@ -150,14 +145,11 @@ def parse_srt_text(text):
 async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     rate = f"+{int((spd-50)*2)}%" if spd>=50 else f"{int((spd-50)*2)}%"
     pitch = f"+{int((ptc-50)*2)}Hz" if ptc>=50 else f"{int((ptc-50)*2)}Hz"
-    
     segments = parse_srt_text(text)
-    if not segments: raise Exception("Could not parse any text for subtitles.")
-
+    if not segments: segments = [text]
     temp_files = []
     cur_t = 0.0
     srt_blocks = []
-    
     for idx, txt in enumerate(segments):
         clean_txt = re.sub(r'^\d+\s*', '', txt).strip()
         if not clean_txt: continue
@@ -169,16 +161,13 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
             if d > 0:
                 srt_blocks.append(f"{len(temp_files)+1}\n{fmt_srt(cur_t)} --> {fmt_srt(cur_t+d)}\n{clean_txt}\n\n")
                 temp_files.append(p)
-                cur_t += d + 0.1 # Gap
+                cur_t += d + 0.1
         except: continue
-
-    if not temp_files: raise Exception("Audio generation failed.")
-
+    if not temp_files: raise Exception("အသံဖိုင် ထုတ်လုပ်ခြင်း မအောင်မြင်ပါ။")
     raw = tempfile.mktemp(suffix=".mp3")
     l_p = tempfile.mktemp(suffix=".txt")
     with open(l_p, "w", encoding='utf-8') as f: f.write("\n".join([f"file '{p}'" for p in temp_files]))
     subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", l_p, "-c", "copy", raw], capture_output=True)
-    
     total = get_dur(raw)
     if target > 0 and total > 0:
         factor = total / target
@@ -196,7 +185,6 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     else:
         shutil.copy(raw, out_p)
         res_srt = "".join(srt_blocks)
-
     for p in temp_files: 
         if os.path.exists(p): os.remove(p)
     if os.path.exists(l_p): os.remove(l_p)
@@ -208,26 +196,20 @@ def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sy):
     if mir: vf.append("hflip")
     if scl: vf.append("scale=1.06*iw:-1,crop=iw/1.06:ih/1.06")
     base = ",".join(vf) if vf else "null"
-    
     if blr:
         y, h = by/100, bh/100
         fc = f"[0:v]{base},split[m][b];[b]crop=iw:ih*{h}:0:ih*{y},boxblur=20:10[blurred];[m][blurred]overlay=0:main_h*{y}"
     else:
         fc = f"[0:v]{base}"
-
     if brn and sp and os.path.exists(sp):
         se = os.path.abspath(sp).replace("\\","/").replace(":","\\:").replace("'","'\\''")
-        # MarginV calculation for better positioning
         mv = int((100 - sy) * 10)
-        # Force Pyidaungsu font with explicit style
-        font_path = os.path.abspath("Pyidaungsu.ttf").replace("\\","/").replace(":","\\:")
         fc += f",subtitles='{se}':fontsdir='{os.getcwd()}':force_style='Fontname=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv}'"
-    
     if not fc.endswith("[v]"): fc += "[v]"
     return fc
 
-# --- MAIN UI LOGIC ---
-up = st.file_uploader("Upload Video/Audio", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"])
+# --- MAIN UI ---
+up = st.file_uploader("ဗီဒီယို သို့မဟုတ် အော်ဒီယိုဖိုင် ရွေးချယ်ပါ", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"])
 
 if up:
     fid = up.name + str(up.size)
@@ -262,7 +244,7 @@ if up:
         st.session_state.do_detect = False; st.rerun()
 
     if show_prev and st.session_state.base_frame:
-        st.subheader("🖼️ Preview")
+        st.subheader("🖼️ Layout Preview")
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as bf: 
             bf.write(st.session_state.base_frame); bp = bf.name
         ps = os.path.abspath("preview.srt")
@@ -276,45 +258,58 @@ if up:
         if os.path.exists(bp): os.remove(bp)
         if os.path.exists(ps): os.remove(ps)
 
-    if not api_keys: st.warning("⚠️ Enter Gemini API Key in Sidebar")
+    if not api_keys: st.warning("⚠️ Sidebar တွင် Gemini API Key ထည့်ပေးပါ")
     elif st.button("🚀 Start Process"):
         prg = st.progress(0); stt = st.empty()
         try:
-            stt.text("📊 Step 1: Preparing Audio...")
+            stt.text("📊 အဆင့် ၁: အသံဖိုင်ကို ပြင်ဆင်နေပါသည်...")
             prg.progress(10)
             with tempfile.NamedTemporaryFile(delete=False, suffix="."+up.name.split(".")[-1]) as t:
                 t.write(up.read()); tp = t.name
             ag = tempfile.mktemp(suffix=".mp3")
             if up.name.lower().endswith((".mp4", ".mov", ".avi")):
                 subprocess.run(["ffmpeg", "-y", "-i", tp, "-vn", "-acodec", "libmp3lame", "-q:a", "4", ag], capture_output=True)
-            else:
-                shutil.copy(tp, ag)
+            else: shutil.copy(tp, ag)
             
-            stt.text("⏳ Step 2: Translating (Gemini)...")
+            stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည် (Gemini)...")
             prg.progress(30)
-            prm = f"Translate English audio to Myanmar Movie Recap style. Target duration: {target_sec}s. Output ONLY valid SRT format."
+            prm = f"Listen to this audio and translate it into a Myanmar Movie Recap style. Target duration: {target_sec}s. Output ONLY valid SRT format. Use Myanmar language."
             with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
-            cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mp3","data":b64}}]}]
+            cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mpeg","data":b64}}]}]
             srt_res = None
+            errors = []
             for k in api_keys:
                 for m in MODELS_TO_TRY:
                     try:
                         r = requests.post(f"{GEMINI_BASE_URL}/{m}:generateContent?key={k}", json={"contents":cont}, timeout=300)
                         if r.status_code == 200:
-                            srt_res = r.json()['candidates'][0]['content']['parts'][0]['text']
-                            if srt_res: break
-                    except: continue
+                            data = r.json()
+                            if 'candidates' in data and data['candidates'][0]['content']['parts']:
+                                srt_res = data['candidates'][0]['content']['parts'][0]['text']
+                                if srt_res: break
+                            else: errors.append(f"Model {m}: အကြောင်းအရာ လုံခြုံရေးကြောင့် ပိတ်ပင်ခံရခြင်း သို့မဟုတ် အဖြေမထွက်ခြင်း။")
+                        elif r.status_code == 429:
+                            errors.append(f"Model {m}: API Key Quota ပြည့်သွားပါပြီ။")
+                        elif r.status_code == 403:
+                            errors.append(f"Model {m}: API Key မမှန်ကန်ပါ။")
+                        else:
+                            errors.append(f"Model {m}: Error Code {r.status_code} ဖြစ်ပေါ်နေပါသည်။")
+                    except Exception as e: errors.append(f"Model {m}: {str(e)}")
                 if srt_res: break
-            if not srt_res: raise Exception("Gemini translation failed. Check your API keys.")
             
-            stt.text("🔊 Step 3: Generating Professional Voice & Sync...")
+            if not srt_res:
+                st.error("❌ Gemini ဘာသာပြန်ခြင်း မအောင်မြင်ပါ")
+                for e in errors: st.info(e)
+                raise Exception("မည်သည့် Model မှ ဘာသာပြန်ခြင်း မလုပ်ဆောင်နိုင်ပါ။")
+            
+            stt.text("🔊 အဆင့် ၃: အသံဖိုင်နှင့် Timing ညှိနေပါသည်...")
             prg.progress(60)
             ao = os.path.abspath("final_audio.mp3")
             st.session_state.srt_data, _ = asyncio.run(gen_audio_srt(srt_res, ao, v_id, v_speed, v_pitch, target_sec if fit_dur else 0))
             with open(ao, "rb") as f: st.session_state.audio_data = f.read()
             
             if up.name.lower().endswith((".mp4", ".mov", ".avi")):
-                stt.text("🎬 Step 4: Rendering Final Video...")
+                stt.text("🎬 အဆင့် ၄: ဗီဒီယိုကို တည်းဖြတ်နေပါသည် (Rendering)...")
                 prg.progress(80)
                 stmp = os.path.abspath("final.srt")
                 with open(stmp, "w", encoding="utf-8") as f: f.write(st.session_state.srt_data)
@@ -324,16 +319,15 @@ if up:
                 res = subprocess.run(cmd, capture_output=True, text=True)
                 if res.returncode == 0:
                     with open(fv, "rb") as f: st.session_state.video_data = f.read()
-                else:
-                    st.error(f"FFmpeg Render Error: {res.stderr}")
+                else: st.error(f"Render Error: {res.stderr}")
                 if os.path.exists(fv): os.remove(fv)
                 if os.path.exists(stmp): os.remove(stmp)
 
-            prg.progress(100); stt.text("✅ Success!"); st.session_state.processing_done = True; st.balloons()
+            prg.progress(100); stt.text("✅ အောင်မြင်စွာ ပြီးဆုံးပါပြီ!"); st.session_state.processing_done = True; st.balloons()
             if os.path.exists(tp): os.remove(tp)
             if os.path.exists(ao): os.remove(ao)
             if os.path.exists(ag): os.remove(ag)
-        except Exception as e: st.error(f"❌ Error: {str(e)}")
+        except Exception as e: st.error(f"❌ အမှားအယွင်း: {str(e)}")
 
 if st.session_state.processing_done:
     st.markdown("---")
