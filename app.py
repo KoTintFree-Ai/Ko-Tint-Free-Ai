@@ -23,7 +23,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FONT_PATH = os.path.join(SCRIPT_DIR, "Pyidaungsu.ttf")
 
 st.set_page_config(
-    page_title="Movie Recap AI Pro V7.6",
+    page_title="Movie Recap AI Pro V7.7",
     page_icon="🎬",
     layout="centered",
     initial_sidebar_state="expanded"
@@ -59,7 +59,7 @@ def init_state():
 
 init_state()
 
-st.title("🎬 Movie Recap AI Pro V7.6")
+st.title("🎬 Movie Recap AI Pro V7.7")
 st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Unicode & Wrap Fix)")
 
 # --- HELPER: SLIDER WITH PLUS/MINUS (V7.4) ---
@@ -353,9 +353,9 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
             await communicate.save(p)
             d = get_dur(p)
             if d > 0:
-                srt_blocks.append(f"{len(temp_files)+1}\n{fmt_srt(cur_t)} --> {fmt_srt(cur_t+d)}\n{wrap_text(clean_txt)}\n\n")
+                srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(cur_t)} --> {fmt_srt(cur_t+d)}\n{wrap_text(clean_txt)}\n\n")
                 temp_files.append(p)
-                cur_t += d + 0.1 # Small gap for natural flow
+                cur_t += d
         except: continue
         
     if not temp_files: raise Exception("အသံဖိုင် ထုတ်လုပ်ခြင်း မအောင်မြင်ပါ။")
