@@ -392,38 +392,53 @@ def fmt_srt(s):
     return f"{time.strftime('%H:%M:%S', time.gmtime(s))},{m:03d}"
 
 def parse_srt_text(text):
-    # Remove markdown code blocks if present
+    # Remove markdown code blocks
     text = re.sub(r'```srt?', '', text, flags=re.IGNORECASE)
     text = re.sub(r'```', '', text).strip()
     
-    # Very aggressive splitting: look for any line that looks like a timestamp or a block index
-    # We want to extract the actual narration text.
-    blocks = re.split(r'\n\d+\s*\n|\n\d{2}:\d{2}:\d{2}', text)
+    # 1. Try to parse as standard SRT first
     segments = []
+    blocks = re.split(r'\n\s*\n', text)
     for block in blocks:
-        lines = block.strip().split('\n')
-        content_lines = []
+        lines = [l.strip() for l in block.strip().split('\n') if l.strip()]
+        if len(lines) >= 2:
+            # Check if second line is a timestamp
+            if '-->' in lines[1] or (len(lines) > 2 and '-->' in lines[2]):
+                # It's an SRT block, extract text
+                start_idx = 2 if '-->' in lines[1] else 3
+                txt = ' '.join(lines[start_idx:]).strip()
+                if txt: segments.append(txt)
+    
+    # 2. If no segments found, it might be non-standard. Extract all non-timestamp lines.
+    if not segments:
+        lines = text.split('\n')
+        current_seg = []
         for line in lines:
             line = line.strip()
-            # Skip lines that are just timestamps or numbers
-            if '-->' in line or re.match(r'^[\d:,.\s\->]+$', line):
+            if not line:
+                if current_seg:
+                    segments.append(' '.join(current_seg))
+                    current_seg = []
                 continue
-            if line:
-                content_lines.append(line)
-        
-        content = ' '.join(content_lines).strip()
-        if content:
-            # Clean up any remaining SRT artifacts or HTML tags
-            content = re.sub(r'<[^>]*>', '', content)
-            segments.append(content)
+            # Skip timestamps and indices
+            if '-->' in line or re.match(r'^\d+$', line):
+                if current_seg:
+                    segments.append(' '.join(current_seg))
+                    current_seg = []
+                continue
+            current_seg.append(line)
+        if current_seg:
+            segments.append(' '.join(current_seg))
             
-    # If the aggressive split failed to find anything, try splitting by sentences
-    if not segments:
-        text_clean = re.sub(r'\d{2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{2}:\d{2}:\d{2}[,.]\d{3}', '', text)
-        text_clean = re.sub(r'^\d+$', '', text_clean, flags=re.MULTILINE)
-        segments = [s.strip() for s in re.split(r'[။।.!?;]', text_clean) if s.strip()]
-        
-    return [s.strip() for s in segments if s.strip()]
+    # 3. Final cleanup: Remove any residual SRT/HTML artifacts
+    clean_segments = []
+    for s in segments:
+        s = re.sub(r'<[^>]*>', '', s)
+        s = s.replace('-->', '').strip()
+        if s and not re.match(r'^[\d:,.\s]+$', s):
+            clean_segments.append(s)
+            
+    return clean_segments
 
 async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     rate = f"+{int((spd-50)*2)}%" if spd>=50 else f"{int((spd-50)*2)}%"
@@ -433,24 +448,34 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     
     # 1. Generate all raw audio segments
     raw_segments = []
-    for txt in segments:
-        clean_txt = re.sub(r'^\d+\s*', '', txt).strip()
+    for i, txt in enumerate(segments):
+        clean_txt = txt.strip()
         if not clean_txt: continue
-        import unicodedata
-        clean_txt = unicodedata.normalize('NFC', clean_txt)
         
         p = tempfile.mktemp(suffix=".mp3")
         try:
             communicate = edge_tts.Communicate(clean_txt, vid, rate=rate, pitch=pitch)
             await communicate.save(p)
-            # Trim silence slightly
+            
+            # LESS aggressive silence removal to avoid cutting Myanmar words
             p_trimmed = tempfile.mktemp(suffix=".mp3")
-            subprocess.run(["ffmpeg", "-y", "-i", p, "-af", "silenceremove=start_periods=1:start_silence=0.05:start_threshold=-50dB:detection=peak,silenceremove=stop_periods=1:stop_silence=0.05:stop_threshold=-50dB:detection=peak", p_trimmed], capture_output=True)
+            subprocess.run(["ffmpeg", "-y", "-i", p, "-af", "silenceremove=start_periods=1:start_silence=0.02:start_threshold=-45dB:detection=peak,silenceremove=stop_periods=1:stop_silence=0.02:stop_threshold=-45dB:detection=peak", p_trimmed], capture_output=True)
+            
             d = get_dur(p_trimmed)
             if d > 0:
                 raw_segments.append({'path': p_trimmed, 'dur': d, 'text': clean_txt})
-            if os.path.exists(p): os.remove(p)
-        except: continue
+            else:
+                # If trimming killed it, use the original
+                d_orig = get_dur(p)
+                if d_orig > 0:
+                    raw_segments.append({'path': p, 'dur': d_orig, 'text': clean_txt})
+                    if os.path.exists(p_trimmed): os.remove(p_trimmed)
+                    p = None # Mark as used
+            
+            if p and os.path.exists(p): os.remove(p)
+        except Exception as e:
+            # Don't skip, try to log or just move on to next
+            continue
         
     if not raw_segments: raise Exception("အသံဖိုင် ထုတ်လုပ်ခြင်း မအောင်မြင်ပါ။")
     
@@ -521,24 +546,34 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
             final_temp_files.append(p_final_gap)
             cur_time += diff
             
-    # 4. Final Concat
+    # 4. Final Concat - Use Filter Complex by default for maximum reliability
     if len(final_temp_files) == 1:
         shutil.copy(final_temp_files[0], out_p)
     else:
-        l_p = tempfile.mktemp(suffix=".txt")
-        with open(l_p, "w", encoding='utf-8') as f: 
-            f.write("\n".join([f"file '{os.path.abspath(p)}'" for p in final_temp_files]))
-        
-        # Use a more robust concat method that handles potential stream mismatches
-        # First try concat demuxer with re-encoding
-        res = subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", l_p, "-ac", "2", "-ar", "44100", "-b:a", "192k", out_p], capture_output=True)
-        
-        # Fallback if concat demuxer fails
-        if not os.path.exists(out_p) or os.path.getsize(out_p) < 1000:
-            filter_complex = "".join([f"[{i}:a]" for i in range(len(final_temp_files))]) + f"concat=n={len(final_temp_files)}:v=0:a=1[a]"
+        # Use a flat two-stage approach to avoid deep recursion
+        if len(final_temp_files) <= 50:
             inputs = []
-            for p in final_temp_files: inputs.extend(["-i", p])
+            for f in final_temp_files: inputs.extend(["-i", f])
+            filter_complex = "".join([f"[{i}:a]" for i in range(len(final_temp_files))]) + f"concat=n={len(final_temp_files)}:v=0:a=1[a]"
             subprocess.run(["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_complex, "-map", "[a]", "-ac", "2", "-ar", "44100", "-b:a", "192k", out_p], capture_output=True)
+        else:
+            group_files = []
+            for i in range(0, len(final_temp_files), 50):
+                chunk = final_temp_files[i:i+50]
+                temp_chunk = tempfile.mktemp(suffix=".mp3")
+                inputs = []
+                for f in chunk: inputs.extend(["-i", f])
+                filter_complex = "".join([f"[{i}:a]" for i in range(len(chunk))]) + f"concat=n={len(chunk)}:v=0:a=1[a]"
+                subprocess.run(["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_complex, "-map", "[a]", "-ac", "2", "-ar", "44100", "-b:a", "192k", temp_chunk], capture_output=True)
+                group_files.append(temp_chunk)
+            
+            # Final stage
+            inputs = []
+            for f in group_files: inputs.extend(["-i", f])
+            filter_complex = "".join([f"[{i}:a]" for i in range(len(group_files))]) + f"concat=n={len(group_files)}:v=0:a=1[a]"
+            subprocess.run(["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_complex, "-map", "[a]", "-ac", "2", "-ar", "44100", "-b:a", "192k", out_p], capture_output=True)
+            for f in group_files: 
+                if os.path.exists(f): os.remove(f)
     
     for p in final_temp_files:
         if os.path.exists(p): os.remove(p)
@@ -738,7 +773,11 @@ FORMATTING RULES:
                 prg.progress(60)
                 ao_name = f"audio_{fid}_{int(time.time())}.mp3"
                 ao = os.path.join(tempfile.gettempdir(), ao_name)
-                st.session_state.srt_data, _ = asyncio.run(gen_audio_srt(srt_res, ao, v_id, v_speed, v_pitch, target_sec if fit_dur else 0))
+                
+                # Use a small status update during generation
+                with st.status("🔊 အသံဖိုင်များကို တစ်ခုချင်းစီ ထုတ်လုပ်နေပါသည်...", expanded=False) as status:
+                    st.session_state.srt_data, _ = asyncio.run(gen_audio_srt(srt_res, ao, v_id, v_speed, v_pitch, target_sec if fit_dur else 0))
+                    status.update(label="✅ အသံဖိုင်အားလုံး ပေါင်းစပ်ပြီးပါပြီ!", state="complete")
                 st.session_state.audio_path = ao
 
                 if up.name.lower().endswith((".mp4", ".mov", ".avi")):
