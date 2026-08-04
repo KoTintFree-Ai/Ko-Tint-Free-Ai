@@ -11,6 +11,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import re
 import shutil
+import psutil
 
 # --- CONFIGURATION ---
 API_VERSIONS = ["v1beta", "v1"]
@@ -84,6 +85,29 @@ def translate_error(err_msg, status_code=None):
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ ဆက်တင်များ")
+    
+    # RAM Monitor
+    st.subheader("🖥️ RAM စောင့်ကြည့်ရန်")
+    def get_ram_usage():
+        process = psutil.Process(os.getpid())
+        mem_info = process.memory_info()
+        return mem_info.rss / (1024 * 1024)  # MB
+
+    ram_used = get_ram_usage()
+    # Streamlit Cloud free tier limit is usually 1GB (1024MB)
+    ram_limit = 1024 
+    ram_pct = min(ram_used / ram_limit, 1.0)
+    
+    col_r1, col_r2 = st.columns([2, 1])
+    col_r1.progress(ram_pct)
+    col_r2.write(f"{ram_used:.0f}/{ram_limit}MB")
+    
+    if ram_used > 800:
+        st.warning("⚠️ RAM သုံးစွဲမှု များနေပါသည်။ (Limit: 1024MB)")
+    elif ram_used > 950:
+        st.error("🚨 RAM ပြည့်ခါနီးနေပါပြီ! App Crash ဖြစ်နိုင်ပါသည်။")
+    
+    st.markdown("---")
     st.subheader("🔑 Gemini API Keys (၅ ခုအထိ)")
     k1 = st.text_input("API Key 1", type="password", key="key_1")
     k2 = st.text_input("API Key 2", type="password", key="key_2")
