@@ -11,6 +11,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import re
 import shutil
+import static_ffmpeg
+static_ffmpeg.add_paths()
 
 # --- CONFIGURATION ---
 API_VERSIONS = ["v1beta", "v1"]
