@@ -6,9 +6,11 @@ import json
 import tempfile
 import urllib.request
 import requests
-import asyncio
-import edge_tts
+import shutil
+import re
 import subprocess
+import numpy as np
+from PIL import Image, ImageOps
 import re
 import shutil
 
@@ -61,10 +63,19 @@ with st.sidebar:
     mirror_video = st.checkbox("Mirror Video (Reverse)", value=True)
     scale_video = st.checkbox("Scale Video (106%)", value=True)
     blur_subtitles = st.checkbox("Blur Original Subtitles", value=True)
-    blur_y_pos = st.slider("Blur Y Position (%)", 0, 100, 85) if blur_subtitles else 85
-    blur_h_size = st.slider("Blur Height (%)", 1, 50, 10) if blur_subtitles else 10
+    
+    if 'blur_y_pos' not in st.session_state: st.session_state.blur_y_pos = 85.0
+    if 'blur_h_size' not in st.session_state: st.session_state.blur_h_size = 10.0
+    
+    blur_y_pos = st.slider("Blur Y Position (%)", 0.0, 100.0, st.session_state.blur_y_pos) if blur_subtitles else 85.0
+    blur_h_size = st.slider("Blur Height (%)", 1.0, 50.0, st.session_state.blur_h_size) if blur_subtitles else 10.0
+    
+    # Sync slider back to session state
+    st.session_state.blur_y_pos = blur_y_pos
+    st.session_state.blur_h_size = blur_h_size
     burn_myanmar_subs = st.checkbox("Burn Myanmar Subtitles", value=True)
     
+    auto_detect_btn = st.button("✨ Auto Detect Subtitle Area")
     preview_btn = st.button("🖼️ Preview Blur Area")
     
     st.markdown("---")
@@ -173,6 +184,52 @@ async def generate_audio_and_srt_v44(text, audio_path, v_id, s, p, target_durati
     if os.path.exists(temp_audio): os.remove(temp_audio)
     return "\n".join(srt_lines), actual_dur
 
+def auto_detect_subtitle_y(video_path):
+    """Detects the likely Y position and height of subtitles in the video."""
+    try:
+        # Extract a frame at 10% of the video to avoid intros
+        duration = get_duration(video_path)
+        sample_time = duration * 0.1 if duration else 5
+        temp_frame = tempfile.mktemp(suffix='.jpg')
+        
+        cmd = ["ffmpeg", "-y", "-ss", str(sample_time), "-i", video_path, "-frames:v", "1", temp_frame]
+        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        if not os.path.exists(temp_frame): return 85, 10
+        
+        img = Image.open(temp_frame).convert('L') # Grayscale
+        width, height = img.size
+        # Focus on the bottom 40% of the image
+        bottom_part = img.crop((0, int(height * 0.6), width, height))
+        arr = np.array(bottom_part)
+        
+        # Calculate row-wise variance to find text areas (text has high contrast/variance)
+        row_variance = np.var(arr, axis=1)
+        # Find rows where variance is above a threshold
+        threshold = np.mean(row_variance) * 1.5
+        text_rows = np.where(row_variance > threshold)[0]
+        
+        if len(text_rows) > 0:
+            y_start_in_crop = text_rows[0]
+            y_end_in_crop = text_rows[-1]
+            
+            # Convert back to full image percentage
+            actual_y_start = int(height * 0.6) + y_start_in_crop
+            actual_y_end = int(height * 0.6) + y_end_in_crop
+            
+            # Add some padding
+            padding = 10
+            final_y = max(0, actual_y_start - padding)
+            final_h = min(height, (actual_y_end - actual_y_start) + (padding * 2))
+            
+            os.remove(temp_frame)
+            return (final_y / height) * 100, (final_h / height) * 100
+            
+        os.remove(temp_frame)
+    except Exception as e:
+        st.error(f"Auto Detect Error: {e}")
+    return 85, 10 # Default fallback
+
 def get_blur_filter(mirror, scale, blur, blur_y, blur_h, burn_subs=False, srt_path=None):
     v_filters = []
     if mirror: v_filters.append("hflip")
@@ -257,6 +314,14 @@ if uploaded_file is not None:
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tfile:
         tfile.write(uploaded_file.getvalue())
         temp_preview_path = os.path.abspath(tfile.name)
+
+    if auto_detect_btn:
+        with st.spinner("🔍 Detecting Subtitles..."):
+            det_y, det_h = auto_detect_subtitle_y(temp_preview_path)
+            st.session_state.blur_y_pos = float(det_y)
+            st.session_state.blur_h_size = float(det_h)
+            st.success(f"✅ Detected! Y: {det_y:.1f}%, Height: {det_h:.1f}%")
+            st.rerun()
 
     if preview_btn:
         st.subheader("🖼️ Blur Area Preview")
