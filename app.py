@@ -10,12 +10,13 @@ import asyncio
 import edge_tts
 import subprocess
 import re
+import shutil
 
 # --- CONFIGURATION ---
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 MODELS_TO_TRY = ["gemini-1.5-flash", "gemini-3.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b"]
 
-st.set_page_config(page_title="🎬 Movie Recap AI Turbo V3.5", page_icon="🎬", layout="centered")
+st.set_page_config(page_title="🎬 Movie Recap AI Turbo V3.6", page_icon="🎬", layout="centered")
 
 # Session State Persistence
 if 'myanmar_text' not in st.session_state: st.session_state.myanmar_text = None
@@ -24,9 +25,9 @@ if 'srt_data' not in st.session_state: st.session_state.srt_data = None
 if 'processing_done' not in st.session_state: st.session_state.processing_done = False
 
 # Version Tag
-st.caption("🚀 Version 3.5 - Myanmar Error Handling & Turbo Speed")
+st.caption("🚀 Version 3.6 - FFmpeg Fix & Robust Processing")
 st.title("🎬 Movie Recap AI Turbo")
-st.markdown("English Video/Audio → Myanmar Movie Recap Style + Myanmar Support")
+st.markdown("English Video/Audio → Myanmar Movie Recap Style + FFmpeg Support")
 
 # --- SIDEBAR SETTINGS ---
 with st.sidebar:
@@ -66,8 +67,13 @@ with st.sidebar:
         st.rerun()
 
 # --- UTILITIES ---
+def is_ffmpeg_installed():
+    return shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+
 def get_duration(file_path):
     if not file_path or not os.path.exists(file_path):
+        return None
+    if not is_ffmpeg_installed():
         return None
     try:
         result = subprocess.run(
@@ -99,29 +105,28 @@ def format_srt_time(seconds):
 
 def translate_error_to_myanmar(error_msg):
     error_msg = str(error_msg).lower()
+    if not is_ffmpeg_installed():
+        return "❌ FFmpeg ကို ရှာမတွေ့ပါဘူး။ ကျေးဇူးပြု၍ GitHub မှာ 'packages.txt' ဖိုင်ကို တင်ပေးပါ။ (အထဲမှာ ffmpeg လို့ ရေးထားရပါမယ်)"
+    
     if "429" in error_msg or "quota" in error_msg:
         return "❌ Gemini API ရဲ့ အသုံးပြုမှု ကန့်သတ်ချက် (Quota) ပြည့်သွားပါပြီ။ ကျေးဇူးပြု၍ နောက်ထပ် API Key တစ်ခုကို စမ်းကြည့်ပါ သို့မဟုတ် ခဏစောင့်ပြီးမှ ပြန်ကြိုးစားပါ။"
     elif "401" in error_msg or "403" in error_msg or "invalid api key" in error_msg:
         return "❌ ထည့်သွင်းထားတဲ့ Gemini API Key မှားယွင်းနေပါတယ်။ Sidebar မှာ API Key ကို ပြန်စစ်ပေးပါ။"
-    elif "404" in error_msg:
-        return "❌ ရွေးချယ်ထားတဲ့ Gemini Model ကို ရှာမတွေ့ပါဘူး။"
     elif "timeout" in error_msg:
         return "❌ ချိတ်ဆက်မှု ကြာမြင့်နေပါတယ်။ အင်တာနက်လိုင်းကို စစ်ဆေးပြီး ပြန်ကြိုးစားကြည့်ပါ။"
-    elif "connection" in error_msg:
-        return "❌ Google Server နဲ့ ချိတ်ဆက်လို့မရပါဘူး။ အင်တာနက်လိုင်း ပြန်စစ်ပေးပါ။"
-    elif "ffmpeg" in error_msg or "ffprobe" in error_msg:
-        return "❌ အသံဖိုင်ကြာချိန်ကို ညှိလို့မရပါဘူး။ (FFmpeg Error)"
-    elif "int() argument" in error_msg:
-        return "❌ အသံဖိုင်ကြာချိန် တွက်ချက်ရာမှာ အမှားအယွင်း ရှိနေပါတယ်။ (NoneType Error)"
+    elif "ကြာချိန်ကို ရှာမတွေ့ပါဘူး" in error_msg:
+        return "❌ အသံဖိုင်ကြာချိန်ကို တွက်ချက်လို့မရပါဘူး။ FFmpeg အလုပ်မလုပ်တာ ဖြစ်နိုင်ပါတယ်။ GitHub မှာ packages.txt တင်ထားတာ သေချာပါစေ။"
     else:
         return f"❌ အမှားအယွင်းတစ်ခု ဖြစ်ပွားခဲ့ပါတယ်: {error_msg}"
 
-async def generate_audio_and_srt_v35(text, audio_path, v_id, s, p, target_duration=0):
+async def generate_audio_and_srt_v36(text, audio_path, v_id, s, p, target_duration=0):
     rate = speed_to_edge_rate(s)
     p_hz = pitch_to_edge_hz(p)
     communicate = edge_tts.Communicate(text, v_id, rate=rate, pitch=p_hz)
     
-    temp_audio = tempfile.mktemp(suffix='.mp3')
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_f:
+        temp_audio = tmp_f.name
+        
     word_boundaries = []
     try:
         with open(temp_audio, "wb") as f:
@@ -154,11 +159,9 @@ async def generate_audio_and_srt_v35(text, audio_path, v_id, s, p, target_durati
                 audio_path
             ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except Exception as e:
-            import shutil
             shutil.copy(temp_audio, audio_path)
             speed_multiplier = 1.0
     else:
-        import shutil
         shutil.copy(temp_audio, audio_path)
 
     final_dur = get_duration(audio_path) or actual_duration
@@ -222,6 +225,9 @@ Write ENTIRELY in Myanmar language."""
     return gemini_generate_auto(contents, keys)
 
 # --- MAIN UI ---
+if not is_ffmpeg_installed():
+    st.error("⚠️ FFmpeg ကို ရှာမတွေ့ပါဘူး။ ကျေးဇူးပြု၍ GitHub မှာ 'packages.txt' ဖိုင်ကို တင်ပေးပါ။ အထဲမှာ 'ffmpeg' လို့ ရေးသားထားရပါမယ်။")
+
 uploaded_file = st.file_uploader("ဗီဒီယို သို့မဟုတ် အော်ဒီယိုဖိုင် ရွေးချယ်ပါ", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"])
 
 if uploaded_file is not None:
@@ -248,7 +254,7 @@ if uploaded_file is not None:
                 progress_bar.progress(80)
                 audio_output = tempfile.mktemp(suffix='.mp3')
                 st.session_state.srt_data, final_dur = asyncio.run(
-                    generate_audio_and_srt_v35(st.session_state.myanmar_text, audio_output, voice_id, speed, pitch, total_target_sec)
+                    generate_audio_and_srt_v36(st.session_state.myanmar_text, audio_output, voice_id, speed, pitch, total_target_sec)
                 )
                 if os.path.exists(audio_output):
                     with open(audio_output, "rb") as f:
@@ -284,4 +290,4 @@ if st.session_state.processing_done:
             st.download_button("📥 Download SRT (CapCut)", st.session_state.srt_data, file_name="recap_subtitle.srt", mime="text/plain")
 
 st.markdown("---")
-st.caption("Developed for Myanmar Movie Recap Creators | Version 3.5 Turbo (Myanmar Error Support)")
+st.caption("Developed for Myanmar Movie Recap Creators | Version 3.6 Turbo (FFmpeg Robust)")
