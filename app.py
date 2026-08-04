@@ -156,24 +156,40 @@ with st.sidebar:
 
 # --- UTILITIES ---
 def wrap_text(text, max_len=30):
-    """Intelligently wrap Myanmar text to prevent long lines"""
-    if len(text) <= max_len:
+    """Intelligently wrap Myanmar text to prevent long lines without breaking clusters"""
+    if not text or len(text) <= max_len:
         return text
     
-    # Split by spaces first
-    words = text.split(' ')
+    # Myanmar cluster regex: Consonant/Independent Vowel followed by any number of medials/vowels/etc.
+    # Myanmar Unicode range: 1000-1021 (Consonants), 1023-102A (Indep. Vowels), 102B-103E (Combining marks)
+    import re
+    cluster_pattern = r'[\u1000-\u102A\u103F\u1040-\u1049][\u102B-\u103E]*'
+    clusters = re.findall(cluster_pattern + r'|[^\u1000-\u103E]', text)
+    
     lines = []
     cur_line = ""
+    cur_len = 0
     
-    for w in words:
-        test_line = cur_line + (" " if cur_line else "") + w
-        if len(test_line) <= max_len:
-            cur_line = test_line
-        else:
-            if cur_line:
+    for c in clusters:
+        # If cluster is a space, handle separately
+        if c == " ":
+            if cur_len >= max_len:
                 lines.append(cur_line)
-            cur_line = w
-    
+                cur_line = ""
+                cur_len = 0
+            else:
+                cur_line += c
+                cur_len += 1
+            continue
+            
+        if cur_len + len(c) > max_len and cur_line:
+            lines.append(cur_line)
+            cur_line = c
+            cur_len = len(c)
+        else:
+            cur_line += c
+            cur_len += len(c)
+            
     if cur_line:
         lines.append(cur_line)
     
@@ -235,6 +251,12 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     for idx, txt in enumerate(segments):
         clean_txt = re.sub(r'^\d+\s*', '', txt).strip()
         if not clean_txt: continue
+        
+        # Basic Myanmar Unicode Normalization (Optional but helpful for some shapers)
+        # Ensure medials and vowels are in a predictable order
+        import unicodedata
+        clean_txt = unicodedata.normalize('NFC', clean_txt)
+        
         # Wrap long lines for SRT (max 30 chars per line)
         wrapped_txt = wrap_text(clean_txt, max_len=30)
         p = tempfile.mktemp(suffix=".mp3")
@@ -288,7 +310,7 @@ def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sy):
         if brn and sp and os.path.exists(sp):
             se = os.path.abspath(sp).replace("\\","/").replace(":","\\\\").replace("'","'\\''")
             mv = int((100 - sy) * 10)
-            res += f",subtitles='{se}':fontsdir='.':force_style='FontName=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv},Spacing=1.0'"
+            res += f",subtitles='{se}':fontsdir='.':force_style='FontName=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv},WrapStyle=2'"
         return res + "[v]"
     else:
         # Complex case: region blur
@@ -308,7 +330,7 @@ def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sy):
         if brn and sp and os.path.exists(sp):
             se = os.path.abspath(sp).replace("\\","/").replace(":","\\\\").replace("'","'\\''")
             mv = int((100 - sy) * 10)
-            res += f"subtitles='{se}':fontsdir='.':force_style='FontName=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv},Spacing=1.0'"
+            res += f"subtitles='{se}':fontsdir='.':force_style='FontName=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv},WrapStyle=2'"
         
         return filter_complex + ";" + res + "[v]"
 
