@@ -450,67 +450,69 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     segments = parse_srt_text(text)
     if not segments: segments = [text]
     
-    # 1. Generate all raw audio segments
+    # 1. Generate all raw audio segments with RETRY logic
     raw_segments = []
+    total_text_len = len(segments)
+    status_text = st.empty()
+    
     for i, txt in enumerate(segments):
         clean_txt = txt.strip()
         if not clean_txt: continue
         
+        status_text.text(f"🔊 အသံထုတ်လုပ်နေသည်: {i+1}/{total_text_len}")
+        
         p = tempfile.mktemp(suffix=".mp3")
-        try:
-            communicate = edge_tts.Communicate(clean_txt, vid, rate=rate, pitch=pitch)
-            await communicate.save(p)
-            
-            # LESS aggressive silence removal to avoid cutting Myanmar words
+        success = False
+        # Try up to 3 times for each segment
+        for attempt in range(3):
+            try:
+                communicate = edge_tts.Communicate(clean_txt, vid, rate=rate, pitch=pitch)
+                await communicate.save(p)
+                if os.path.exists(p) and os.path.getsize(p) > 500:
+                    success = True
+                    break
+            except:
+                await asyncio.sleep(1)
+                continue
+        
+        if success:
+            # Trim silence VERY conservatively
             p_trimmed = tempfile.mktemp(suffix=".mp3")
-            subprocess.run(["ffmpeg", "-y", "-i", p, "-af", "silenceremove=start_periods=1:start_silence=0.02:start_threshold=-45dB:detection=peak,silenceremove=stop_periods=1:stop_silence=0.02:stop_threshold=-45dB:detection=peak", p_trimmed], capture_output=True)
+            subprocess.run(["ffmpeg", "-y", "-i", p, "-af", "silenceremove=start_periods=1:start_silence=0.01:start_threshold=-40dB:detection=peak,silenceremove=stop_periods=1:stop_silence=0.01:stop_threshold=-40dB:detection=peak", p_trimmed], capture_output=True)
             
             d = get_dur(p_trimmed)
             if d > 0:
                 raw_segments.append({'path': p_trimmed, 'dur': d, 'text': clean_txt})
             else:
-                # If trimming killed it, use the original
                 d_orig = get_dur(p)
                 if d_orig > 0:
                     raw_segments.append({'path': p, 'dur': d_orig, 'text': clean_txt})
                     if os.path.exists(p_trimmed): os.remove(p_trimmed)
-                    p = None # Mark as used
+                    p = None
             
             if p and os.path.exists(p): os.remove(p)
-        except Exception as e:
-            # Don't skip, try to log or just move on to next
-            continue
         
-    if not raw_segments: raise Exception("အသံဖိုင် ထုတ်လုပ်ခြင်း မအောင်မြင်ပါ။")
+    status_text.empty()
+    if not raw_segments: raise Exception("အသံဖိုင် ထုတ်လုပ်ခြင်း မအောင်မြင်ပါ။ စာသားများကို ပြန်လည်စစ်ဆေးပေးပါ။")
     
     # 2. Calculate timing strategy
     total_raw_dur = sum(s['dur'] for s in raw_segments)
     num_gaps = len(raw_segments) - 1
     
-    # Movie Recap style is fast, so we allow a wider speed range to hit the target EXACTLY
-    # This prevents the audio from being longer than the video and getting cut off.
     applied_factor = 1.0
     extra_gap = 0.0
     
     if target > 0:
         global_factor = total_raw_dur / target
-        
-        # If script is too long, speed it up (up to 2.0x for Recap style)
+        # Recap style: 1.0x to 2.0x speed
         if global_factor > 1.0:
             applied_factor = min(global_factor, 2.0)
-            # Recalculate if we hit the 2.0 limit
-            stretched_dur = total_raw_dur / applied_factor
-            if stretched_dur > target:
-                # If still too long at 2.0x, we just have to let it be longer than target
-                # but the rendering will handle the duration.
-                pass
         else:
-            # If script is too short, we slow it down slightly (min 0.85x)
-            applied_factor = max(global_factor, 0.85)
-            stretched_dur = total_raw_dur / applied_factor
-            # And add gaps to fill the rest
-            if stretched_dur < target and num_gaps > 0:
-                extra_gap = (target - stretched_dur) / num_gaps
+            applied_factor = max(global_factor, 0.9)
+            
+        stretched_dur = total_raw_dur / applied_factor
+        if stretched_dur < target and num_gaps > 0:
+            extra_gap = (target - stretched_dur) / num_gaps
     
     # 3. Process segments with final timing
     final_temp_files = []
@@ -519,69 +521,45 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     
     for idx, seg in enumerate(raw_segments):
         p_final = tempfile.mktemp(suffix=".mp3")
-        # Apply factor
+        # FFmpeg atempo limit is 0.5 to 2.0. If we need more, we chain them.
         if abs(applied_factor - 1.0) > 0.01:
-            subprocess.run(["ffmpeg", "-y", "-i", seg['path'], "-filter:a", f"atempo={applied_factor}", p_final], capture_output=True)
+            f_str = f"atempo={applied_factor}"
+            if applied_factor > 2.0:
+                f_str = "atempo=2.0,atempo=" + str(applied_factor/2.0)
+            elif applied_factor < 0.5:
+                f_str = "atempo=0.5,atempo=" + str(applied_factor/0.5)
+            subprocess.run(["ffmpeg", "-y", "-i", seg['path'], "-filter:a", f_str, p_final], capture_output=True)
         else:
             shutil.copy(seg['path'], p_final)
         
         actual_dur = get_dur(p_final)
         if actual_dur > 0:
             wrapped_txt = wrap_text(seg['text'], max_len=25)
-            # SRT timing: Start exactly when audio starts
             end_time = cur_time + actual_dur
             srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(cur_time)} --> {fmt_srt(end_time)}\n{wrapped_txt}\n\n")
             final_temp_files.append(p_final)
             cur_time += actual_dur
             
-            # Add gap if needed (except for the last segment)
             if idx < num_gaps and extra_gap > 0:
                 p_gap = tempfile.mktemp(suffix=".mp3")
-                subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=mono", "-t", str(extra_gap), p_gap], capture_output=True)
+                # Ensure gap sample rate matches (24k for edge-tts)
+                subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", "-t", str(extra_gap), p_gap], capture_output=True)
                 if os.path.exists(p_gap):
                     final_temp_files.append(p_gap)
                     cur_time += extra_gap
         
         if os.path.exists(seg['path']): os.remove(seg['path'])
     
-    # Final check: If still slightly under target, add a tiny silence at the end
-    if target > 0 and cur_time < target:
-        diff = target - cur_time
-        p_final_gap = tempfile.mktemp(suffix=".mp3")
-        # Ensure silence matches voice sample rate (24k is standard for edge-tts)
-        subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono", "-t", str(diff), p_final_gap], capture_output=True)
-        if os.path.exists(p_final_gap):
-            final_temp_files.append(p_final_gap)
-            cur_time += diff
-            
-    # 4. Final Concat - Use Filter Complex by default for maximum reliability
+    # 4. Final Concat
     if len(final_temp_files) == 1:
         shutil.copy(final_temp_files[0], out_p)
     else:
-        # Use a flat two-stage approach to avoid deep recursion
-        if len(final_temp_files) <= 50:
-            inputs = []
-            for f in final_temp_files: inputs.extend(["-i", f])
-            filter_complex = "".join([f"[{i}:a]" for i in range(len(final_temp_files))]) + f"concat=n={len(final_temp_files)}:v=0:a=1[a]"
-            subprocess.run(["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_complex, "-map", "[a]", "-ac", "2", "-ar", "44100", "-b:a", "192k", out_p], capture_output=True)
-        else:
-            group_files = []
-            for i in range(0, len(final_temp_files), 50):
-                chunk = final_temp_files[i:i+50]
-                temp_chunk = tempfile.mktemp(suffix=".mp3")
-                inputs = []
-                for f in chunk: inputs.extend(["-i", f])
-                filter_complex = "".join([f"[{i}:a]" for i in range(len(chunk))]) + f"concat=n={len(chunk)}:v=0:a=1[a]"
-                subprocess.run(["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_complex, "-map", "[a]", "-ac", "2", "-ar", "44100", "-b:a", "192k", temp_chunk], capture_output=True)
-                group_files.append(temp_chunk)
-            
-            # Final stage
-            inputs = []
-            for f in group_files: inputs.extend(["-i", f])
-            filter_complex = "".join([f"[{i}:a]" for i in range(len(group_files))]) + f"concat=n={len(group_files)}:v=0:a=1[a]"
-            subprocess.run(["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_complex, "-map", "[a]", "-ac", "2", "-ar", "44100", "-b:a", "192k", out_p], capture_output=True)
-            for f in group_files: 
-                if os.path.exists(f): os.remove(f)
+        l_p = tempfile.mktemp(suffix=".txt")
+        with open(l_p, "w", encoding='utf-8') as f:
+            f.write("\n".join([f"file '{os.path.abspath(p)}'" for p in final_temp_files]))
+        # Use concat demuxer with re-encoding to be safe
+        subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", l_p, "-ac", "2", "-ar", "44100", "-b:a", "192k", out_p], capture_output=True)
+        if os.path.exists(l_p): os.remove(l_p)
     
     for p in final_temp_files:
         if os.path.exists(p): os.remove(p)
@@ -761,6 +739,9 @@ FORMATTING RULES:
                                         srt_res = data['candidates'][0]['content']['parts'][0]['text']
                                         if srt_res:
                                             st.session_state.active_key = k
+                                            # Show narration preview
+                                            with st.expander("📝 Narration Preview (AI က ရေးပေးထားသော စာသားများ)", expanded=True):
+                                                st.text_area("Narration Content", srt_res, height=200)
                                             break
                                     else: errors.append(f"Key {api_keys.index(k)+1} - {m}: အဖြေမထွက်ပါ။")
                                 else:
@@ -848,17 +829,16 @@ FORMATTING RULES:
                     final_duration = get_dur(ao)
                     video_duration = get_dur(tp)
                     
-                    # Determine the absolute final duration to ensure NO audio is cut
-                    # We take the maximum of target_sec and actual audio duration
+                    # ABSOLUTE FIX: Ensure audio is NEVER cut.
+                    # We use the actual duration of the generated audio as the master duration.
                     final_audio_dur = get_dur(ao)
-                    render_duration = max(target_sec if fit_dur else 0, final_audio_dur)
                     
-                    # If video is shorter than the required duration, we loop it
-                    if video_duration < render_duration - 0.5:
-                        cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-t", str(render_duration), fv]
+                    # If video is shorter than audio, loop it INFINITELY and use -shortest
+                    if video_duration < final_audio_dur - 0.5:
+                        cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
                     else:
-                        # If video is longer, we cut at the required duration
-                        cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-t", str(render_duration), fv]
+                        # If video is longer, cut exactly at the end of the audio
+                        cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-t", str(final_audio_dur), fv]
                     res = subprocess.run(cmd, capture_output=True, text=True)
 
                     if res.returncode != 0:
