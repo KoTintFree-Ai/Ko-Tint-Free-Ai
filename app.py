@@ -396,49 +396,53 @@ def parse_srt_text(text):
     text = re.sub(r'```srt?', '', text, flags=re.IGNORECASE)
     text = re.sub(r'```', '', text).strip()
     
-    # 1. Try to parse as standard SRT first
-    segments = []
-    blocks = re.split(r'\n\s*\n', text)
-    for block in blocks:
-        lines = [l.strip() for l in block.strip().split('\n') if l.strip()]
-        if len(lines) >= 2:
-            # Check if second line is a timestamp
-            if '-->' in lines[1] or (len(lines) > 2 and '-->' in lines[2]):
-                # It's an SRT block, extract text
-                start_idx = 2 if '-->' in lines[1] else 3
-                txt = ' '.join(lines[start_idx:]).strip()
-                if txt: segments.append(txt)
+    # Clean up common non-narration text
+    text = re.sub(r'(?i)here is the .* narration.*:', '', text)
+    text = re.sub(r'(?i)movie recap narration:', '', text)
     
-    # 2. If no segments found, it might be non-standard. Extract all non-timestamp lines.
-    if not segments:
-        lines = text.split('\n')
-        current_seg = []
-        for line in lines:
-            line = line.strip()
-            if not line:
-                if current_seg:
-                    segments.append(' '.join(current_seg))
-                    current_seg = []
-                continue
-            # Skip timestamps and indices
-            if '-->' in line or re.match(r'^\d+$', line):
-                if current_seg:
-                    segments.append(' '.join(current_seg))
-                    current_seg = []
-                continue
-            current_seg.append(line)
-        if current_seg:
-            segments.append(' '.join(current_seg))
+    # 1. Try to extract narration text by ignoring timestamps and indices
+    lines = text.split('\n')
+    segments = []
+    current_seg = []
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            if current_seg:
+                segments.append(' '.join(current_seg))
+                current_seg = []
+            continue
             
-    # 3. Final cleanup: Remove any residual SRT/HTML artifacts
-    clean_segments = []
+        # If it's a timestamp or just a block number, it's a boundary
+        if '-->' in line or re.match(r'^\d+$', line):
+            if current_seg:
+                segments.append(' '.join(current_seg))
+                current_seg = []
+            continue
+        
+        # Otherwise, it's part of the narration
+        current_seg.append(line)
+        
+    if current_seg:
+        segments.append(' '.join(current_seg))
+            
+    # 2. Final cleanup and sentence splitting for better TTS handling
+    final_segments = []
     for s in segments:
-        s = re.sub(r'<[^>]*>', '', s)
+        s = re.sub(r'<[^>]*>', '', s) # Remove HTML
         s = s.replace('-->', '').strip()
-        if s and not re.match(r'^[\d:,.\s]+$', s):
-            clean_segments.append(s)
+        if not s or re.match(r'^[\d:,.\s]+$', s): continue
+        
+        # Split very long segments into sentences for more natural TTS
+        parts = re.split(r'([။।.!?;])', s)
+        combined = ""
+        for i in range(0, len(parts)-1, 2):
+            combined = (parts[i] + parts[i+1]).strip()
+            if combined: final_segments.append(combined)
+        if len(parts) % 2 != 0 and parts[-1].strip():
+            final_segments.append(parts[-1].strip())
             
-    return clean_segments
+    return [s for s in final_segments if s]
 
 async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     rate = f"+{int((spd-50)*2)}%" if spd>=50 else f"{int((spd-50)*2)}%"
@@ -483,26 +487,30 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     total_raw_dur = sum(s['dur'] for s in raw_segments)
     num_gaps = len(raw_segments) - 1
     
-    # Safe limits for natural sound
-    MIN_FACTOR = 0.90  # Slightly more flexible
-    MAX_FACTOR = 1.30  # Slightly more flexible
-    
+    # Movie Recap style is fast, so we allow a wider speed range to hit the target EXACTLY
+    # This prevents the audio from being longer than the video and getting cut off.
     applied_factor = 1.0
     extra_gap = 0.0
     
     if target > 0:
-        # Try to fit using factor first (within safe range)
         global_factor = total_raw_dur / target
-        applied_factor = np.clip(global_factor, MIN_FACTOR, MAX_FACTOR)
         
-        # Recalculate duration after safe factor
-        stretched_dur = total_raw_dur / applied_factor
-        
-        # If still too short, add gaps between segments
-        if stretched_dur < target and num_gaps > 0:
-            remaining = target - stretched_dur
-            # No strict 0.8s cap, but keep it reasonable
-            extra_gap = remaining / num_gaps
+        # If script is too long, speed it up (up to 2.0x for Recap style)
+        if global_factor > 1.0:
+            applied_factor = min(global_factor, 2.0)
+            # Recalculate if we hit the 2.0 limit
+            stretched_dur = total_raw_dur / applied_factor
+            if stretched_dur > target:
+                # If still too long at 2.0x, we just have to let it be longer than target
+                # but the rendering will handle the duration.
+                pass
+        else:
+            # If script is too short, we slow it down slightly (min 0.85x)
+            applied_factor = max(global_factor, 0.85)
+            stretched_dur = total_raw_dur / applied_factor
+            # And add gaps to fill the rest
+            if stretched_dur < target and num_gaps > 0:
+                extra_gap = (target - stretched_dur) / num_gaps
     
     # 3. Process segments with final timing
     final_temp_files = []
@@ -840,8 +848,10 @@ FORMATTING RULES:
                     final_duration = get_dur(ao)
                     video_duration = get_dur(tp)
                     
-                    # Use target_sec if fit_dur is enabled, otherwise use audio duration
-                    render_duration = target_sec if fit_dur and target_sec > 0 else final_duration
+                    # Determine the absolute final duration to ensure NO audio is cut
+                    # We take the maximum of target_sec and actual audio duration
+                    final_audio_dur = get_dur(ao)
+                    render_duration = max(target_sec if fit_dur else 0, final_audio_dur)
                     
                     # If video is shorter than the required duration, we loop it
                     if video_duration < render_duration - 0.5:
