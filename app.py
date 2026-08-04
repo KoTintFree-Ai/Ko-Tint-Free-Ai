@@ -45,8 +45,11 @@ def init_state():
     keys = ['myanmar_text', 'audio_path', 'srt_data', 'video_path', 'base_frame', 'last_uploaded', 'processing_done', 'valid_keys_info', 'active_key']
     for k in keys:
         if k not in st.session_state: st.session_state[k] = None
+    for i in range(1, 6):
+        if f'key_{i}' not in st.session_state: st.session_state[f'key_{i}'] = ""
     if st.session_state.processing_done is None: st.session_state.processing_done = False
     if st.session_state.valid_keys_info is None: st.session_state.valid_keys_info = {}
+    if 'do_test_keys' not in st.session_state: st.session_state.do_test_keys = False
     if 'blur_y_pos' not in st.session_state: st.session_state.blur_y_pos = 85.0
     if 'blur_h_size' not in st.session_state: st.session_state.blur_h_size = 10.0
     if 'sub_y_pos' not in st.session_state: st.session_state.sub_y_pos = 85.0
@@ -171,6 +174,15 @@ with st.sidebar:
     else:
         st.info("💡 Key ထည့်ပြီး စတင်လုပ်ဆောင်ပါ")
 
+    # Bulk Paste Area
+    with st.expander("📋 Key အများအပြား တစ်ခါတည်းထည့်ရန်"):
+        bulk_text = st.text_area("ဒီနေရာမှာ Key များကို တစ်ကြောင်းချင်းစီ Paste ချလိုက်ပါ", height=100)
+        if st.button("📥 အားလုံးထဲသို့ ဖြည့်သွင်းရန်"):
+            keys = [k.strip() for k in bulk_text.replace(',', '\n').split('\n') if k.strip()]
+            for i in range(5):
+                st.session_state[f"key_{i+1}"] = keys[i] if i < len(keys) else ""
+            st.rerun()
+            
     k1 = st.text_input("API Key 1", type="password", key="key_1")
     k2 = st.text_input("API Key 2", type="password", key="key_2")
     k3 = st.text_input("API Key 3", type="password", key="key_3")
@@ -178,9 +190,20 @@ with st.sidebar:
     k5 = st.text_input("API Key 5", type="password", key="key_5")
     api_keys = [k for k in [k1, k2, k3, k4, k5] if k]
 
-    if st.button("🔌 API ချိတ်ဆက်မှု စမ်းသပ်ရန်"):
+    col_key1, col_key2 = st.columns(2)
+    with col_key1:
+        if st.button("🔌 စမ်းသပ်ရန်"):
+            st.session_state.do_test_keys = True
+    with col_key2:
+        if st.button("🗑️ အားလုံးဖျက်ရန်"):
+            for i in range(5): st.session_state[f"key_{i+1}"] = ""
+            st.session_state.active_key = None
+            st.rerun()
+
+    if st.session_state.do_test_keys:
         if not api_keys:
             st.error("API Key အရင်ထည့်ပေးပါ။")
+            st.session_state.do_test_keys = False
         else:
             st.session_state.valid_keys_info = {}
             for i, k in enumerate(api_keys):
@@ -203,7 +226,8 @@ with st.sidebar:
                     st.info(f"Key {i+1} ကို စိတ်ချစွာ အသုံးပြုနိုင်ပါသည်။")
                     if not st.session_state.active_key:
                         st.session_state.active_key = k
-                        st.rerun()
+            st.session_state.do_test_keys = False
+            st.rerun()
 
     st.markdown("---")
     st.subheader("🎬 ဗီဒီယို ပုံစံညှိရန်")
@@ -411,18 +435,25 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     total = get_dur(raw)
     if target > 0 and total > 0:
         factor = total / target
-        # Keep factor within a range that sounds natural (0.8x to 1.3x)
-        factor = np.clip(factor, 0.8, 1.3)
+        # Expand factor range for better fitting, but still keep it somewhat natural
+        factor = np.clip(factor, 0.5, 2.0)
         
-        # Use high-quality time stretching filter
-        subprocess.run(["ffmpeg", "-y", "-i", raw, "-filter:a", f"atempo={factor}", out_p], capture_output=True)
+        # Use high-quality time stretching and exact duration trimming/padding
+        # atempo filter adjusts speed, then we use -t to ensure exact target duration
+        subprocess.run(["ffmpeg", "-y", "-i", raw, "-filter:a", f"atempo={factor}", "-t", str(target), out_p], capture_output=True)
+        
+        # Re-calculate factor based on actual applied duration for SRT sync
+        actual_factor = total / target
         
         final_srt = []
         for line in "".join(srt_blocks).splitlines(keepends=True):
             if "-->" in line:
                 s, e = line.split(" --> ")
-                s_s = sum(float(x)*60**i for i,x in enumerate(reversed(s.replace(",",".").split(":")))) / factor
-                e_s = sum(float(x)*60**i for i,x in enumerate(reversed(e.replace(",",".").split(":")))) / factor
+                s_s = sum(float(x)*60**i for i,x in enumerate(reversed(s.replace(",",".").split(":")))) / actual_factor
+                e_s = sum(float(x)*60**i for i,x in enumerate(reversed(e.replace(",",".").split(":")))) / actual_factor
+                # Ensure timings don't exceed target
+                s_s = min(s_s, target)
+                e_s = min(e_s, target)
                 final_srt.append(f"{fmt_srt(s_s)} --> {fmt_srt(e_s)}\n")
             else: final_srt.append(line)
         res_srt = "".join(final_srt)
@@ -681,12 +712,17 @@ FORMATTING RULES:
                     fv_name = f"final_{fid}_{int(time.time())}.mp4"
                     fv = os.path.join(tempfile.gettempdir(), fv_name)
 
-                    cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
+                    # Determine final duration
+                    final_duration = target_sec if fit_dur else get_dur(ao)
+                    
+                    # Use -stream_loop -1 to loop input video if it's shorter than audio
+                    # Use -t to cut exactly at the final duration
+                    cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-t", str(final_duration), fv]
                     res = subprocess.run(cmd, capture_output=True, text=True)
 
                     if res.returncode != 0:
                         if len(full_filter) < 5000:
-                            cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex", full_filter, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
+                            cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", tp, "-i", ao, "-filter_complex", full_filter, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-t", str(final_duration), fv]
                             res = subprocess.run(cmd, capture_output=True, text=True)
 
                     if os.path.exists(filter_script): os.remove(filter_script)
