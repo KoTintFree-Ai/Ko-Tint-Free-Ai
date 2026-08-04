@@ -57,49 +57,52 @@ init_state()
 st.title("🎬 Movie Recap AI Pro V6.2")
 st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Unicode & Wrap Fix)")
 
-# --- HELPER: CONTROL WITH BUTTONS, SLIDER & TEXT INPUT ---
+# --- HELPER: CONTROL WITH BUTTONS, SLIDER & TEXT INPUT (STABLE VERSION) ---
 def plus_minus_control(label, key, min_val, max_val, step=1.0):
     st.write(f"**{label}**")
     
     if key not in st.session_state:
         st.session_state[key] = float(min_val)
-    
-    val = float(st.session_state[key])
-    
-    # Row 1: Slider and Buttons
-    col1, col2, col3 = st.columns([1, 4, 1])
-    
-    with col1:
-        if st.button("➖", key=f"btn_min_{key}"):
-            st.session_state[key] = float(np.clip(val - step, min_val, max_val))
-            st.rerun()
-            
-    with col2:
-        new_sl_val = st.slider(label, float(min_val), float(max_val), value=val, step=float(step), key=f"sld_in_{key}", label_visibility="collapsed")
-        if new_sl_val != val:
-            st.session_state[key] = new_sl_val
-            st.rerun()
-            
-    with col3:
-        if st.button("➕", key=f"btn_pls_{key}"):
-            st.session_state[key] = float(np.clip(val + step, min_val, max_val))
-            st.rerun()
+        
+    # Synchronization callbacks
+    def on_slider_change():
+        st.session_state[key] = st.session_state[f"sld_{key}"]
+        st.session_state[f"txt_{key}"] = str(st.session_state[key])
 
-    # Row 2: Text Input for precise entry (Avoids snap-back during typing)
-    col_label, col_input = st.columns([3, 1])
-    with col_label:
-        st.caption(f"နံပါတ် အတိအကျ ရိုက်ရန် (Enter နှိပ်ပါ)")
-    with col_input:
-        # Use text_input to allow free typing, only updates on Enter
-        txt_val = st.text_input(label, value=str(val), key=f"txt_in_{key}", label_visibility="collapsed")
+    def on_text_change():
         try:
-            new_v = float(txt_val)
-            if new_v != val:
-                st.session_state[key] = float(np.clip(new_v, min_val, max_val))
-                st.rerun()
-        except ValueError:
-            pass # Ignore invalid inputs until user types a valid number
-            
+            new_val = float(st.session_state[f"txt_{key}"])
+            st.session_state[key] = float(np.clip(new_val, min_val, max_val))
+            st.session_state[f"sld_{key}"] = st.session_state[key]
+            st.session_state[f"txt_{key}"] = str(st.session_state[key])
+        except:
+            st.session_state[f"txt_{key}"] = str(st.session_state[key])
+
+    def on_btn_click(delta):
+        st.session_state[key] = float(np.clip(st.session_state[key] + delta, min_val, max_val))
+        st.session_state[f"sld_{key}"] = st.session_state[key]
+        st.session_state[f"txt_{key}"] = str(st.session_state[key])
+
+    # Sync widget states with master state
+    if f"sld_{key}" not in st.session_state or st.session_state[f"sld_{key}"] != st.session_state[key]:
+        st.session_state[f"sld_{key}"] = st.session_state[key]
+    if f"txt_{key}" not in st.session_state or st.session_state[f"txt_{key}"] != str(st.session_state[key]):
+        st.session_state[f"txt_{key}"] = str(st.session_state[key])
+
+    col1, col2, col3 = st.columns([1, 4, 1])
+    with col1:
+        st.button("➖", key=f"btn_min_{key}", on_click=on_btn_click, args=(-step,))
+    with col2:
+        st.slider(label, float(min_val), float(max_val), step=float(step), 
+                  key=f"sld_{key}", on_change=on_slider_change, label_visibility="collapsed")
+    with col3:
+        st.button("➕", key=f"btn_pls_{key}", on_click=on_btn_click, args=(step,))
+        
+    col_l, col_i = st.columns([3, 1])
+    with col_l: st.caption("နံပါတ် အတိအကျ ရိုက်ရန် (Enter နှိပ်ပါ)")
+    with col_i:
+        st.text_input(label, key=f"txt_{key}", on_change=on_text_change, label_visibility="collapsed")
+        
     return st.session_state[key]
 
 # --- ERROR TRANSLATOR ---
@@ -504,7 +507,11 @@ if up:
             cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex_script", filter_script_p, "-map", "[v]", po]
         subprocess.run(cmd, capture_output=True)
         if os.path.exists(filter_script_p): os.remove(filter_script_p)
-        if os.path.exists(po): st.image(po); os.remove(po)
+        if os.path.exists(po):
+            # Read image into memory before deleting to ensure it shows correctly in Streamlit
+            with Image.open(po) as img_prev:
+                st.image(img_prev)
+            os.remove(po)
         if os.path.exists(bp): os.remove(bp)
         if os.path.exists(sub_p): os.remove(sub_p)
 
