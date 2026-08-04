@@ -23,7 +23,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FONT_PATH = os.path.join(SCRIPT_DIR, "Pyidaungsu.ttf")
 
 st.set_page_config(
-    page_title="Movie Recap AI Pro V7.8",
+    page_title="Movie Recap AI Pro V7.9",
     page_icon="🎬",
     layout="centered",
     initial_sidebar_state="expanded"
@@ -59,7 +59,7 @@ def init_state():
 
 init_state()
 
-st.title("🎬 Movie Recap AI Pro V7.8")
+st.title("🎬 Movie Recap AI Pro V7.9")
 st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Unicode & Wrap Fix)")
 
 # --- HELPER: SLIDER WITH PLUS/MINUS (V7.4) ---
@@ -312,30 +312,33 @@ def parse_srt_text(text):
     text = re.sub(r'```srt?', '', text, flags=re.IGNORECASE)
     text = re.sub(r'```', '', text).strip()
     
-    # 1. Extract all lines that are not timestamps or indices
+    # Aggressive SRT cleaning
+    # Remove timestamps like 00:00:00,000 --> 00:00:05,000
+    text = re.sub(r'\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}', '', text)
+    
     lines = text.split('\n')
-    all_text = []
+    clean_lines = []
     for line in lines:
         line = line.strip()
         if not line: continue
-        # Skip timestamps like 00:00:00,000 --> 00:00:05,000
-        if '-->' in line: continue
-        # Skip numeric indices
+        # Skip lines that are just numbers (SRT indices)
         if re.match(r'^\d+$', line): continue
-        # Skip common preamble
-        if re.match(r'(?i)here is|narration:|recap:', line): continue
+        # Skip lines like "1.", "(1)", etc.
+        if re.match(r'^\(?\d+[\.\)]\s*$', line): continue
+        # Skip common headers
+        if re.match(r'(?i)^(here is|narration|recap|script|translation):', line): continue
         
-        all_text.append(line)
+        clean_lines.append(line)
     
-    full_content = ' '.join(all_text)
+    full_content = ' '.join(clean_lines)
+    # Remove any remaining multiple spaces
+    full_content = re.sub(r'\s+', ' ', full_content).strip()
     
-    # 2. Split by Myanmar and common punctuation to get clean segments
-    # This ensures we don't miss any text.
+    # Split into segments for TTS (by sentence)
     segments = []
     # Split by Burmese full stop (။), comma (၊), and English equivalents
     parts = re.split(r'([။၊.!?;])', full_content)
     
-    current = ""
     for i in range(0, len(parts)-1, 2):
         seg = (parts[i] + parts[i+1]).strip()
         if seg: segments.append(seg)
