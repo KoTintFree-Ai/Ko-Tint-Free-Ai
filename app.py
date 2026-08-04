@@ -434,26 +434,24 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     
     total = get_dur(raw)
     if target > 0 and total > 0:
+        # Calculate natural factor
         factor = total / target
-        # Expand factor range for better fitting, but still keep it somewhat natural
-        factor = np.clip(factor, 0.5, 2.0)
         
-        # Use high-quality time stretching and exact duration trimming/padding
-        # atempo filter adjusts speed, then we use -t to ensure exact target duration
-        subprocess.run(["ffmpeg", "-y", "-i", raw, "-filter:a", f"atempo={factor}", "-t", str(target), out_p], capture_output=True)
+        # LIMIT factor to maintain natural sound (0.9 to 1.25)
+        # If it needs to be slower than 0.9, we don't slow down the voice (to avoid "stretched" sound)
+        # Instead, we keep it at 1.0 or slightly adjusted and let it be shorter than target.
+        safe_factor = np.clip(factor, 0.9, 1.25)
         
-        # Re-calculate factor based on actual applied duration for SRT sync
-        actual_factor = total / target
+        # Use high-quality time stretching
+        subprocess.run(["ffmpeg", "-y", "-i", raw, "-filter:a", f"atempo={safe_factor}", out_p], capture_output=True)
         
+        # Adjust SRT to match the safe_factor
         final_srt = []
         for line in "".join(srt_blocks).splitlines(keepends=True):
             if "-->" in line:
                 s, e = line.split(" --> ")
-                s_s = sum(float(x)*60**i for i,x in enumerate(reversed(s.replace(",",".").split(":")))) / actual_factor
-                e_s = sum(float(x)*60**i for i,x in enumerate(reversed(e.replace(",",".").split(":")))) / actual_factor
-                # Ensure timings don't exceed target
-                s_s = min(s_s, target)
-                e_s = min(e_s, target)
+                s_s = sum(float(x)*60**i for i,x in enumerate(reversed(s.replace(",",".").split(":")))) / safe_factor
+                e_s = sum(float(x)*60**i for i,x in enumerate(reversed(e.replace(",",".").split(":")))) / safe_factor
                 final_srt.append(f"{fmt_srt(s_s)} --> {fmt_srt(e_s)}\n")
             else: final_srt.append(line)
         res_srt = "".join(final_srt)
@@ -600,22 +598,22 @@ if up:
 
                 stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည် (Gemini)...")
                 prg.progress(30)
-                prm = f"""Listen to this audio and translate it into a Myanmar Movie Recap style narration.
+                prm = f"""Listen to this audio and translate it into a HIGH-ENERGY Myanmar Movie Recap style narration.
 Target duration: {target_sec} seconds.
 Output ONLY valid SRT subtitle format with proper timing.
 
-IMPORTANT RULES FOR MYANMAR LANGUAGE:
-1. Use Standard Myanmar Unicode.
-2. Ensure correct spelling for movie recap terms.
-3. Keep the narration natural, dramatic, and conversational (Recap Style).
-4. Use smooth sentence transitions. Avoid extremely short, choppy sentences.
-5. For foreign names, use common Myanmar phonetic transcriptions.
+MOVIE RECAP STYLE RULES:
+1. The tone must be dramatic, fast-paced, and engaging (like popular YouTube Movie Recaps).
+2. Use conversational Myanmar language (e.g., "ဒီနေ့မှာတော့...", "နောက်ဆုံးမှာတော့...", "မထင်မှတ်ဘဲ...").
+3. Keep sentences flowing tightly. Minimize long pauses.
+4. The content should be concise but cover all key plot points within {target_sec} seconds.
+5. Use Standard Myanmar Unicode and correct spelling.
 
 FORMATTING RULES:
-1. Each subtitle block should contain a complete thought or a natural phrase (approx 10-15 words).
-2. Use proper SRT format: index, timestamp, subtitle text, blank line.
-3. Ensure the total duration of the narration matches the target duration of {target_sec} seconds closely.
-4. Do NOT include any text outside the SRT format."""
+1. Each subtitle block should be a natural phrase (10-20 words).
+2. Use proper SRT format.
+3. The total SRT duration MUST be as close to {target_sec} seconds as possible.
+4. Do NOT include any intro/outro text, only the SRT blocks."""
                 with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
                 cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mpeg","data":b64}}]}]
 
@@ -712,17 +710,17 @@ FORMATTING RULES:
                     fv_name = f"final_{fid}_{int(time.time())}.mp4"
                     fv = os.path.join(tempfile.gettempdir(), fv_name)
 
-                    # Determine final duration
-                    final_duration = target_sec if fit_dur else get_dur(ao)
+                    # Determine final duration based on actual generated audio
+                    final_duration = get_dur(ao)
                     
-                    # Use -stream_loop -1 to loop input video if it's shorter than audio
-                    # Use -t to cut exactly at the final duration
-                    cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-t", str(final_duration), fv]
+                    # NO LOOPING: Just use the video as is. If audio is longer, it will stop at video end or we use -shortest.
+                    # To be safe and natural, we map audio and video and use -shortest to end when the shortest stream ends.
+                    cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
                     res = subprocess.run(cmd, capture_output=True, text=True)
 
                     if res.returncode != 0:
                         if len(full_filter) < 5000:
-                            cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", tp, "-i", ao, "-filter_complex", full_filter, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-t", str(final_duration), fv]
+                            cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex", full_filter, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
                             res = subprocess.run(cmd, capture_output=True, text=True)
 
                     if os.path.exists(filter_script): os.remove(filter_script)
