@@ -12,6 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 import re
 import shutil
 import psutil
+import gc
 
 # --- CONFIGURATION ---
 API_VERSIONS = ["v1beta", "v1"]
@@ -104,8 +105,13 @@ with st.sidebar:
     
     if ram_used > 800:
         st.warning("⚠️ RAM သုံးစွဲမှု များနေပါသည်။ (Limit: 1024MB)")
-    elif ram_used > 950:
+    if ram_used > 950:
         st.error("🚨 RAM ပြည့်ခါနီးနေပါပြီ! App Crash ဖြစ်နိုင်ပါသည်။")
+    
+    if st.button("🧹 RAM ရှင်းထုတ်ရန်"):
+        st.cache_data.clear()
+        gc.collect()
+        st.rerun()
     
     st.markdown("---")
     st.subheader("🔑 Gemini API Keys (၅ ခုအထိ)")
@@ -299,53 +305,58 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     pitch = f"+{int((ptc-50)*2)}Hz" if ptc>=50 else f"{int((ptc-50)*2)}Hz"
     segments = parse_srt_text(text)
     if not segments: segments = [text]
+    
     temp_files = []
     cur_t = 0.0
     srt_blocks = []
+    
+    # Process segments in larger chunks for natural flow
     for idx, txt in enumerate(segments):
         clean_txt = re.sub(r'^\d+\s*', '', txt).strip()
         if not clean_txt: continue
         import unicodedata
         clean_txt = unicodedata.normalize('NFC', clean_txt)
+        
         p = tempfile.mktemp(suffix=".mp3")
         try:
+            # Generate audio for the full segment to maintain natural intonation
             communicate = edge_tts.Communicate(clean_txt, vid, rate=rate, pitch=pitch)
             await communicate.save(p)
-            d = get_dur(p)
+            
+            # Trim silence from the start and end of the generated audio to prevent "choppiness"
+            p_trimmed = tempfile.mktemp(suffix=".mp3")
+            subprocess.run(["ffmpeg", "-y", "-i", p, "-af", "silenceremove=start_periods=1:start_silence=0.1:start_threshold=-50dB:detection=peak,silenceremove=stop_periods=1:stop_silence=0.1:stop_threshold=-50dB:detection=peak", p_trimmed], capture_output=True)
+            
+            d = get_dur(p_trimmed)
             if d > 0:
-                sub_segments = re.split(r'([။၊ ])', clean_txt)
-                sub_parts = []
-                temp_part = ""
-                for part in sub_segments:
-                    if len(temp_part) + len(part) < 20:
-                        temp_part += part
-                    else:
-                        if temp_part.strip(): sub_parts.append(temp_part.strip())
-                        temp_part = part
-                if temp_part.strip(): sub_parts.append(temp_part.strip())
-                if len(sub_parts) > 1:
-                    part_dur = d / len(sub_parts)
-                    for i, sp in enumerate(sub_parts):
-                        start_t = cur_t + (i * part_dur)
-                        end_t = cur_t + ((i + 1) * part_dur)
-                        wrapped_sp = wrap_text(sp, max_len=20)
-                        srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(start_t)} --> {fmt_srt(end_t)}\n{wrapped_sp}\n\n")
-                else:
-                    wrapped_txt = wrap_text(clean_txt, max_len=20)
-                    srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(cur_t)} --> {fmt_srt(cur_t+d)}\n{wrapped_txt}\n\n")
-                temp_files.append(p)
-                cur_t += d + 0.1
+                # Use a slightly longer wrap length for more natural reading flow
+                wrapped_txt = wrap_text(clean_txt, max_len=25)
+                srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(cur_t)} --> {fmt_srt(cur_t+d)}\n{wrapped_txt}\n\n")
+                temp_files.append(p_trimmed)
+                cur_t += d # Minimal gap for natural flow
+                
+                # Cleanup original untrimmed file
+                if os.path.exists(p): os.remove(p)
         except: continue
+        
     if not temp_files: raise Exception("အသံဖိုင် ထုတ်လုပ်ခြင်း မအောင်မြင်ပါ။")
+    
     raw = tempfile.mktemp(suffix=".mp3")
     l_p = tempfile.mktemp(suffix=".txt")
     with open(l_p, "w", encoding='utf-8') as f: f.write("\n".join([f"file '{p}'" for p in temp_files]))
+    
+    # Concat with a small crossfade or just tight coupling
     subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", l_p, "-c", "copy", raw], capture_output=True)
+    
     total = get_dur(raw)
     if target > 0 and total > 0:
         factor = total / target
-        factor = np.clip(factor, 0.7, 1.5)
+        # Keep factor within a range that sounds natural (0.8x to 1.3x)
+        factor = np.clip(factor, 0.8, 1.3)
+        
+        # Use high-quality time stretching filter
         subprocess.run(["ffmpeg", "-y", "-i", raw, "-filter:a", f"atempo={factor}", out_p], capture_output=True)
+        
         final_srt = []
         for line in "".join(srt_blocks).splitlines(keepends=True):
             if "-->" in line:
@@ -489,14 +500,15 @@ Output ONLY valid SRT subtitle format with proper timing.
 
 IMPORTANT RULES FOR MYANMAR LANGUAGE:
 1. Use Standard Myanmar Unicode.
-2. Ensure correct spelling for movie recap terms (e.g., use 'ပြိုလဲ' for collapse/fall, NOT 'ပျိုလဲ').
+2. Ensure correct spelling for movie recap terms.
 3. Keep the narration natural, dramatic, and conversational (Recap Style).
-4. For foreign names, use common Myanmar phonetic transcriptions.
+4. Use smooth sentence transitions. Avoid extremely short, choppy sentences.
+5. For foreign names, use common Myanmar phonetic transcriptions.
 
 FORMATTING RULES:
-1. Each subtitle line must be SHORT (maximum 8-10 words per line).
-2. Break long sentences into multiple lines within the same subtitle block.
-3. Use proper SRT format: index, timestamp, subtitle text, blank line.
+1. Each subtitle block should contain a complete thought or a natural phrase (approx 10-15 words).
+2. Use proper SRT format: index, timestamp, subtitle text, blank line.
+3. Ensure the total duration of the narration matches the target duration of {target_sec} seconds closely.
 4. Do NOT include any text outside the SRT format."""
                 with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
                 cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mpeg","data":b64}}]}]
