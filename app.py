@@ -17,7 +17,7 @@ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 MODELS_TO_TRY = ["gemini-1.5-flash", "gemini-3.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b"]
 
 st.set_page_config(
-    page_title="Movie Recap AI Pro V4.3", 
+    page_title="Movie Recap AI Pro V4.4", 
     page_icon="🎬", 
     layout="centered",
     initial_sidebar_state="expanded"
@@ -42,8 +42,8 @@ if 'srt_data' not in st.session_state: st.session_state.srt_data = None
 if 'video_data' not in st.session_state: st.session_state.video_data = None
 if 'processing_done' not in st.session_state: st.session_state.processing_done = False
 
-st.title("🎬 Movie Recap AI Pro V4.3")
-st.markdown("English Video → Myanmar Movie Recap (FFmpeg Syntax Fix)")
+st.title("🎬 Movie Recap AI Pro V4.4")
+st.markdown("English Video → Myanmar Movie Recap (Final Render Fix)")
 
 # --- SIDEBAR SETTINGS ---
 with st.sidebar:
@@ -114,7 +114,7 @@ def format_srt_time(seconds):
     millis = int((seconds % 1) * 1000)
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
-async def generate_audio_and_srt_v43(text, audio_path, v_id, s, p, target_duration=0):
+async def generate_audio_and_srt_v44(text, audio_path, v_id, s, p, target_duration=0):
     rate = f"+{int((s-50)*2)}%" if s>=50 else f"{int((s-50)*2)}%"
     p_hz = f"+{int((p-50)*2)}Hz" if p>=50 else f"{int((p-50)*2)}Hz"
     communicate = edge_tts.Communicate(text, v_id, rate=rate, pitch=p_hz)
@@ -160,48 +160,36 @@ async def generate_audio_and_srt_v43(text, audio_path, v_id, s, p, target_durati
     if os.path.exists(temp_audio): os.remove(temp_audio)
     return "\n".join(srt_lines), get_duration(audio_path)
 
-def render_pro_video_v43(video_path, audio_path, srt_path, mirror, scale, blur, burn_subs):
+def render_pro_video_v44(video_path, audio_path, srt_path, mirror, scale, blur, burn_subs):
     output_video = tempfile.mktemp(suffix='.mp4')
     try:
+        # Construct Filter String carefully
         v_filters = []
         if mirror: v_filters.append("hflip")
         if scale: v_filters.append("scale=1.06*iw:-1,crop=iw/1.06:ih/1.06")
         
-        # Build filter complex
+        # Complex Filter Construction
         if blur:
-            # First apply existing filters (mirror/scale) to [0:v]
-            v_base = ",".join(v_filters) if v_filters else "null"
-            filter_complex = f"[0:v]{v_base},split[base][forblur];"
-            filter_complex += "[forblur]crop=iw:ih*0.2:0:ih*0.8,boxblur=20:10[blurred];"
-            filter_complex += "[base][blurred]overlay=0:main_h*0.8[v_final]"
-            v_input = "[v_final]"
-        else:
-            v_input = "[0:v]" + ("," + ",".join(v_filters) if v_filters else "")
-        
-        if burn_subs:
-            srt_escaped = srt_path.replace("\\", "/").replace(":", "\\:")
-            # If we already have v_final, append to it, else create it
-            if "[v_final]" in filter_complex if blur else False:
-                filter_complex += f";{v_input}subtitles='{srt_escaped}':force_style='FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'[v_output]"
+            base_v = ",".join(v_filters) if v_filters else "null"
+            fc = f"[0:v]{base_v},split[m][b];[b]crop=iw:ih*0.2:0:ih*0.8,boxblur=20:10[blurred];[m][blurred]overlay=0:main_h*0.8"
+            if burn_subs:
+                srt_esc = srt_path.replace("\\", "/").replace(":", "\\:")
+                fc += f",subtitles='{srt_esc}':force_style='FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'[v]"
             else:
-                filter_complex = f"{v_input}subtitles='{srt_escaped}':force_style='FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'[v_output]"
-            v_map = "[v_output]"
+                fc += "[v]"
         else:
-            if blur:
-                v_map = "[v_final]"
+            fc = "[0:v]" + ("," + ",".join(v_filters) if v_filters else "")
+            if burn_subs:
+                srt_esc = srt_path.replace("\\", "/").replace(":", "\\:")
+                fc += f",subtitles='{srt_esc}':force_style='FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'[v]"
             else:
-                # No blur, no burn_subs, just basic filters
-                v_map = "0:v"
-                filter_complex = f"[0:v]{','.join(v_filters)}" if v_filters else ""
+                fc += "[v]"
 
-        cmd = ["ffmpeg", "-y", "-i", video_path, "-i", audio_path]
-        if filter_complex:
-            cmd.extend(["-filter_complex", filter_complex])
-            cmd.extend(["-map", v_map])
-        else:
-            cmd.extend(["-map", "0:v"])
-            
-        cmd.extend(["-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-c:a", "aac", "-shortest", output_video])
+        cmd = [
+            "ffmpeg", "-y", "-i", video_path, "-i", audio_path,
+            "-filter_complex", fc,
+            "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-c:a", "aac", "-shortest", output_video
+        ]
         
         result = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         return output_video
@@ -245,7 +233,7 @@ if uploaded_file is not None:
                 suffix = "." + uploaded_file.name.split(".")[-1]
                 with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tfile:
                     tfile.write(uploaded_file.read())
-                    temp_path = tfile.name
+                    temp_path = os.path.abspath(tfile.name)
                 
                 audio_for_gemini = extract_audio(temp_path) if suffix.lower() in [".mp4", ".mov", ".avi"] else temp_path
                 progress_bar.progress(20)
@@ -256,8 +244,8 @@ if uploaded_file is not None:
                 
                 status_text.text("🔊 အဆင့် ၃: အသံဖိုင်နှင့် Subtitle ထုတ်ပေးနေပါသည်... (70%)")
                 progress_bar.progress(70)
-                audio_output = tempfile.mktemp(suffix='.mp3')
-                st.session_state.srt_data, final_dur = asyncio.run(generate_audio_and_srt_v43(st.session_state.myanmar_text, audio_output, voice_id, speed, pitch, total_target_sec))
+                audio_output = os.path.abspath("temp_audio.mp3")
+                st.session_state.srt_data, final_dur = asyncio.run(generate_audio_and_srt_v44(st.session_state.myanmar_text, audio_output, voice_id, speed, pitch, total_target_sec))
                 
                 if os.path.exists(audio_output):
                     with open(audio_output, "rb") as f: st.session_state.audio_data = f.read()
@@ -265,11 +253,12 @@ if uploaded_file is not None:
                 if suffix.lower() in [".mp4", ".mov", ".avi"]:
                     status_text.text("🎬 အဆင့် ၄: ဗီဒီယိုကို တည်းဖြတ်နေပါသည် (Rendering)... (90%)")
                     progress_bar.progress(90)
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".srt", mode="w", encoding="utf-8") as srt_f:
+                    # Write SRT to a fixed path in current directory to avoid /tmp/ access issues
+                    srt_temp_path = os.path.abspath("temp_subtitle.srt")
+                    with open(srt_temp_path, "w", encoding="utf-8") as srt_f:
                         srt_f.write(st.session_state.srt_data)
-                        srt_temp_path = srt_f.name
                     
-                    final_video_path = render_pro_video_v43(temp_path, audio_output, srt_temp_path, mirror_video, scale_video, blur_subtitles, burn_myanmar_subs)
+                    final_video_path = render_pro_video_v44(temp_path, audio_output, srt_temp_path, mirror_video, scale_video, blur_subtitles, burn_myanmar_subs)
                     if final_video_path and os.path.exists(final_video_path):
                         with open(final_video_path, "rb") as f: st.session_state.video_data = f.read()
                         os.remove(final_video_path)
