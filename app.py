@@ -61,7 +61,11 @@ with st.sidebar:
     mirror_video = st.checkbox("Mirror Video (Reverse)", value=True)
     scale_video = st.checkbox("Scale Video (106%)", value=True)
     blur_subtitles = st.checkbox("Blur Original Subtitles", value=True)
+    blur_y_pos = st.slider("Blur Y Position (%)", 0, 100, 85) if blur_subtitles else 85
+    blur_h_size = st.slider("Blur Height (%)", 1, 50, 10) if blur_subtitles else 10
     burn_myanmar_subs = st.checkbox("Burn Myanmar Subtitles", value=True)
+    
+    preview_btn = st.button("🖼️ Preview Blur Area")
     
     st.markdown("---")
     st.subheader("⏱️ Duration Control")
@@ -169,7 +173,33 @@ async def generate_audio_and_srt_v44(text, audio_path, v_id, s, p, target_durati
     if os.path.exists(temp_audio): os.remove(temp_audio)
     return "\n".join(srt_lines), actual_dur
 
-def render_pro_video_v44(video_path, audio_path, srt_path, mirror, scale, blur, burn_subs):
+def get_blur_filter(mirror, scale, blur, blur_y, blur_h, burn_subs=False, srt_path=None):
+    v_filters = []
+    if mirror: v_filters.append("hflip")
+    if scale: v_filters.append("scale=1.06*iw:-1,crop=iw/1.06:ih/1.06")
+    
+    if blur:
+        y_start = blur_y / 100.0
+        h_ratio = blur_h / 100.0
+        base_v = ",".join(v_filters) if v_filters else "null"
+        fc = f"[0:v]{base_v},split[m][b];[b]crop=iw:ih*{h_ratio}:0:ih*{y_start},boxblur=20:10[blurred];[m][blurred]overlay=0:main_h*{y_start}"
+        if burn_subs and srt_path:
+            rel_srt = os.path.relpath(srt_path)
+            srt_esc = rel_srt.replace("\\", "/").replace(":", "\\:").replace("'", "'\\''")
+            fc += f",subtitles='{srt_esc}':force_style='FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'[v]"
+        else:
+            fc += "[v]"
+    else:
+        fc = "[0:v]" + ("," + ",".join(v_filters) if v_filters else "")
+        if burn_subs and srt_path:
+            rel_srt = os.path.relpath(srt_path)
+            srt_esc = rel_srt.replace("\\", "/").replace(":", "\\:").replace("'", "'\\''")
+            fc += f",subtitles='{srt_esc}':force_style='FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'[v]"
+        else:
+            fc += "[v]"
+    return fc
+
+def render_pro_video_v44(video_path, audio_path, srt_path, mirror, scale, blur, burn_subs, blur_y=85, blur_h=10):
     output_video = tempfile.mktemp(suffix='.mp4')
     try:
         # Check if SRT exists if burning is requested
@@ -183,26 +213,7 @@ def render_pro_video_v44(video_path, audio_path, srt_path, mirror, scale, blur, 
         if mirror: v_filters.append("hflip")
         if scale: v_filters.append("scale=1.06*iw:-1,crop=iw/1.06:ih/1.06")
         
-        # Complex Filter Construction
-        if blur:
-            base_v = ",".join(v_filters) if v_filters else "null"
-            fc = f"[0:v]{base_v},split[m][b];[b]crop=iw:ih*0.2:0:ih*0.8,boxblur=20:10[blurred];[m][blurred]overlay=0:main_h*0.8"
-            if burn_subs:
-                # Use relative path and escape for FFmpeg subtitles filter
-                rel_srt = os.path.relpath(srt_path)
-                srt_esc = rel_srt.replace("\\", "/").replace(":", "\\:").replace("'", "'\\''")
-                fc += f",subtitles='{srt_esc}':force_style='FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'[v]"
-            else:
-                fc += "[v]"
-        else:
-            fc = "[0:v]" + ("," + ",".join(v_filters) if v_filters else "")
-            if burn_subs:
-                # Use relative path and escape for FFmpeg subtitles filter
-                rel_srt = os.path.relpath(srt_path)
-                srt_esc = rel_srt.replace("\\", "/").replace(":", "\\:").replace("'", "'\\''")
-                fc += f",subtitles='{srt_esc}':force_style='FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'[v]"
-            else:
-                fc += "[v]"
+        fc = get_blur_filter(mirror, scale, blur, blur_y, blur_h, burn_subs, srt_path)
 
         cmd = [
             "ffmpeg", "-y", "-i", video_path, "-i", audio_path,
@@ -241,6 +252,30 @@ def translate_content(audio_path, target_sec, keys):
 uploaded_file = st.file_uploader("ဗီဒီယို သို့မဟုတ် အော်ဒီယိုဖိုင် ရွေးချယ်ပါ", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"])
 
 if uploaded_file is not None:
+    # Save uploaded file temporarily for preview
+    suffix = "." + uploaded_file.name.split(".")[-1]
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tfile:
+        tfile.write(uploaded_file.getvalue())
+        temp_preview_path = os.path.abspath(tfile.name)
+
+    if preview_btn:
+        st.subheader("🖼️ Blur Area Preview")
+        preview_img = tempfile.mktemp(suffix='.jpg')
+        fc = get_blur_filter(mirror_video, scale_video, blur_subtitles, blur_y_pos, blur_h_size)
+        # Extract frame at 5s and apply filter
+        cmd = [
+            "ffmpeg", "-y", "-ss", "00:00:05", "-i", temp_preview_path,
+            "-vf", fc.replace("[0:v]", "").replace("[v]", ""), # Simplify filter for single -vf
+            "-frames:v", "1", preview_img
+        ]
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if os.path.exists(preview_img):
+                st.image(preview_img, caption="Blur Preview (at 5 seconds)")
+                os.remove(preview_img)
+        except Exception as e:
+            st.error(f"Preview Error: {e}")
+        
     if not api_keys: st.warning("⚠️ Sidebar တွင် API Key ထည့်ပေးပါ")
     else:
         if st.button("🚀 Start Pro Processing & Render Video"):
@@ -277,7 +312,7 @@ if uploaded_file is not None:
                     with open(srt_temp_path, "w", encoding="utf-8") as srt_f:
                         srt_f.write(st.session_state.srt_data)
                     
-                    final_video_path = render_pro_video_v44(temp_path, audio_output, srt_temp_path, mirror_video, scale_video, blur_subtitles, burn_myanmar_subs)
+                    final_video_path = render_pro_video_v44(temp_path, audio_output, srt_temp_path, mirror_video, scale_video, blur_subtitles, burn_myanmar_subs, blur_y_pos, blur_h_size)
                     if final_video_path and os.path.exists(final_video_path):
                         with open(final_video_path, "rb") as f: st.session_state.video_data = f.read()
                         os.remove(final_video_path)
