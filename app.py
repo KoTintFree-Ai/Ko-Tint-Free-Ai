@@ -155,13 +155,48 @@ with st.sidebar:
         st.rerun()
 
 # --- UTILITIES ---
+def normalize_myanmar(text):
+    """Normalize and reorder Myanmar characters to standard Unicode order for better rendering"""
+    if not text: return text
+    import re
+    # Standard Unicode Order: Consonant + Medials (ျ ြ ွ ှ) + Vowels (ေ ိ ီ ု ူ ေ ဲ) + Marks (် ံ ့ း)
+    # This is a simplified reordering to ensure common medials and vowels are in order
+    # Medials: 103B, 103C, 103D, 103E
+    # Vowels: 102B-1032, 1036
+    # Marks: 1037-103A
+    
+    # Remove any potential Zawgyi characters if they leaked in (rare for Gemini but safe)
+    # For now, we focus on Unicode reordering
+    def reorder_cluster(m):
+        cluster = m.group(0)
+        # Separate base and marks
+        base = cluster[0]
+        marks = list(cluster[1:])
+        # Define weights for sorting marks to standard order
+        order = {
+            '\u103B': 1, '\u103C': 2, '\u103D': 3, '\u103E': 4, # Medials
+            '\u1031': 5, # Pre-base vowel (rendered before, but stored after medials)
+            '\u102F': 6, '\u1030': 7, # Below vowels
+            '\u102D': 8, '\u102E': 9, '\u1032': 10, # Above vowels
+            '\u102B': 11, '\u102C': 12, # Right vowels
+            '\u1036': 13, '\u1037': 14, '\u1038': 15, '\u1039': 16, '\u103A': 17 # Marks
+        }
+        marks.sort(key=lambda x: order.get(x, 100))
+        return base + "".join(marks)
+
+    cluster_pattern = r'[\u1000-\u102A\u103F\u1040-\u1049][\u102B-\u103E]*'
+    return re.sub(cluster_pattern, reorder_cluster, text)
+
 def wrap_text(text, max_len=30):
     """Intelligently wrap Myanmar text to prevent long lines without breaking clusters"""
-    if not text or len(text) <= max_len:
+    if not text: return text
+    
+    # First normalize the text
+    text = normalize_myanmar(text)
+    
+    if len(text) <= max_len:
         return text
     
-    # Myanmar cluster regex: Consonant/Independent Vowel followed by any number of medials/vowels/etc.
-    # Myanmar Unicode range: 1000-1021 (Consonants), 1023-102A (Indep. Vowels), 102B-103E (Combining marks)
     import re
     cluster_pattern = r'[\u1000-\u102A\u103F\u1040-\u1049][\u102B-\u103E]*'
     clusters = re.findall(cluster_pattern + r'|[^\u1000-\u103E]', text)
@@ -310,7 +345,7 @@ def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sy):
         if brn and sp and os.path.exists(sp):
             se = os.path.abspath(sp).replace("\\","/").replace(":","\\\\").replace("'","'\\''")
             mv = int((100 - sy) * 10)
-            res += f",subtitles='{se}':fontsdir='.':force_style='FontName=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv},WrapStyle=2'"
+            res += f",subtitles='{se}':fontsdir='.':force_style='FontName=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1.5,Shadow=0.5,Alignment=2,MarginV={mv},WrapStyle=2'"
         return res + "[v]"
     else:
         # Complex case: region blur
@@ -330,7 +365,7 @@ def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sy):
         if brn and sp and os.path.exists(sp):
             se = os.path.abspath(sp).replace("\\","/").replace(":","\\\\").replace("'","'\\''")
             mv = int((100 - sy) * 10)
-            res += f"subtitles='{se}':fontsdir='.':force_style='FontName=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv},WrapStyle=2'"
+            res += f"subtitles='{se}':fontsdir='.':force_style='FontName=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1.5,Shadow=0.5,Alignment=2,MarginV={mv},WrapStyle=2'"
         
         return filter_complex + ";" + res + "[v]"
 
@@ -402,12 +437,18 @@ if up:
             prm = f"""Listen to this audio and translate it into a Myanmar Movie Recap style narration.
 Target duration: {target_sec} seconds.
 Output ONLY valid SRT subtitle format with proper timing.
-IMPORTANT RULES:
-1. Each subtitle line must be SHORT (maximum 8-10 words per line)
-2. Break long sentences into multiple lines within the same subtitle block
-3. Use proper SRT format: index, timestamp, subtitle text, blank line
-4. Keep Myanmar language natural and conversational
-5. Do NOT include any text outside the SRT format"""
+
+IMPORTANT RULES FOR MYANMAR LANGUAGE:
+1. Use Standard Myanmar Unicode.
+2. Ensure correct spelling for movie recap terms (e.g., use 'ပြိုလဲ' for collapse/fall, NOT 'ပျိုလဲ').
+3. Keep the narration natural, dramatic, and conversational (Recap Style).
+4. For foreign names, use common Myanmar phonetic transcriptions.
+
+FORMATTING RULES:
+1. Each subtitle line must be SHORT (maximum 8-10 words per line).
+2. Break long sentences into multiple lines within the same subtitle block.
+3. Use proper SRT format: index, timestamp, subtitle text, blank line.
+4. Do NOT include any text outside the SRT format."""
             with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
             cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mpeg","data":b64}}]}]
             
