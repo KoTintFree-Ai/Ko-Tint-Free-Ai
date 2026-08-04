@@ -1,4 +1,7 @@
 streamlit
-requests
 edge-tts
+requests
+numpy
+Pillow
+raqm
 asyncio
