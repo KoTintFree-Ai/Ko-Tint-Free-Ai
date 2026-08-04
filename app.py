@@ -36,7 +36,7 @@ st.markdown("""
 
 # Session State Initialization
 def init_state():
-    keys = ['myanmar_text', 'audio_data', 'srt_data', 'video_data', 'base_frame', 'last_uploaded', 'processing_done', 'valid_keys_info']
+    keys = ['myanmar_text', 'audio_path', 'srt_data', 'video_path', 'base_frame', 'last_uploaded', 'processing_done', 'valid_keys_info']
     for k in keys:
         if k not in st.session_state: st.session_state[k] = None
     if st.session_state.processing_done is None: st.session_state.processing_done = False
@@ -414,12 +414,16 @@ def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sy):
 # --- MAIN UI ---
 up = st.file_uploader("ဗီဒီယို သို့မဟုတ် အော်ဒီယိုဖိုင် ရွေးချယ်ပါ", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"])
 
-if up:
+    if up:
     fid = up.name + str(up.size)
     if st.session_state.last_uploaded != fid:
         st.session_state.last_uploaded = fid
-        with tempfile.NamedTemporaryFile(delete=False, suffix="."+up.name.split(".")[-1]) as t:
-            t.write(up.getvalue()); tp = t.name
+        # Store input in a persistent session-based file
+        tp = os.path.join(tempfile.gettempdir(), f"input_{fid}." + up.name.split(".")[-1])
+        if not os.path.exists(tp):
+            with open(tp, "wb") as f:
+                f.write(up.getvalue())
+        
         if up.name.lower().endswith((".mp4", ".mov", ".avi")):
             d = get_dur(tp)
             bi = tempfile.mktemp(suffix=".jpg")
@@ -427,11 +431,9 @@ if up:
             if os.path.exists(bi):
                 with open(bi, "rb") as f: st.session_state.base_frame = f.read()
                 os.remove(bi)
-        os.remove(tp)
 
     if st.session_state.get("do_detect"):
-        with tempfile.NamedTemporaryFile(delete=False, suffix="."+up.name.split(".")[-1]) as t:
-            t.write(up.getvalue()); tp = t.name
+        tp = os.path.join(tempfile.gettempdir(), f"input_{fid}." + up.name.split(".")[-1])
         try:
             d = get_dur(tp); tf = tempfile.mktemp(suffix=".jpg")
             subprocess.run(["ffmpeg", "-y", "-ss", str(d*0.1), "-i", tp, "-frames:v", "1", tf], capture_output=True)
@@ -443,7 +445,6 @@ if up:
                 st.session_state.blur_h_size = float(((rows[-1] - rows[0] + 10) / h) * 100)
             os.remove(tf)
         except: pass
-        if os.path.exists(tp): os.remove(tp)
         st.session_state.do_detect = False; st.rerun()
 
     if show_prev and st.session_state.base_frame:
@@ -484,10 +485,19 @@ if up:
     elif st.button("🚀 စတင်လုပ်ဆောင်ရန်"):
         prg = st.progress(0); stt = st.empty()
         try:
+            # Cleanup old results
+            if st.session_state.video_path and os.path.exists(st.session_state.video_path):
+                try: os.remove(st.session_state.video_path)
+                except: pass
+            if st.session_state.audio_path and os.path.exists(st.session_state.audio_path):
+                try: os.remove(st.session_state.audio_path)
+                except: pass
+                
             stt.text("📊 အဆင့် ၁: အသံဖိုင်ကို ပြင်ဆင်နေပါသည်...")
             prg.progress(10)
-            with tempfile.NamedTemporaryFile(delete=False, suffix="."+up.name.split(".")[-1]) as t:
-                t.write(up.read()); tp = t.name
+            
+            # Use the already saved input file
+            tp = os.path.join(tempfile.gettempdir(), f"input_{fid}." + up.name.split(".")[-1])
             ag = tempfile.mktemp(suffix=".mp3")
             if up.name.lower().endswith((".mp4", ".mov", ".avi")):
                 subprocess.run(["ffmpeg", "-y", "-i", tp, "-vn", "-acodec", "libmp3lame", "-q:a", "4", ag], capture_output=True)
@@ -546,9 +556,11 @@ FORMATTING RULES:
             
             stt.text("🔊 အဆင့် ၃: အသံဖိုင်နှင့် Timing ညှိနေပါသည်...")
             prg.progress(60)
-            ao = os.path.abspath("final_audio.mp3")
+            # Use a unique name for audio to avoid conflicts
+            ao_name = f"audio_{fid}_{int(time.time())}.mp3"
+            ao = os.path.join(tempfile.gettempdir(), ao_name)
             st.session_state.srt_data, _ = asyncio.run(gen_audio_srt(srt_res, ao, v_id, v_speed, v_pitch, target_sec if fit_dur else 0))
-            with open(ao, "rb") as f: st.session_state.audio_data = f.read()
+            st.session_state.audio_path = ao
             
             if up.name.lower().endswith((".mp4", ".mov", ".avi")):
                 stt.text("🎬 အဆင့် ၄: ဗီဒီယိုကို တည်းဖြတ်နေပါသည် (Rendering)...")
@@ -607,47 +619,46 @@ FORMATTING RULES:
                 with open(filter_script, "w", encoding="utf-8") as f:
                     f.write(full_filter)
                 
-                fv = tempfile.mktemp(suffix=".mp4")
-                # Detect FFmpeg version or just try the most compatible way
-                # In FFmpeg 7+, -filter_complex_script is deprecated in favor of -filter_complex with file prefix
-                # We'll try to detect the error and fallback
+                fv_name = f"final_{fid}_{int(time.time())}.mp4"
+                fv = os.path.join(tempfile.gettempdir(), fv_name)
+                
                 cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
                 res = subprocess.run(cmd, capture_output=True, text=True)
                 
-                # If it failed due to filter_complex_script deprecation or missing, try the new syntax
-                if res.returncode != 0 and ("filter_complex_script" in res.stderr or "Filter not found" in res.stderr):
-                    # Try the new syntax suggested by FFmpeg 7: -/filter_complex
+                if res.returncode != 0:
+                    # Fallback to new syntax
                     cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-/filter_complex", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
                     res = subprocess.run(cmd, capture_output=True, text=True)
                 
                 if os.path.exists(filter_script): os.remove(filter_script)
+                shutil.rmtree(sub_dir)
                 
                 if res.returncode == 0:
-                    with open(fv, "rb") as f: st.session_state.video_data = f.read()
-                else: st.error(f"Render Error: {res.stderr}")
-                
-                # Cleanup
-                if os.path.exists(fv): os.remove(fv)
-                shutil.rmtree(sub_dir)
+                    st.session_state.video_path = fv
+                else:
+                    raise Exception(f"Render Error: {res.stderr}")
 
             prg.progress(100); stt.text("✅ အောင်မြင်စွာ ပြီးဆုံးပါပြီ!"); st.balloons()
             st.session_state.processing_done = True
-            if os.path.exists(tp): os.remove(tp)
-            if os.path.exists(ao): os.remove(ao)
+            # Keep files for download buttons
             if os.path.exists(ag): os.remove(ag)
-        except Exception as e: st.error(f"❌ အမှားအယွင်း: {str(e)}")
+        except Exception as e: 
+            st.error(f"❌ အမှားအယွင်း: {str(e)}")
+            st.session_state.processing_done = False
 
 if st.session_state.processing_done:
     st.markdown("---")
-    if st.session_state.video_data:
+    if st.session_state.video_path and os.path.exists(st.session_state.video_path):
         st.subheader("🎥 တည်းဖြတ်ပြီး ဗီဒီယို")
-        st.video(st.session_state.video_data)
-        st.download_button("📥 ဗီဒီယိုကို သိမ်းဆည်းရန်", st.session_state.video_data, "recap_final.mp4", "video/mp4")
+        st.video(st.session_state.video_path)
+        with open(st.session_state.video_path, "rb") as f:
+            st.download_button("📥 ဗီဒီယိုကို သိမ်းဆည်းရန်", f, "recap_final.mp4", "video/mp4")
     c1, c2 = st.columns(2)
     with c1:
-        if st.session_state.audio_data:
-            st.audio(st.session_state.audio_data)
-            st.download_button("📥 အသံဖိုင်ကို သိမ်းဆည်းရန်", st.session_state.audio_data, "recap_audio.mp3", "audio/mp3")
+        if st.session_state.audio_path and os.path.exists(st.session_state.audio_path):
+            st.audio(st.session_state.audio_path)
+            with open(st.session_state.audio_path, "rb") as f:
+                st.download_button("📥 အသံဖိုင်ကို သိမ်းဆည်းရန်", f, "recap_audio.mp3", "audio/mp3")
     with c2:
         if st.session_state.srt_data:
             st.download_button("📥 စာတန်းထိုး (SRT) ကို သိမ်းဆည်းရန်", st.session_state.srt_data, "recap.srt", "text/plain")
