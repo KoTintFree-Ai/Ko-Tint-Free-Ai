@@ -57,11 +57,10 @@ init_state()
 st.title("🎬 Movie Recap AI Pro V6.2")
 st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Unicode & Wrap Fix)")
 
-# --- HELPER: CONTROL WITH BUTTONS, SLIDER & NUMBER INPUT ---
+# --- HELPER: CONTROL WITH BUTTONS, SLIDER & TEXT INPUT ---
 def plus_minus_control(label, key, min_val, max_val, step=1.0):
     st.write(f"**{label}**")
     
-    # Master value management
     if key not in st.session_state:
         st.session_state[key] = float(min_val)
     
@@ -70,19 +69,12 @@ def plus_minus_control(label, key, min_val, max_val, step=1.0):
     # Row 1: Slider and Buttons
     col1, col2, col3 = st.columns([1, 4, 1])
     
-    def update_val(new_v):
-        st.session_state[key] = float(np.clip(new_v, min_val, max_val))
-        # Clear specific widget keys to force update on next rerun
-        if f"num_in_{key}" in st.session_state: del st.session_state[f"num_in_{key}"]
-        if f"sld_in_{key}" in st.session_state: del st.session_state[f"sld_in_{key}"]
-
     with col1:
         if st.button("➖", key=f"btn_min_{key}"):
-            update_val(val - step)
+            st.session_state[key] = float(np.clip(val - step, min_val, max_val))
             st.rerun()
             
     with col2:
-        # Slider updates master value directly via key
         new_sl_val = st.slider(label, float(min_val), float(max_val), value=val, step=float(step), key=f"sld_in_{key}", label_visibility="collapsed")
         if new_sl_val != val:
             st.session_state[key] = new_sl_val
@@ -90,18 +82,23 @@ def plus_minus_control(label, key, min_val, max_val, step=1.0):
             
     with col3:
         if st.button("➕", key=f"btn_pls_{key}"):
-            update_val(val + step)
+            st.session_state[key] = float(np.clip(val + step, min_val, max_val))
             st.rerun()
 
-    # Row 2: Number Input for precise entry
+    # Row 2: Text Input for precise entry (Avoids snap-back during typing)
     col_label, col_input = st.columns([3, 1])
     with col_label:
-        st.caption(f"Precise {label}")
+        st.caption(f"နံပါတ် အတိအကျ ရိုက်ရန် (Enter နှိပ်ပါ)")
     with col_input:
-        new_nm_val = st.number_input(label, float(min_val), float(max_val), value=val, step=float(step), key=f"num_in_{key}", label_visibility="collapsed")
-        if new_nm_val != val:
-            st.session_state[key] = new_nm_val
-            st.rerun()
+        # Use text_input to allow free typing, only updates on Enter
+        txt_val = st.text_input(label, value=str(val), key=f"txt_in_{key}", label_visibility="collapsed")
+        try:
+            new_v = float(txt_val)
+            if new_v != val:
+                st.session_state[key] = float(np.clip(new_v, min_val, max_val))
+                st.rerun()
+        except ValueError:
+            pass # Ignore invalid inputs until user types a valid number
             
     return st.session_state[key]
 
