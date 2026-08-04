@@ -17,7 +17,7 @@ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 MODELS_TO_TRY = ["gemini-1.5-flash", "gemini-3.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b"]
 
 st.set_page_config(
-    page_title="Movie Recap AI Pro V4.1", 
+    page_title="Movie Recap AI Pro V4.2", 
     page_icon="🎬", 
     layout="centered",
     initial_sidebar_state="expanded"
@@ -42,8 +42,8 @@ if 'srt_data' not in st.session_state: st.session_state.srt_data = None
 if 'video_data' not in st.session_state: st.session_state.video_data = None
 if 'processing_done' not in st.session_state: st.session_state.processing_done = False
 
-st.title("🎬 Movie Recap AI Pro V4.1")
-st.markdown("English Video → Myanmar Movie Recap (Pro Editing Features)")
+st.title("🎬 Movie Recap AI Pro V4.2")
+st.markdown("English Video → Myanmar Movie Recap (Full Video Edit)")
 
 # --- SIDEBAR SETTINGS ---
 with st.sidebar:
@@ -114,7 +114,7 @@ def format_srt_time(seconds):
     millis = int((seconds % 1) * 1000)
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
-async def generate_audio_and_srt_v41(text, audio_path, v_id, s, p, target_duration=0):
+async def generate_audio_and_srt_v42(text, audio_path, v_id, s, p, target_duration=0):
     rate = f"+{int((s-50)*2)}%" if s>=50 else f"{int((s-50)*2)}%"
     p_hz = f"+{int((p-50)*2)}Hz" if p>=50 else f"{int((p-50)*2)}Hz"
     communicate = edge_tts.Communicate(text, v_id, rate=rate, pitch=p_hz)
@@ -160,33 +160,28 @@ async def generate_audio_and_srt_v41(text, audio_path, v_id, s, p, target_durati
     if os.path.exists(temp_audio): os.remove(temp_audio)
     return "\n".join(srt_lines), get_duration(audio_path)
 
-def render_pro_video(video_path, audio_path, srt_path, mirror, scale, blur, burn_subs):
+def render_pro_video_v42(video_path, audio_path, srt_path, mirror, scale, blur, burn_subs):
     output_video = tempfile.mktemp(suffix='.mp4')
     try:
         filters = []
-        # 1. Mirror
         if mirror: filters.append("hflip")
-        # 2. Scale 106%
         if scale: filters.append("scale=1.06*iw:-1,crop=iw/1.06:ih/1.06")
-        # 3. Blur bottom (where subtitles usually are)
-        if blur:
-            # Blur the bottom 20% of the video
-            filters.append("split[a][b];[b]crop=iw:ih*0.2:0:ih*0.8,boxblur=20:10[blurred];[a][blurred]overlay=0:main_h*0.8")
-        # 4. Burn Subtitles
+        if blur: filters.append("split[a][b];[b]crop=iw:ih*0.2:0:ih*0.8,boxblur=20:10[blurred];[a][blurred]overlay=0:main_h*0.8")
         if burn_subs:
             srt_escaped = srt_path.replace("\\", "/").replace(":", "\\:")
             filters.append(f"subtitles='{srt_escaped}':force_style='FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'")
         
         filter_str = ",".join(filters) if filters else "copy"
-        
         cmd = [
             "ffmpeg", "-y", "-i", video_path, "-i", audio_path,
             "-filter_complex", f"[0:v]{filter_str}[v]",
-            "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest", output_video
+            "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-c:a", "aac", "-shortest", output_video
         ]
         subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return output_video
-    except: return None
+    except Exception as e:
+        st.error(f"Render Error: {str(e)}")
+        return None
 
 def gemini_generate_auto(contents, keys):
     for key in keys:
@@ -214,7 +209,7 @@ uploaded_file = st.file_uploader("ဗီဒီယို သို့မဟုတ
 if uploaded_file is not None:
     if not api_keys: st.warning("⚠️ Sidebar တွင် API Key ထည့်ပေးပါ")
     else:
-        if st.button("🚀 Start Pro Processing"):
+        if st.button("🚀 Start Pro Processing & Render Video"):
             progress_bar = st.progress(0)
             status_text = st.empty()
             try:
@@ -235,26 +230,26 @@ if uploaded_file is not None:
                 status_text.text("🔊 အဆင့် ၃: အသံဖိုင်နှင့် Subtitle ထုတ်ပေးနေပါသည်... (70%)")
                 progress_bar.progress(70)
                 audio_output = tempfile.mktemp(suffix='.mp3')
-                st.session_state.srt_data, final_dur = asyncio.run(generate_audio_and_srt_v41(st.session_state.myanmar_text, audio_output, voice_id, speed, pitch, total_target_sec))
+                st.session_state.srt_data, final_dur = asyncio.run(generate_audio_and_srt_v42(st.session_state.myanmar_text, audio_output, voice_id, speed, pitch, total_target_sec))
                 
                 if os.path.exists(audio_output):
                     with open(audio_output, "rb") as f: st.session_state.audio_data = f.read()
                 
                 if suffix.lower() in [".mp4", ".mov", ".avi"]:
-                    status_text.text("🎬 အဆင့် ၄: Pro Editing (Mirror, Scale, Blur, Subs)... (90%)")
+                    status_text.text("🎬 အဆင့် ၄: ဗီဒီယိုကို တည်းဖြတ်နေပါသည် (Rendering)... (90%)")
                     progress_bar.progress(90)
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".srt", mode="w", encoding="utf-8") as srt_f:
                         srt_f.write(st.session_state.srt_data)
                         srt_temp_path = srt_f.name
                     
-                    final_video_path = render_pro_video(temp_path, audio_output, srt_temp_path, mirror_video, scale_video, blur_subtitles, burn_myanmar_subs)
+                    final_video_path = render_pro_video_v42(temp_path, audio_output, srt_temp_path, mirror_video, scale_video, blur_subtitles, burn_myanmar_subs)
                     if final_video_path and os.path.exists(final_video_path):
                         with open(final_video_path, "rb") as f: st.session_state.video_data = f.read()
                         os.remove(final_video_path)
                     if os.path.exists(srt_temp_path): os.remove(srt_temp_path)
 
                 progress_bar.progress(100)
-                status_text.text("✅ Pro Processing ပြီးစီးပါပြီ!")
+                status_text.text("✅ အားလုံး ပြီးစီးပါပြီ!")
                 st.session_state.processing_done = True
                 st.balloons()
                 
@@ -266,16 +261,16 @@ if uploaded_file is not None:
 if st.session_state.processing_done:
     st.markdown("---")
     if st.session_state.video_data:
-        st.subheader("🎥 Pro Edited Video")
+        st.subheader("🎥 Edited Final Video")
         st.video(st.session_state.video_data)
-        st.download_button("📥 Download Pro Video", st.session_state.video_data, file_name="recap_pro.mp4", mime="video/mp4")
+        st.download_button("📥 Download Edited Video", st.session_state.video_data, file_name="recap_final.mp4", mime="video/mp4")
     
-    st.subheader("📥 Other Downloads")
+    st.subheader("📥 Downloads")
     col1, col2 = st.columns(2)
     with col1:
         if st.session_state.audio_data:
             st.audio(st.session_state.audio_data, format="audio/mp3")
-            st.download_button("📥 Download Audio Only", st.session_state.audio_data, file_name="recap_audio.mp3", mime="audio/mp3")
+            st.download_button("📥 Download Audio", st.session_state.audio_data, file_name="recap_audio.mp3", mime="audio/mp3")
     with col2:
         if st.session_state.srt_data:
-            st.download_button("📥 Download SRT Only", st.session_state.srt_data, file_name="recap_subtitle.srt", mime="text/plain")
+            st.download_button("📥 Download SRT", st.session_state.srt_data, file_name="recap_subtitle.srt", mime="text/plain")
