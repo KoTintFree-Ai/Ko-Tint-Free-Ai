@@ -577,7 +577,6 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     
     for p in final_temp_files:
         if os.path.exists(p): os.remove(p)
-    if os.path.exists(l_p): os.remove(l_p)
     
     return "".join(srt_blocks), get_dur(out_p)
 
