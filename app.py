@@ -161,9 +161,13 @@ def create_subtitle_image(text, width, height, font_size, y_pos_pct):
     draw = ImageDraw.Draw(img)
     
     try:
-        font = ImageFont.truetype("Pyidaungsu.ttf", font_size)
+        # Use a high-quality font and ensure layout is correct
+        font = ImageFont.truetype("Pyidaungsu.ttf", font_size, layout_engine=ImageFont.Layout.RAQM)
     except:
-        font = ImageFont.load_default()
+        try:
+            font = ImageFont.truetype("Pyidaungsu.ttf", font_size)
+        except:
+            font = ImageFont.load_default()
         
     # Split text into lines
     lines = text.split('\n')
@@ -192,50 +196,30 @@ def create_subtitle_image(text, width, height, font_size, y_pos_pct):
     return img
 
 def normalize_myanmar(text):
-    """Normalize and reorder Myanmar characters to standard Unicode order for better rendering"""
+    """Normalize Myanmar characters to standard Unicode order (NFC)"""
     if not text: return text
-    import re
-    # Standard Unicode Order: Consonant + Medials (ျ ြ ွ ှ) + Vowels (ေ ိ ီ ု ူ ေ ဲ) + Marks (် ံ ့ း)
-    # This is a simplified reordering to ensure common medials and vowels are in order
-    # Medials: 103B, 103C, 103D, 103E
-    # Vowels: 102B-1032, 1036
-    # Marks: 1037-103A
-    
-    # Remove any potential Zawgyi characters if they leaked in (rare for Gemini but safe)
-    # For now, we focus on Unicode reordering
-    def reorder_cluster(m):
-        cluster = m.group(0)
-        # Separate base and marks
-        base = cluster[0]
-        marks = list(cluster[1:])
-        # Define weights for sorting marks to standard order
-        order = {
-            '\u103B': 1, '\u103C': 2, '\u103D': 3, '\u103E': 4, # Medials
-            '\u1031': 5, # Pre-base vowel (rendered before, but stored after medials)
-            '\u102F': 6, '\u1030': 7, # Below vowels
-            '\u102D': 8, '\u102E': 9, '\u1032': 10, # Above vowels
-            '\u102B': 11, '\u102C': 12, # Right vowels
-            '\u1036': 13, '\u1037': 14, '\u1038': 15, '\u1039': 16, '\u103A': 17 # Marks
-        }
-        marks.sort(key=lambda x: order.get(x, 100))
-        return base + "".join(marks)
+    import unicodedata
+    # NFC is the standard for web and most modern rendering engines including Pillow
+    # It ensures characters like ေ (U+1031) are stored in the correct sequence
+    return unicodedata.normalize('NFC', text)
 
-    cluster_pattern = r'[\u1000-\u102A\u103F\u1040-\u1049][\u102B-\u103E]*'
-    return re.sub(cluster_pattern, reorder_cluster, text)
-
-def wrap_text(text, max_len=30):
+def wrap_text(text, max_len=25):
     """Intelligently wrap Myanmar text to prevent long lines without breaking clusters"""
     if not text: return text
     
     # First normalize the text
     text = normalize_myanmar(text)
     
+    # Remove any extra spaces that might cause issues
+    text = " ".join(text.split())
+    
     if len(text) <= max_len:
         return text
     
     import re
-    cluster_pattern = r'[\u1000-\u102A\u103F\u1040-\u1049][\u102B-\u103E]*'
-    clusters = re.findall(cluster_pattern + r'|[^\u1000-\u103E]', text)
+    # A more robust cluster pattern for Myanmar Unicode
+    cluster_pattern = r'[\u1000-\u102A\u103F\u1040-\u1049][\u102B-\u103E\u1037\u1038\u1039\u103A]*'
+    clusters = re.findall(cluster_pattern + r'|[^\u1000-\u1049]', text)
     
     lines = []
     cur_line = ""
@@ -245,7 +229,7 @@ def wrap_text(text, max_len=30):
         # If cluster is a space, handle separately
         if c == " ":
             if cur_len >= max_len:
-                lines.append(cur_line)
+                lines.append(cur_line.strip())
                 cur_line = ""
                 cur_len = 0
             else:
@@ -253,18 +237,21 @@ def wrap_text(text, max_len=30):
                 cur_len += 1
             continue
             
-        if cur_len + len(c) > max_len and cur_line:
-            lines.append(cur_line)
+        # If adding this cluster exceeds max_len, wrap
+        # Note: Myanmar characters are narrow, but we count by visual units (clusters)
+        if cur_len + 1 > max_len and cur_line:
+            lines.append(cur_line.strip())
             cur_line = c
-            cur_len = len(c)
+            cur_len = 1
         else:
             cur_line += c
-            cur_len += len(c)
+            cur_len += 1
             
     if cur_line:
-        lines.append(cur_line)
+        lines.append(cur_line.strip())
     
-    return "\n".join(lines)
+    # Final cleanup: ensure no more than 2 lines if possible, or join with \n
+    return "\n".join(lines[:3]) # Limit to 3 lines max for readability
 
 def get_dur(p):
     try:
@@ -328,15 +315,35 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
         import unicodedata
         clean_txt = unicodedata.normalize('NFC', clean_txt)
         
-        # Wrap long lines for SRT (max 30 chars per line)
-        wrapped_txt = wrap_text(clean_txt, max_len=30)
         p = tempfile.mktemp(suffix=".mp3")
         try:
             communicate = edge_tts.Communicate(clean_txt, vid, rate=rate, pitch=pitch)
             await communicate.save(p)
             d = get_dur(p)
             if d > 0:
-                srt_blocks.append(f"{len(temp_files)+1}\n{fmt_srt(cur_t)} --> {fmt_srt(cur_t+d)}\n{wrapped_txt}\n\n")
+                # Split text into smaller timed chunks if too long
+                sub_segments = re.split(r'([။၊ ])', clean_txt)
+                sub_parts = []
+                temp_part = ""
+                for part in sub_segments:
+                    if len(temp_part) + len(part) < 20: # Short segments for clarity
+                        temp_part += part
+                    else:
+                        if temp_part.strip(): sub_parts.append(temp_part.strip())
+                        temp_part = part
+                if temp_part.strip(): sub_parts.append(temp_part.strip())
+                
+                if len(sub_parts) > 1:
+                    part_dur = d / len(sub_parts)
+                    for i, sp in enumerate(sub_parts):
+                        start_t = cur_t + (i * part_dur)
+                        end_t = cur_t + ((i + 1) * part_dur)
+                        wrapped_sp = wrap_text(sp, max_len=20)
+                        srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(start_t)} --> {fmt_srt(end_t)}\n{wrapped_sp}\n\n")
+                else:
+                    wrapped_txt = wrap_text(clean_txt, max_len=20)
+                    srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(cur_t)} --> {fmt_srt(cur_t+d)}\n{wrapped_txt}\n\n")
+                
                 temp_files.append(p)
                 cur_t += d + 0.1
         except: continue
