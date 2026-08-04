@@ -157,17 +157,25 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("🔑 Gemini API Keys (၅ ခုအထိ)")
     
-    def get_key_label(idx, key_val):
-        label = f"API Key {idx}"
-        if key_val and st.session_state.active_key == key_val:
-            return label + " 🟢 (Active)"
-        return label
+    # Improved API Key Status Indicator
+    if st.session_state.active_key:
+        active_idx = 0
+        if st.session_state.active_key == st.session_state.get('key_1'): active_idx = 1
+        elif st.session_state.active_key == st.session_state.get('key_2'): active_idx = 2
+        elif st.session_state.active_key == st.session_state.get('key_3'): active_idx = 3
+        elif st.session_state.active_key == st.session_state.get('key_4'): active_idx = 4
+        elif st.session_state.active_key == st.session_state.get('key_5'): active_idx = 5
+        
+        if active_idx > 0:
+            st.success(f"🟢 လက်ရှိအသုံးပြုနေသော Key: API Key {active_idx}")
+    else:
+        st.info("💡 Key ထည့်ပြီး စတင်လုပ်ဆောင်ပါ")
 
-    k1 = st.text_input(get_key_label(1, st.session_state.get('key_1')), type="password", key="key_1")
-    k2 = st.text_input(get_key_label(2, st.session_state.get('key_2')), type="password", key="key_2")
-    k3 = st.text_input(get_key_label(3, st.session_state.get('key_3')), type="password", key="key_3")
-    k4 = st.text_input(get_key_label(4, st.session_state.get('key_4')), type="password", key="key_4")
-    k5 = st.text_input(get_key_label(5, st.session_state.get('key_5')), type="password", key="key_5")
+    k1 = st.text_input("API Key 1", type="password", key="key_1")
+    k2 = st.text_input("API Key 2", type="password", key="key_2")
+    k3 = st.text_input("API Key 3", type="password", key="key_3")
+    k4 = st.text_input("API Key 4", type="password", key="key_4")
+    k5 = st.text_input("API Key 5", type="password", key="key_5")
     api_keys = [k for k in [k1, k2, k3, k4, k5] if k]
 
     if st.button("🔌 API ချိတ်ဆက်မှု စမ်းသပ်ရန်"):
@@ -191,7 +199,11 @@ with st.sidebar:
                                 success = True
                                 break
                     except: pass
-                if success: st.info(f"Key {i+1} ကို စိတ်ချစွာ အသုံးပြုနိုင်ပါသည်။")
+                if success: 
+                    st.info(f"Key {i+1} ကို စိတ်ချစွာ အသုံးပြုနိုင်ပါသည်။")
+                    if not st.session_state.active_key:
+                        st.session_state.active_key = k
+                        st.rerun()
 
     st.markdown("---")
     st.subheader("🎬 ဗီဒီယို ပုံစံညှိရန်")
@@ -423,18 +435,18 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     if os.path.exists(raw): os.remove(raw)
     return res_srt, get_dur(out_p)
 
-def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sx, sy):
+def get_filter(mir, scl, blr, by_px, bh_px, brn, sp, fs, sx, sy):
     """
-    Construct FFmpeg filter string.
-    sx, sy are absolute pixel coordinates for the subtitle overlay.
+    Construct FFmpeg filter string using absolute pixel coordinates.
+    by_px: Blur Y start in pixels
+    bh_px: Blur height in pixels
+    sx, sy: Subtitle overlay coordinates in pixels
     """
     base_parts = []
     if mir: base_parts.append("hflip")
+    # If scaled, we still need to calculate coordinates based on the output size of this base_str
     if scl: base_parts.append("scale=1.06*iw:-1,crop=iw/1.06:ih/1.06")
     base_str = ",".join(base_parts) if base_parts else "null"
-
-    y_p = by / 100
-    h_p = bh / 100
 
     if not blr:
         fc = f"[0:v]{base_str}[main]"
@@ -444,10 +456,12 @@ def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sx, sy):
             fc += ";[main]null[v]"
         return fc
     else:
+        # Important: Since we scaled/cropped in base_str, we must use pixel coordinates
+        # because 'H' and 'ih' inside the filter now refer to the new (cropped) dimensions.
         fc = f"[0:v]{base_str}[preblur];"
         fc += f"[preblur]split[main][to_blur];"
-        fc += f"[to_blur]crop=iw:ih*{h_p}:0:ih*{y_p},boxblur=15[blurred];"
-        fc += f"[main][blurred]overlay=0:H*{y_p}[postblur]"
+        fc += f"[to_blur]crop=iw:{bh_px}:0:{by_px},boxblur=15[blurred];"
+        fc += f"[main][blurred]overlay=0:{by_px}[postblur]"
         if brn and sp and os.path.exists(sp):
             fc += f";[postblur][1:v]overlay={sx}:{sy}[v]"
         else:
@@ -503,8 +517,12 @@ if up:
         x_p = (w - sw) // 2
         y_p = int(h * (st.session_state.sub_y_pos / 100)) - (sh // 2)
         
-        # Pass calculated coordinates directly to get_filter
-        fc = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, burn_s, sub_p, st.session_state.font_size, x_p, y_p)
+        # Calculate absolute pixel coordinates for blur
+        by_px = int(h * (st.session_state.blur_y_pos / 100))
+        bh_px = int(h * (st.session_state.blur_h_size / 100))
+        
+        # Pass calculated pixel coordinates directly to get_filter
+        fc = get_filter(mirror_v, scale_v, blur_s, by_px, bh_px, burn_s, sub_p, st.session_state.font_size, x_p, y_p)
         
         filter_script_p = tempfile.mktemp(suffix=".txt")
         filter_str = fc
@@ -644,8 +662,12 @@ FORMATTING RULES:
                         safe_spath = spath.replace('\\', '/').replace(':', '\\\\').replace("'", "'\\\\\''")
                         overlay_filters.append(f"movie='{safe_spath}'[s{i}];[v][s{i}]overlay={x_pos}:{y_pos}:enable='between(t,{seg['start']},{seg['end']})'[v]")
 
+                    # Calculate absolute pixel coordinates for blur during rendering
+                    by_px_r = int(vh * (st.session_state.blur_y_pos / 100))
+                    bh_px_r = int(vh * (st.session_state.blur_h_size / 100))
+                    
                     # For rendering, the base filter (mirror, scale, blur) comes first
-                    fcf = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, False, None, 0, 0, 0)
+                    fcf = get_filter(mirror_v, scale_v, blur_s, by_px_r, bh_px_r, False, None, 0, 0, 0)
                     full_filter = fcf.replace("[v]", "[v0]")
                     for i, filt in enumerate(overlay_filters):
                         current_filt = filt.replace("[v]", f"[v{i}]", 1).replace("[v]", f"[v{i+1}]")
