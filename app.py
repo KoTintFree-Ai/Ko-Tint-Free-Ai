@@ -448,13 +448,17 @@ if up:
         po = tempfile.mktemp(suffix=".jpg")
         fc = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, burn_s, sub_p, st.session_state.font_size, st.session_state.sub_y_pos)
         
+        filter_script_p = tempfile.mktemp(suffix=".txt")
         # If burn_s is enabled, we need two inputs for overlay
         if burn_s:
-            cmd = ["ffmpeg", "-y", "-i", bp, "-i", sub_p, "-filter_complex", fc, "-map", "[v]", po]
+            with open(filter_script_p, "w", encoding="utf-8") as f: f.write(fc)
+            cmd = ["ffmpeg", "-y", "-i", bp, "-i", sub_p, "-filter_complex_script", filter_script_p, "-map", "[v]", po]
         else:
-            cmd = ["ffmpeg", "-y", "-i", bp, "-filter_complex", fc.replace("[postblur][1:v]overlay=0:0", "[postblur]"), "-map", "[v]", po]
+            with open(filter_script_p, "w", encoding="utf-8") as f: f.write(fc.replace("[postblur][1:v]overlay=0:0", "[postblur]"))
+            cmd = ["ffmpeg", "-y", "-i", bp, "-filter_complex_script", filter_script_p, "-map", "[v]", po]
             
         subprocess.run(cmd, capture_output=True)
+        if os.path.exists(filter_script_p): os.remove(filter_script_p)
         if os.path.exists(po): st.image(po); os.remove(po)
         if os.path.exists(bp): os.remove(bp)
         if os.path.exists(sub_p): os.remove(sub_p)
@@ -581,9 +585,16 @@ FORMATTING RULES:
                 # Final output label
                 full_filter += f";[v{len(overlay_filters)}]null[v]"
                 
+                # Use a filter script file to avoid command line length limits (especially on Windows)
+                filter_script = tempfile.mktemp(suffix=".txt")
+                with open(filter_script, "w", encoding="utf-8") as f:
+                    f.write(full_filter)
+                
                 fv = tempfile.mktemp(suffix=".mp4")
-                cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex", full_filter, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
+                cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
                 res = subprocess.run(cmd, capture_output=True, text=True)
+                
+                if os.path.exists(filter_script): os.remove(filter_script)
                 
                 if res.returncode == 0:
                     with open(fv, "rb") as f: st.session_state.video_data = f.read()
