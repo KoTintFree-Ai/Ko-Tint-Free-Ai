@@ -16,7 +16,19 @@ import shutil
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 MODELS_TO_TRY = ["gemini-1.5-flash", "gemini-3.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b"]
 
-st.set_page_config(page_title="🎬 Movie Recap AI Turbo V3.7", page_icon="🎬", layout="centered")
+st.set_page_config(page_title="Movie Recap AI Pro", page_icon="🎬", layout="centered")
+
+# --- HIDE STREAMLIT BRANDING & GITHUB LINKS ---
+hide_st_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            footer {visibility: hidden;}
+            header {visibility: hidden;}
+            .stDeployButton {display:none;}
+            #stDecoration {display:none;}
+            </style>
+            """
+st.markdown(hide_st_style, unsafe_allow_html=True)
 
 # Session State Persistence
 if 'myanmar_text' not in st.session_state: st.session_state.myanmar_text = None
@@ -24,10 +36,9 @@ if 'audio_data' not in st.session_state: st.session_state.audio_data = None
 if 'srt_data' not in st.session_state: st.session_state.srt_data = None
 if 'processing_done' not in st.session_state: st.session_state.processing_done = False
 
-# Version Tag
-st.caption("🚀 Version 3.7 - Big File Support & Audio Extraction")
-st.title("🎬 Movie Recap AI Turbo")
-st.markdown("English Video/Audio → Myanmar Movie Recap Style + Fast & Stable")
+# Version Tag (Internal use)
+st.title("🎬 Movie Recap AI Pro")
+st.markdown("English Video/Audio → Myanmar Movie Recap Style")
 
 # --- SIDEBAR SETTINGS ---
 with st.sidebar:
@@ -116,18 +127,15 @@ def format_srt_time(seconds):
 def translate_error_to_myanmar(error_msg):
     error_msg = str(error_msg).lower()
     if not is_ffmpeg_installed():
-        return "❌ FFmpeg ကို ရှာမတွေ့ပါဘူး။ ကျေးဇူးပြု၍ GitHub မှာ 'packages.txt' ဖိုင်ကို တင်ပေးပါ။"
-    
+        return "❌ စနစ်ပိုင်းဆိုင်ရာ အမှားအယွင်းရှိနေပါသည်။ (FFmpeg not found)"
     if "429" in error_msg or "quota" in error_msg:
-        return "❌ Gemini API ရဲ့ အသုံးပြုမှု ကန့်သတ်ချက် (Quota) ပြည့်သွားပါပြီ။ ကျေးဇူးပြု၍ နောက်ထပ် API Key တစ်ခုကို စမ်းကြည့်ပါ သို့မဟုတ် ခဏစောင့်ပြီးမှ ပြန်ကြိုးစားပါ။"
+        return "❌ Gemini API အသုံးပြုမှု ကန့်သတ်ချက် ပြည့်သွားပါပြီ။ နောက်ထပ် API Key တစ်ခုကို စမ်းကြည့်ပါ။"
     elif "413" in error_msg or "payload too large" in error_msg:
-        return "❌ ဖိုင်ဆိုဒ် အရမ်းကြီးနေပါတယ်။ ကျေးဇူးပြု၍ ဗီဒီယိုကို အနည်းငယ် လျှော့ချပြီးမှ ပြန်တင်ပေးပါ။"
-    elif "timeout" in error_msg:
-        return "❌ ချိတ်ဆက်မှု ကြာမြင့်နေပါတယ်။ အင်တာနက်လိုင်းကို စစ်ဆေးပြီး ပြန်ကြိုးစားကြည့်ပါ။"
+        return "❌ ဖိုင်ဆိုဒ် အရမ်းကြီးနေပါသည်။"
     else:
-        return f"❌ အမှားအယွင်းတစ်ခု ဖြစ်ပွားခဲ့ပါတယ်: {error_msg}"
+        return f"❌ အမှားအယွင်းတစ်ခု ဖြစ်ပွားခဲ့ပါသည်: {error_msg}"
 
-async def generate_audio_and_srt_v37(text, audio_path, v_id, s, p, target_duration=0):
+async def generate_audio_and_srt_v38(text, audio_path, v_id, s, p, target_duration=0):
     rate = speed_to_edge_rate(s)
     p_hz = pitch_to_edge_hz(p)
     communicate = edge_tts.Communicate(text, v_id, rate=rate, pitch=p_hz)
@@ -221,7 +229,7 @@ def translate_content(audio_path, target_sec, keys):
     prompt = f"""You are a professional movie recap expert and Myanmar translator. 
 Listen to this English audio and translate it into Myanmar language in the dramatic storytelling style of "Thiha Voice".
 {duration_prompt}
-- Dramatic tone (voice ကြမ်းကြမ်း၊ ဆွဲဆွဲငင်ငင်).
+- Dramatic tone.
 - Use phrases like "ဆိုပြီး...", "ဒီမှာတော့...".
 Write ENTIRELY in Myanmar language."""
     with open(audio_path, 'rb') as f:
@@ -230,60 +238,50 @@ Write ENTIRELY in Myanmar language."""
     return gemini_generate_auto(contents, keys)
 
 # --- MAIN UI ---
-if not is_ffmpeg_installed():
-    st.error("⚠️ FFmpeg ကို ရှာမတွေ့ပါဘူး။ ကျေးဇူးပြု၍ GitHub မှာ 'packages.txt' ဖိုင်ကို တင်ပေးပါ။")
-
 uploaded_file = st.file_uploader("ဗီဒီယို သို့မဟုတ် အော်ဒီယိုဖိုင် ရွေးချယ်ပါ", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"])
 
 if uploaded_file is not None:
     if not api_keys:
-        st.warning("⚠️ Sidebar မှာ အနည်းဆုံး API Key တစ်ခု ထည့်ပေးပါ")
+        st.warning("⚠️ Sidebar တွင် API Key ထည့်ပေးပါ")
     else:
         if st.button("🚀 Start Processing"):
             progress_bar = st.progress(0)
             status_text = st.empty()
             try:
-                # Step 1: Prep & Audio Extraction (10-20%)
-                status_text.text("📊 အဆင့် ၁: ဖိုင်ကို စစ်ဆေးပြီး အသံထုတ်ယူနေပါတယ်... (10%)")
+                status_text.text("📊 အဆင့် ၁: ဖိုင်ကို စစ်ဆေးနေပါသည်... (10%)")
                 progress_bar.progress(10)
                 suffix = "." + uploaded_file.name.split(".")[-1]
                 with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tfile:
                     tfile.write(uploaded_file.read())
                     temp_path = tfile.name
                 
-                # Extract audio for Gemini processing (much smaller than video)
                 if suffix.lower() in [".mp4", ".mov", ".avi"]:
                     audio_for_gemini = extract_audio(temp_path)
                 else:
                     audio_for_gemini = temp_path
                 
-                if not audio_for_gemini:
-                    raise Exception("ဗီဒီယိုမှ အသံထုတ်ယူလို့ မရပါဘူး။")
-                
+                if not audio_for_gemini: raise Exception("Error extracting audio.")
                 progress_bar.progress(20)
                 
-                # Step 2: Translation (21-50%)
-                status_text.text("⏳ အဆင့် ၂: Gemini AI ဖြင့် ဘာသာပြန်နေပါတယ်... (40%)")
+                status_text.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည်... (40%)")
                 progress_bar.progress(40)
                 st.session_state.myanmar_text = translate_content(audio_for_gemini, total_target_sec, api_keys)
                 
-                # Step 3: Audio & SRT Sync (51-100%)
-                status_text.text("🔊 အဆင့် ၃: အသံဖိုင်နှင့် Subtitle ကို ထုတ်ပေးနေပါတယ်... (80%)")
+                status_text.text("🔊 အဆင့် ၃: အသံဖိုင်နှင့် Subtitle ထုတ်ပေးနေပါသည်... (80%)")
                 progress_bar.progress(80)
                 audio_output = tempfile.mktemp(suffix='.mp3')
                 st.session_state.srt_data, final_dur = asyncio.run(
-                    generate_audio_and_srt_v37(st.session_state.myanmar_text, audio_output, voice_id, speed, pitch, total_target_sec)
+                    generate_audio_and_srt_v38(st.session_state.myanmar_text, audio_output, voice_id, speed, pitch, total_target_sec)
                 )
                 if os.path.exists(audio_output):
                     with open(audio_output, "rb") as f:
                         st.session_state.audio_data = f.read()
                 
                 progress_bar.progress(100)
-                status_text.text(f"✅ အားလုံး ပြီးစီးပါပြီ! ({int(final_dur if final_dur else 0)}s)")
+                status_text.text(f"✅ ပြီးစီးပါပြီ! ({int(final_dur if final_dur else 0)}s)")
                 st.session_state.processing_done = True
                 st.balloons()
                 
-                # Cleanup
                 if os.path.exists(temp_path): os.remove(temp_path)
                 if audio_for_gemini != temp_path and os.path.exists(audio_for_gemini): os.remove(audio_for_gemini)
                 if os.path.exists(audio_output): os.remove(audio_output)
@@ -299,13 +297,8 @@ if st.session_state.processing_done:
     col1, col2 = st.columns(2)
     with col1:
         if st.session_state.audio_data:
-            st.info("🔊 Myanmar Audio Ready")
             st.audio(st.session_state.audio_data, format="audio/mp3")
             st.download_button("📥 Download Audio", st.session_state.audio_data, file_name="recap_audio.mp3", mime="audio/mp3")
     with col2:
         if st.session_state.srt_data:
-            st.info("📝 Perfect Sync SRT Ready")
             st.download_button("📥 Download SRT (CapCut)", st.session_state.srt_data, file_name="recap_subtitle.srt", mime="text/plain")
-
-st.markdown("---")
-st.caption("Developed for Myanmar Movie Recap Creators | Version 3.7 Turbo (Big File Support)")
