@@ -246,12 +246,18 @@ with st.sidebar:
     if blur_s:
         b_y = plus_minus_control("ဝါးမည့်နေရာ (Y %)", "blur_y_pos", 0, 100, 1)
         b_h = plus_minus_control("ဝါးမည့်အကျယ် (H %)", "blur_h_size", 1, 30, 1)
+    else:
+        # Reset if disabled to avoid coordinate confusion
+        st.session_state.blur_y_pos = 85.0
+        st.session_state.blur_h_size = 10.0
 
     st.markdown("---")
     burn_s = st.checkbox("မြန်မာစာတန်းထိုး ထည့်ရန်", value=True)
     if burn_s:
         f_s = plus_minus_control("စာလုံးအရွယ်အစား", "font_size", 5, 100, 1)
         s_y = plus_minus_control("စာတန်းထိုးနေရာ (Y %)", "sub_y_pos", 0, 100, 1)
+    else:
+        st.session_state.sub_y_pos = 85.0
 
     st.markdown("---")
     if st.button("✨ နေရာ အလိုအလျောက် ရှာရန်"):
@@ -264,8 +270,10 @@ with st.sidebar:
     target_sec = 0
     if fit_dur:
         c1, c2 = st.columns(2)
-        with c1: tm = st.number_input("မိနစ်", 0, 60, 2)
-        with c2: ts = st.number_input("စက္ကန့်", 0, 59, 30)
+        with c1: tm = st.number_input("မိနစ်", 0, 60, value=st.session_state.get('target_min', 2))
+        with c2: ts = st.number_input("စက္ကန့်", 0, 59, value=st.session_state.get('target_sec', 30))
+        st.session_state.target_min = tm
+        st.session_state.target_sec = ts
         target_sec = (tm * 60) + ts
 
     st.markdown("---")
@@ -276,13 +284,11 @@ with st.sidebar:
     v_pitch = st.slider("Pitch", 1, 100, 50)
 
     if st.button("🧹 အားလုံးဖျက်ရန်"):
-        # Preserve API keys and related info
+        # Preserve API keys and UI settings
         preserved = {}
-        for i in range(1, 6):
-            k = f"key_{i}"
-            if k in st.session_state: preserved[k] = st.session_state[k]
-        for k in ['valid_keys_info', 'active_key']:
-            if k in st.session_state: preserved[k] = st.session_state[k]
+        for k in list(st.session_state.keys()):
+            if any(x in k for x in ['key_', 'valid_keys_info', 'active_key', 'blur_', 'sub_', 'font_', 'fit_dur', 'target_']):
+                preserved[k] = st.session_state[k]
         
         # Clear everything else
         for k in list(st.session_state.keys()):
@@ -412,9 +418,7 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     segments = parse_srt_text(text)
     if not segments: segments = [text]
     
-    temp_files = []
-    
-    # First pass: Generate audio for all segments and measure their durations
+    # 1. Generate all raw audio segments
     raw_segments = []
     for txt in segments:
         clean_txt = re.sub(r'^\d+\s*', '', txt).strip()
@@ -426,11 +430,9 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
         try:
             communicate = edge_tts.Communicate(clean_txt, vid, rate=rate, pitch=pitch)
             await communicate.save(p)
-            
-            # Trim silence
+            # Trim silence slightly
             p_trimmed = tempfile.mktemp(suffix=".mp3")
             subprocess.run(["ffmpeg", "-y", "-i", p, "-af", "silenceremove=start_periods=1:start_silence=0.05:start_threshold=-50dB:detection=peak,silenceremove=stop_periods=1:stop_silence=0.05:stop_threshold=-50dB:detection=peak", p_trimmed], capture_output=True)
-            
             d = get_dur(p_trimmed)
             if d > 0:
                 raw_segments.append({'path': p_trimmed, 'dur': d, 'text': clean_txt})
@@ -439,21 +441,39 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
         
     if not raw_segments: raise Exception("အသံဖိုင် ထုတ်လုပ်ခြင်း မအောင်မြင်ပါ။")
     
-    # Calculate total duration and global scaling factor to hit target
+    # 2. Calculate timing strategy
     total_raw_dur = sum(s['dur'] for s in raw_segments)
+    num_gaps = len(raw_segments) - 1
     
-    # If target is provided, we scale to fit it EXACTLY
-    # Movie recap style allows for faster speech, so we expand the limit to 0.7 - 1.5
-    global_factor = total_raw_dur / target if target > 0 else 1.0
-    applied_factor = np.clip(global_factor, 0.7, 1.5)
+    # Safe limits for natural sound
+    MIN_FACTOR = 0.92  # Don't stretch too slow
+    MAX_FACTOR = 1.25  # Don't speed up too much
     
+    applied_factor = 1.0
+    extra_gap = 0.0
+    
+    if target > 0:
+        # Try to fit using factor first (within safe range)
+        global_factor = total_raw_dur / target
+        applied_factor = np.clip(global_factor, MIN_FACTOR, MAX_FACTOR)
+        
+        # Recalculate duration after safe factor
+        stretched_dur = total_raw_dur / applied_factor
+        
+        # If still too short, add gaps between segments
+        if stretched_dur < target and num_gaps > 0:
+            remaining = target - stretched_dur
+            # Max gap of 0.8s between segments to keep it natural
+            extra_gap = min(remaining / num_gaps, 0.8)
+    
+    # 3. Process segments with final timing
     final_temp_files = []
     cur_time = 0.0
     srt_blocks = []
     
     for idx, seg in enumerate(raw_segments):
         p_final = tempfile.mktemp(suffix=".mp3")
-        # Apply the exact scaling factor to each segment
+        # Apply factor
         if abs(applied_factor - 1.0) > 0.01:
             subprocess.run(["ffmpeg", "-y", "-i", seg['path'], "-filter:a", f"atempo={applied_factor}", p_final], capture_output=True)
         else:
@@ -462,22 +482,29 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
         actual_dur = get_dur(p_final)
         if actual_dur > 0:
             wrapped_txt = wrap_text(seg['text'], max_len=25)
-            # Ensure the SRT timestamp is PERFECTLY aligned with the audio duration
-            srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(cur_time)} --> {fmt_srt(cur_time + actual_dur)}\n{wrapped_txt}\n\n")
+            # SRT timing: Start exactly when audio starts, end with a tiny buffer (0.1s) for natural reading
+            # But don't overlap with the next segment's start
+            end_time = cur_time + actual_dur + 0.1
+            srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(cur_time)} --> {fmt_srt(end_time)}\n{wrapped_txt}\n\n")
             final_temp_files.append(p_final)
             cur_time += actual_dur
+            
+            # Add gap if needed (except for the last segment)
+            if idx < num_gaps and extra_gap > 0:
+                p_gap = tempfile.mktemp(suffix=".mp3")
+                # Create a silent audio file for the gap
+                subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=mono", "-t", str(extra_gap), p_gap], capture_output=True)
+                if os.path.exists(p_gap):
+                    final_temp_files.append(p_gap)
+                    cur_time += extra_gap
         
-        # Cleanup intermediate trimmed file
         if os.path.exists(seg['path']): os.remove(seg['path'])
         
-    if not final_temp_files: raise Exception("အသံဖိုင် ပေါင်းစပ်ခြင်း မအောင်မြင်ပါ။")
-    
-    # Final concatenation
+    # 4. Final Concat
     l_p = tempfile.mktemp(suffix=".txt")
     with open(l_p, "w", encoding='utf-8') as f: f.write("\n".join([f"file '{p}'" for p in final_temp_files]))
     subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", l_p, "-c", "copy", out_p], capture_output=True)
     
-    # Cleanup final temp files
     for p in final_temp_files:
         if os.path.exists(p): os.remove(p)
     if os.path.exists(l_p): os.remove(l_p)
@@ -618,24 +645,25 @@ if up:
 
                 stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည် (Gemini)...")
                 prg.progress(30)
-                # Calculate approximate word count for target duration (Recap style: ~2.5 words/sec)
-                target_words = int(target_sec * 2.5)
+                # Calculate approximate word count for target duration (Recap style: ~3.0 words/sec for Myanmar)
+                # We need a lot of text to avoid the "stretched" voice.
+                target_words = int(target_sec * 3.0)
                 prm = f"""Listen to this audio and translate it into a HIGH-ENERGY Myanmar Movie Recap style narration.
 Target duration: {target_sec} seconds.
-Estimated total word count: around {target_words} words.
+REQUIRED LENGTH: You MUST write at least {target_words} words to fill the time.
 
 MOVIE RECAP STYLE RULES:
 1. The tone must be dramatic, fast-paced, and engaging (like popular YouTube Movie Recaps).
 2. Use conversational Myanmar language (e.g., "ဒီနေ့မှာတော့...", "နောက်ဆုံးမှာတော့...", "မထင်မှတ်ဘဲ...").
-3. Keep sentences flowing tightly. DO NOT include long silence gaps.
-4. The content should be concise but cover all key plot points.
+3. Keep the narration continuous. DO NOT just summarize; tell the story in detail.
+4. Describe the characters' emotions and the atmosphere to add length naturally.
 5. Use Standard Myanmar Unicode and correct spelling.
 
 FORMATTING RULES:
 1. Output ONLY valid SRT subtitle format.
-2. Each subtitle block should be a natural phrase (8-15 words).
-3. The total duration of all SRT blocks MUST match {target_sec} seconds exactly.
-4. The script must be long enough to fill {target_sec} seconds but not longer.
+2. Each subtitle block should be a natural phrase (10-20 words).
+3. The total duration of all SRT blocks MUST be EXACTLY {target_sec} seconds.
+4. If the story is short, elaborate more on the details to reach the target duration.
 5. Do NOT include any intro/outro text, only the SRT blocks."""
                 with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
                 cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mpeg","data":b64}}]}]
