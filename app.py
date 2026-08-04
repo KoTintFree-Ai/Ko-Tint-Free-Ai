@@ -276,29 +276,41 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     return res_srt, get_dur(out_p)
 
 def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sy):
-    vf = []
-    if mir: vf.append("hflip")
-    if scl: vf.append("scale=1.06*iw:-1,crop=iw/1.06:ih/1.06")
-    base = ",".join(vf) if vf else "null"
+    # Base chain for hflip and scale
+    base_parts = []
+    if mir: base_parts.append("hflip")
+    if scl: base_parts.append("scale=1.06*iw:-1,crop=iw/1.06:ih/1.06")
+    base_str = ",".join(base_parts) if base_parts else "null"
     
-    # Build filter chain
-    fc = f"[0:v]{base}"
-    
-    # Add blur effect if enabled (using simpler approach)
-    if blr:
-        y, h = by/100, bh/100
-        # Use blur filter instead of complex boxblur chain (more compatible)
-        blur_radius = min(10, max(1, int(h * 100)))  # Clamp to valid range
-        fc += f",blur=sigma={blur_radius}:enable='between(t,0,999999)'"
-    
-    # Add subtitles with force_style
-    if brn and sp and os.path.exists(sp):
-        se = os.path.abspath(sp).replace("\\","/").replace(":","\\\\").replace("'","'\\''")
-        mv = int((100 - sy) * 10)
-        fc += f",subtitles='{se}':force_style='FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv}'"
-    
-    fc += "[v]"
-    return fc
+    if not blr:
+        # Simple case: no blur
+        res = f"[0:v]{base_str}"
+        if brn and sp and os.path.exists(sp):
+            se = os.path.abspath(sp).replace("\\","/").replace(":","\\\\").replace("'","'\\''")
+            mv = int((100 - sy) * 10)
+            res += f",subtitles='{se}':fontsdir='.':force_style='FontName=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv}'"
+        return res + "[v]"
+    else:
+        # Complex case: region blur
+        y_p = by / 100
+        h_p = bh / 100
+        # 1. Apply base transforms
+        # 2. Split into main and blur branch
+        # 3. Crop and blur the blur branch
+        # 4. Overlay
+        # 5. Apply subtitles
+        filter_complex = f"[0:v]{base_str}[preblur];"
+        filter_complex += f"[preblur]split[main][to_blur];"
+        filter_complex += f"[to_blur]crop=iw:ih*{h_p}:0:ih*{y_p},boxblur=15[blurred];"
+        filter_complex += f"[main][blurred]overlay=0:H*{y_p}[postblur]"
+        
+        res = "[postblur]"
+        if brn and sp and os.path.exists(sp):
+            se = os.path.abspath(sp).replace("\\","/").replace(":","\\\\").replace("'","'\\''")
+            mv = int((100 - sy) * 10)
+            res += f"subtitles='{se}':fontsdir='.':force_style='FontName=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv}'"
+        
+        return filter_complex + ";" + res + "[v]"
 
 # --- MAIN UI ---
 up = st.file_uploader("ဗီဒီယို သို့မဟုတ် အော်ဒီယိုဖိုင် ရွေးချယ်ပါ", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"])
@@ -344,8 +356,7 @@ if up:
             f.write("1\n00:00:00,000 --> 00:00:10,000\nမြန်မာစာ ယူနီကုတ်\nစမ်းသပ်ကြည့်ရှုခြင်း")
         po = tempfile.mktemp(suffix=".jpg")
         fc = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, burn_s, ps, st.session_state.font_size, st.session_state.sub_y_pos)
-        fcs = fc.replace("[0:v]", "").replace("[v]", "").strip(",")
-        subprocess.run(["ffmpeg", "-y", "-i", bp, "-vf", fcs if fcs else "null", po], capture_output=True)
+        subprocess.run(["ffmpeg", "-y", "-i", bp, "-filter_complex", fc, "-map", "[v]", po], capture_output=True)
         if os.path.exists(po): st.image(po); os.remove(po)
         if os.path.exists(bp): os.remove(bp)
         if os.path.exists(ps): os.remove(ps)
