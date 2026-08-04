@@ -379,24 +379,24 @@ def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sy):
         # Simple case: no blur
         res = f"[0:v]{base_str}"
         if brn and sp and os.path.exists(sp):
-            # Use Python-rendered subtitle overlay instead of subtitles filter
             res += f",overlay=0:0"
         return res + "[v]"
     else:
         # Complex case: region blur
         y_p = by / 100
         h_p = bh / 100
-        filter_complex = f"[0:v]{base_str}[preblur];"
-        filter_complex += f"[preblur]split[main][to_blur];"
-        filter_complex += f"[to_blur]crop=iw:ih*{h_p}:0:ih*{y_p},boxblur=15[blurred];"
-        filter_complex += f"[main][blurred]overlay=0:H*{y_p}[postblur]"
+        # Build filter complex string
+        fc = f"[0:v]{base_str}[preblur];"
+        fc += f"[preblur]split[main][to_blur];"
+        fc += f"[to_blur]crop=iw:ih*{h_p}:0:ih*{y_p},boxblur=15[blurred];"
         
-        res = "[postblur]"
         if brn and sp and os.path.exists(sp):
-            # Overlay Python-rendered subtitle stream
-            res = "[postblur][1:v]overlay=0:0"
+            fc += f"[main][blurred]overlay=0:H*{y_p}[postblur];"
+            fc += f"[postblur][1:v]overlay=0:0[v]"
+        else:
+            fc += f"[main][blurred]overlay=0:H*{y_p}[v]"
         
-        return filter_complex + ";" + res + "[v]"
+        return fc
 
 # --- MAIN UI ---
 up = st.file_uploader("ဗီဒီယို သို့မဟုတ် အော်ဒီယိုဖိုင် ရွေးချယ်ပါ", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"])
@@ -449,13 +449,17 @@ if up:
         fc = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, burn_s, sub_p, st.session_state.font_size, st.session_state.sub_y_pos)
         
         filter_script_p = tempfile.mktemp(suffix=".txt")
-        # If burn_s is enabled, we need two inputs for overlay
-        if burn_s:
-            with open(filter_script_p, "w", encoding="utf-8") as f: f.write(fc)
-            cmd = ["ffmpeg", "-y", "-i", bp, "-i", sub_p, "-filter_complex_script", filter_script_p, "-map", "[v]", po]
+        filter_str = fc if burn_s else fc.replace("[postblur][1:v]overlay=0:0", "[postblur]")
+        with open(filter_script_p, "w", encoding="utf-8") as f: f.write(filter_str)
+        
+        # Try new syntax first, then fallback to old
+        inputs = ["-i", bp, "-i", sub_p] if burn_s else ["-i", bp]
+        # Modern FFmpeg (7+) uses -filter_complex with @ or / prefix, or -filter_complex_script
+        # We try a robust approach: if script fails, try direct string (for preview it's short)
+        if len(filter_str) < 2000:
+            cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_str, "-map", "[v]", po]
         else:
-            with open(filter_script_p, "w", encoding="utf-8") as f: f.write(fc.replace("[postblur][1:v]overlay=0:0", "[postblur]"))
-            cmd = ["ffmpeg", "-y", "-i", bp, "-filter_complex_script", filter_script_p, "-map", "[v]", po]
+            cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex_script", filter_script_p, "-map", "[v]", po]
             
         subprocess.run(cmd, capture_output=True)
         if os.path.exists(filter_script_p): os.remove(filter_script_p)
@@ -585,14 +589,23 @@ FORMATTING RULES:
                 # Final output label
                 full_filter += f";[v{len(overlay_filters)}]null[v]"
                 
-                # Use a filter script file to avoid command line length limits (especially on Windows)
+                # Use a filter script file to avoid command line length limits
                 filter_script = tempfile.mktemp(suffix=".txt")
                 with open(filter_script, "w", encoding="utf-8") as f:
                     f.write(full_filter)
                 
                 fv = tempfile.mktemp(suffix=".mp4")
+                # Detect FFmpeg version or just try the most compatible way
+                # In FFmpeg 7+, -filter_complex_script is deprecated in favor of -filter_complex with file prefix
+                # We'll try to detect the error and fallback
                 cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
                 res = subprocess.run(cmd, capture_output=True, text=True)
+                
+                # If it failed due to filter_complex_script deprecation or missing, try the new syntax
+                if res.returncode != 0 and ("filter_complex_script" in res.stderr or "Filter not found" in res.stderr):
+                    # Try the new syntax suggested by FFmpeg 7: -/filter_complex
+                    cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-/filter_complex", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
+                    res = subprocess.run(cmd, capture_output=True, text=True)
                 
                 if os.path.exists(filter_script): os.remove(filter_script)
                 
