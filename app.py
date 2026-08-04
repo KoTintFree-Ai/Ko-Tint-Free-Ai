@@ -62,15 +62,23 @@ def plus_minus_control(label, key, min_val, max_val, step=1.0):
     st.write(f"**{label}**")
     col_s, col_n = st.columns([3, 1])
     
-    # Use number input for precise values
-    with col_n:
-        val = st.number_input(label, min_val, max_val, key=f"num_{key}", step=step, label_visibility="collapsed", value=float(st.session_state[key]))
-        st.session_state[key] = val
-        
-    # Use slider for visual adjustment
+    # Ensure all inputs are of the same numeric type (float) to avoid StreamlitMixedNumericTypesError
+    f_min = float(min_val)
+    f_max = float(max_val)
+    f_step = float(step)
+    f_val = float(st.session_state[key])
+    
     with col_s:
-        st.slider(label, min_val, max_val, key=key, step=step, label_visibility="collapsed")
+        # Slider updates st.session_state[key] automatically
+        st.slider(label, f_min, f_max, step=f_step, key=key, label_visibility="collapsed")
         
+    with col_n:
+        # Number input reads from and can update st.session_state[key]
+        num_val = st.number_input(label, f_min, f_max, step=f_step, value=f_val, label_visibility="collapsed", key=f"num_in_{key}")
+        if num_val != st.session_state[key]:
+            st.session_state[key] = num_val
+            st.rerun()
+            
     return st.session_state[key]
 
 # --- ERROR TRANSLATOR ---
