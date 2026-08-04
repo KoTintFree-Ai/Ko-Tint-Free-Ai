@@ -8,7 +8,7 @@ import asyncio
 import edge_tts
 import subprocess
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import re
 import shutil
 
@@ -155,6 +155,42 @@ with st.sidebar:
         st.rerun()
 
 # --- UTILITIES ---
+def create_subtitle_image(text, width, height, font_size, y_pos_pct):
+    """Render Myanmar text onto a transparent image using Pillow for perfect Unicode shaping"""
+    img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    
+    try:
+        font = ImageFont.truetype("Pyidaungsu.ttf", font_size)
+    except:
+        font = ImageFont.load_default()
+        
+    # Split text into lines
+    lines = text.split('\n')
+    
+    # Calculate total height of all lines
+    line_heights = [draw.textbbox((0, 0), line, font=font)[3] for line in lines]
+    total_text_height = sum(line_heights) + (len(lines) - 1) * 10
+    
+    # Starting Y position
+    current_y = int(height * (y_pos_pct / 100)) - (total_text_height // 2)
+    
+    for line in lines:
+        # Calculate X to center text
+        bbox = draw.textbbox((0, 0), line, font=font)
+        w = bbox[2] - bbox[0]
+        x = (width - w) // 2
+        
+        # Draw shadow/outline for readability
+        for offset in [(-2,-2), (2,-2), (-2,2), (2,2)]:
+            draw.text((x+offset[0], current_y+offset[1]), line, font=font, fill=(0,0,0,200))
+            
+        # Draw main text (Yellow)
+        draw.text((x, current_y), line, font=font, fill=(255, 255, 0, 255))
+        current_y += bbox[3] + 10
+        
+    return img
+
 def normalize_myanmar(text):
     """Normalize and reorder Myanmar characters to standard Unicode order for better rendering"""
     if not text: return text
@@ -343,19 +379,13 @@ def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sy):
         # Simple case: no blur
         res = f"[0:v]{base_str}"
         if brn and sp and os.path.exists(sp):
-            se = os.path.abspath(sp).replace("\\","/").replace(":","\\\\").replace("'","'\\''")
-            mv = int((100 - sy) * 10)
-            res += f",subtitles='{se}':fontsdir='.':force_style='FontName=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1.5,Shadow=0.5,Alignment=2,MarginV={mv},WrapStyle=2'"
+            # Use Python-rendered subtitle overlay instead of subtitles filter
+            res += f",overlay=0:0"
         return res + "[v]"
     else:
         # Complex case: region blur
         y_p = by / 100
         h_p = bh / 100
-        # 1. Apply base transforms
-        # 2. Split into main and blur branch
-        # 3. Crop and blur the blur branch
-        # 4. Overlay
-        # 5. Apply subtitles
         filter_complex = f"[0:v]{base_str}[preblur];"
         filter_complex += f"[preblur]split[main][to_blur];"
         filter_complex += f"[to_blur]crop=iw:ih*{h_p}:0:ih*{y_p},boxblur=15[blurred];"
@@ -363,9 +393,8 @@ def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sy):
         
         res = "[postblur]"
         if brn and sp and os.path.exists(sp):
-            se = os.path.abspath(sp).replace("\\","/").replace(":","\\\\").replace("'","'\\''")
-            mv = int((100 - sy) * 10)
-            res += f"subtitles='{se}':fontsdir='.':force_style='FontName=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1.5,Shadow=0.5,Alignment=2,MarginV={mv},WrapStyle=2'"
+            # Overlay Python-rendered subtitle stream
+            res = "[postblur][1:v]overlay=0:0"
         
         return filter_complex + ";" + res + "[v]"
 
@@ -408,15 +437,27 @@ if up:
         st.subheader("🖼️ Layout Preview")
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as bf: 
             bf.write(st.session_state.base_frame); bp = bf.name
-        ps = os.path.abspath("preview.srt")
-        with open(ps, "w", encoding="utf-8") as f: 
-            f.write("1\n00:00:00,000 --> 00:00:10,000\nမြန်မာစာ ယူနီကုတ်\nစမ်းသပ်ကြည့်ရှုခြင်း")
+        
+        # 1. Generate transparent subtitle image
+        with Image.open(bp) as base_img:
+            w, h = base_img.size
+            sub_img = create_subtitle_image("မြန်မာစာ ယူနီကုတ်\nစမ်းသပ်ကြည့်ရှုခြင်း", w, h, st.session_state.font_size, st.session_state.sub_y_pos)
+            sub_p = tempfile.mktemp(suffix=".png")
+            sub_img.save(sub_p)
+            
         po = tempfile.mktemp(suffix=".jpg")
-        fc = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, burn_s, ps, st.session_state.font_size, st.session_state.sub_y_pos)
-        subprocess.run(["ffmpeg", "-y", "-i", bp, "-filter_complex", fc, "-map", "[v]", po], capture_output=True)
+        fc = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, burn_s, sub_p, st.session_state.font_size, st.session_state.sub_y_pos)
+        
+        # If burn_s is enabled, we need two inputs for overlay
+        if burn_s:
+            cmd = ["ffmpeg", "-y", "-i", bp, "-i", sub_p, "-filter_complex", fc, "-map", "[v]", po]
+        else:
+            cmd = ["ffmpeg", "-y", "-i", bp, "-filter_complex", fc.replace("[postblur][1:v]overlay=0:0", "[postblur]"), "-map", "[v]", po]
+            
+        subprocess.run(cmd, capture_output=True)
         if os.path.exists(po): st.image(po); os.remove(po)
         if os.path.exists(bp): os.remove(bp)
-        if os.path.exists(ps): os.remove(ps)
+        if os.path.exists(sub_p): os.remove(sub_p)
 
     if not api_keys: st.warning("⚠️ Sidebar တွင် Gemini API Key ထည့်ပေးပါ")
     elif st.button("🚀 စတင်လုပ်ဆောင်ရန်"):
@@ -491,17 +532,61 @@ FORMATTING RULES:
             if up.name.lower().endswith((".mp4", ".mov", ".avi")):
                 stt.text("🎬 အဆင့် ၄: ဗီဒီယိုကို တည်းဖြတ်နေပါသည် (Rendering)...")
                 prg.progress(80)
-                stmp = os.path.abspath("final.srt")
-                with open(stmp, "w", encoding="utf-8") as f: f.write(st.session_state.srt_data)
+                
+                # 1. Create a transparent subtitle video using Python rendering
+                stt.text("🎬 အဆင့် ၄: စာတန်းထိုးများကို ပုံဖော်နေပါသည်...")
+                sub_dir = tempfile.mkdtemp()
+                
+                # Get video dimensions
+                cmd_dim = ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", tp]
+                v_dim = subprocess.run(cmd_dim, capture_output=True, text=True).stdout.strip().split('x')
+                vw, vh = int(v_dim[0]), int(v_dim[1])
+                
+                # Parse SRT and generate frames
+                segments = []
+                import re
+                blocks = re.split(r'\n\s*\n', st.session_state.srt_data)
+                for block in blocks:
+                    lines = block.strip().split('\n')
+                    if len(lines) >= 3:
+                        times = lines[1].split(' --> ')
+                        start = sum(float(x)*60**i for i,x in enumerate(reversed(times[0].replace(',','.').split(':'))))
+                        end = sum(float(x)*60**i for i,x in enumerate(reversed(times[1].replace(',','.').split(':'))))
+                        text = "\n".join(lines[2:])
+                        segments.append({'start': start, 'end': end, 'text': text})
+                
+                # Create a temporary subtitle video
+                sub_vid = tempfile.mktemp(suffix=".mp4")
+                # We'll use a complex filter to overlay at specific times
+                overlay_filters = []
+                temp_imgs = []
+                for i, seg in enumerate(segments):
+                    simg = create_subtitle_image(seg['text'], vw, vh, st.session_state.font_size, st.session_state.sub_y_pos)
+                    spath = os.path.join(sub_dir, f"sub_{i}.png")
+                    simg.save(spath)
+                    temp_imgs.append(spath)
+                    overlay_filters.append(f"movie={spath.replace('\\','/').replace(':','\\\\')}[s{i}];[v][s{i}]overlay=0:0:enable='between(t,{seg['start']},{seg['end']})'[v]")
+                
+                fcf = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, False, None, 0, 0)
+                fcf = fcf.replace("[v]", "[v_base]")
+                
+                # Combine all
+                full_filter = fcf + ";[v_base]null[v]"
+                for filt in overlay_filters:
+                    full_filter = full_filter.replace("[v]", f"[v_pre{i}]")
+                    full_filter += ";" + filt.replace("[v]", f"[v_pre{i}]").replace("[v]", "[v]")
+                
                 fv = tempfile.mktemp(suffix=".mp4")
-                fcf = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, burn_s, stmp, st.session_state.font_size, st.session_state.sub_y_pos)
-                cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex", fcf, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
+                cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex", full_filter, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
                 res = subprocess.run(cmd, capture_output=True, text=True)
+                
                 if res.returncode == 0:
                     with open(fv, "rb") as f: st.session_state.video_data = f.read()
                 else: st.error(f"Render Error: {res.stderr}")
+                
+                # Cleanup
                 if os.path.exists(fv): os.remove(fv)
-                if os.path.exists(stmp): os.remove(stmp)
+                shutil.rmtree(sub_dir)
 
             prg.progress(100); stt.text("✅ အောင်မြင်စွာ ပြီးဆုံးပါပြီ!"); st.balloons()
             st.session_state.processing_done = True
