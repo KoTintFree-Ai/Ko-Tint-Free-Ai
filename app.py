@@ -23,7 +23,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FONT_PATH = os.path.join(SCRIPT_DIR, "Pyidaungsu.ttf")
 
 st.set_page_config(
-    page_title="Movie Recap AI Pro V7.7",
+    page_title="Movie Recap AI Pro V7.8",
     page_icon="🎬",
     layout="centered",
     initial_sidebar_state="expanded"
@@ -59,7 +59,7 @@ def init_state():
 
 init_state()
 
-st.title("🎬 Movie Recap AI Pro V7.7")
+st.title("🎬 Movie Recap AI Pro V7.8")
 st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Unicode & Wrap Fix)")
 
 # --- HELPER: SLIDER WITH PLUS/MINUS (V7.4) ---
@@ -117,6 +117,17 @@ with st.sidebar:
         st.error("🚨 RAM ပြည့်ခါနီးနေပါပြီ! App Crash ဖြစ်နိုင်ပါသည်။")
     
     if st.button("🧹 RAM ရှင်းထုတ်ရန်"):
+        st.cache_data.clear()
+        gc.collect()
+        st.success("RAM ရှင်းလင်းပြီးပါပြီ")
+        # No rerun here to avoid potential input loss
+    
+    if st.button("🗑️ Data အားလုံးဖျက်ရန် (Keys မပါ)"):
+        # List of keys to preserve
+        preserve = [f'key_{i}' for i in range(1, 6)] + ['valid_keys_info', 'active_key', 'target_min', 'target_sec', 'blur_y_pos', 'blur_h_size', 'sub_y_pos', 'font_size', 'v_speed', 'v_pitch']
+        for k in list(st.session_state.keys()):
+            if k not in preserve:
+                del st.session_state[k]
         st.cache_data.clear()
         gc.collect()
         st.rerun()
