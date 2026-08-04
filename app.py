@@ -11,7 +11,6 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import re
 import shutil
-import distutils.spawn
 
 # --- CONFIGURATION ---
 API_VERSIONS = ["v1beta", "v1"]
