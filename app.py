@@ -14,7 +14,6 @@ import shutil
 
 # --- CONFIGURATION ---
 API_VERSIONS = ["v1beta", "v1"]
-# Standard models to try in order of preference
 DEFAULT_MODELS = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", "gemini-pro"]
 
 st.set_page_config(
@@ -50,7 +49,7 @@ def init_state():
 init_state()
 
 st.title("🎬 Movie Recap AI Pro V6.2")
-st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Stable API Version)")
+st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Unicode & Wrap Fix)")
 
 # --- HELPER: +/- BUTTONS ---
 def plus_minus_control(label, key, min_val, max_val, step=1.0):
@@ -98,7 +97,6 @@ with st.sidebar:
                 st.write(f"--- Key {i+1} ကို စစ်ဆေးနေသည် ---")
                 success = False
                 for ver in API_VERSIONS:
-                    # Robust check: List models instead of calling a specific one
                     url = f"https://generativelanguage.googleapis.com/{ver}/models?key={k}"
                     try:
                         r = requests.get(url, timeout=15)
@@ -110,41 +108,34 @@ with st.sidebar:
                                 st.session_state.valid_keys_info[k] = {"version": ver, "models": available_models}
                                 success = True
                                 break
-                            else:
-                                st.warning(f"⚠️ Key {i+1} သည် အလုပ်လုပ်သော်လည်း အသုံးပြုနိုင်သော Model မရှိပါ။")
-                        else:
-                            try: msg = r.json().get('error', {}).get('message', r.text)
-                            except: msg = r.text
-                            st.error(f"❌ Key {i+1} ({ver}) အမှား: {translate_error(msg, r.status_code)}")
-                    except Exception as e:
-                        st.error(f"❌ Key {i+1} ({ver}) ချိတ်ဆက်မှု မအောင်မြင်ပါ: {translate_error(str(e))}")
+                    except: pass
                 if success: st.info(f"Key {i+1} ကို စိတ်ချစွာ အသုံးပြုနိုင်ပါသည်။")
 
     st.markdown("---")
     st.subheader("🎬 ဗီဒီယို ပုံစံညှိရန်")
-    mirror_v = st.checkbox("ဗီဒီယို ဘယ်ပြန်ညာပြန်လှန်ရန် (Mirror)", value=True)
-    scale_v = st.checkbox("ဗီဒီယို အနည်းငယ်ချဲ့ရန် (Scale 106%)", value=True)
+    mirror_v = st.checkbox("ဗီဒီယို Mirror လှန်ရန်", value=True)
+    scale_v = st.checkbox("ဗီဒီယို Scale 106% ချဲ့ရန်", value=True)
     
     st.markdown("---")
-    blur_s = st.checkbox("မူရင်း စာတန်းထိုးများကို ဝါးရန် (Blur)", value=True)
+    blur_s = st.checkbox("မူရင်းစာတန်းထိုး ဝါးရန် (Blur)", value=True)
     if blur_s:
-        b_y = plus_minus_control("ဝါးမည့်နေရာ (Y Position %)", "blur_y_pos", 0.0, 100.0, 0.5)
-        b_h = plus_minus_control("ဝါးမည့် အကျယ် (Height %)", "blur_h_size", 0.5, 30.0, 0.1)
+        b_y = plus_minus_control("ဝါးမည့်နေရာ (Y %)", "blur_y_pos", 0.0, 100.0, 0.5)
+        b_h = plus_minus_control("ဝါးမည့်အကျယ် (H %)", "blur_h_size", 0.5, 30.0, 0.1)
     
     st.markdown("---")
-    burn_s = st.checkbox("မြန်မာစာတန်းထိုး ထည့်ရန် (Burn Subtitles)", value=True)
+    burn_s = st.checkbox("မြန်မာစာတန်းထိုး ထည့်ရန်", value=True)
     if burn_s:
-        f_s = plus_minus_control("စာလုံးအရွယ်အစား (Font Size)", "font_size", 5, 100, 1)
-        s_y = plus_minus_control("စာတန်းထိုးနေရာ (Y Position %)", "sub_y_pos", 0.0, 100.0, 0.5)
+        f_s = plus_minus_control("စာလုံးအရွယ်အစား", "font_size", 5, 100, 1)
+        s_y = plus_minus_control("စာတန်းထိုးနေရာ (Y %)", "sub_y_pos", 0.0, 100.0, 0.5)
     
     st.markdown("---")
     if st.button("✨ နေရာ အလိုအလျောက် ရှာရန်"):
         st.session_state.do_detect = True
-    show_prev = st.checkbox("👀 ပုံစံ ကြိုတင်ကြည့်ရန် (Live Preview)", value=True)
+    show_prev = st.checkbox("👀 ပုံစံ ကြိုတင်ကြည့်ရန်", value=True)
     
     st.markdown("---")
-    st.subheader("⏱️ အချိန် ကြာမြင့်မှု ထိန်းချုပ်ရန်")
-    fit_dur = st.toggle("သတ်မှတ်ထားသော အချိန်အတွင်း အပြီးပြောရန်", value=True)
+    st.subheader("⏱️ အချိန် ထိန်းချုပ်ရန်")
+    fit_dur = st.toggle("သတ်မှတ်အချိန်အတွင်း အပြီးပြောရန်", value=True)
     target_sec = 0
     if fit_dur:
         c1, c2 = st.columns(2)
@@ -156,14 +147,29 @@ with st.sidebar:
     st.subheader("🔊 အသံ ဆက်တင်များ")
     v_choice = st.selectbox("အသံရွေးချယ်ပါ", ["သီဟ (အမျိုးသားသံ)", "နီလာ (အမျိုးသမီးသံ)"])
     v_id = "my-MM-ThihaNeural" if "သီဟ" in v_choice else "my-MM-NilarNeural"
-    v_speed = st.slider("အသံနှုန်း (Speed)", 1, 100, 55)
-    v_pitch = st.slider("အသံ အနိမ့်အမြင့် (Pitch)", 1, 100, 50)
+    v_speed = st.slider("အသံနှုန်း", 1, 100, 55)
+    v_pitch = st.slider("Pitch", 1, 100, 50)
     
-    if st.button("🧹 အချက်အလက်များ အားလုံးဖျက်ရန်"):
+    if st.button("🧹 အားလုံးဖျက်ရန်"):
         for k in list(st.session_state.keys()): del st.session_state[k]
         st.rerun()
 
-# --- CORE UTILITIES ---
+# --- UTILITIES ---
+def wrap_text(text, max_len=45):
+    # Auto wrap Myanmar text to prevent long lines
+    if len(text) <= max_len: return text
+    words = text.split(' ')
+    lines = []
+    cur_line = ""
+    for w in words:
+        if len(cur_line + w) <= max_len:
+            cur_line += (w + " ")
+        else:
+            lines.append(cur_line.strip())
+            cur_line = w + " "
+    lines.append(cur_line.strip())
+    return "\n".join(lines)
+
 def get_dur(p):
     try:
         cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", p]
@@ -201,13 +207,15 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     for idx, txt in enumerate(segments):
         clean_txt = re.sub(r'^\d+\s*', '', txt).strip()
         if not clean_txt: continue
+        # Wrap long lines for SRT
+        wrapped_txt = wrap_text(clean_txt)
         p = tempfile.mktemp(suffix=".mp3")
         try:
             communicate = edge_tts.Communicate(clean_txt, vid, rate=rate, pitch=pitch)
             await communicate.save(p)
             d = get_dur(p)
             if d > 0:
-                srt_blocks.append(f"{len(temp_files)+1}\n{fmt_srt(cur_t)} --> {fmt_srt(cur_t+d)}\n{clean_txt}\n\n")
+                srt_blocks.append(f"{len(temp_files)+1}\n{fmt_srt(cur_t)} --> {fmt_srt(cur_t+d)}\n{wrapped_txt}\n\n")
                 temp_files.append(p)
                 cur_t += d + 0.1
         except: continue
@@ -252,6 +260,7 @@ def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sy):
     if brn and sp and os.path.exists(sp):
         se = os.path.abspath(sp).replace("\\","/").replace(":","\\:").replace("'","'\\''")
         mv = int((100 - sy) * 10)
+        # Professional Unicode styling with Pyidaungsu
         fc += f",subtitles='{se}':fontsdir='{os.getcwd()}':force_style='Fontname=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv}'"
     if not fc.endswith("[v]"): fc += "[v]"
     return fc
@@ -297,7 +306,7 @@ if up:
             bf.write(st.session_state.base_frame); bp = bf.name
         ps = os.path.abspath("preview.srt")
         with open(ps, "w", encoding="utf-8") as f: 
-            f.write("1\n00:00:00,000 --> 00:00:10,000\nမြန်မာစာ စမ်းသပ်ကြည့်ရှုခြင်း (Font Test)")
+            f.write("1\n00:00:00,000 --> 00:00:10,000\nမြန်မာစာ ယူနီကုတ် စမ်းသပ်ကြည့်ရှုခြင်း\n(Unicode Line Wrapping Test)")
         po = tempfile.mktemp(suffix=".jpg")
         fc = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, burn_s, ps, st.session_state.font_size, st.session_state.sub_y_pos)
         fcs = fc.replace("[0:v]", "").replace("[v]", "").strip(",")
@@ -307,7 +316,7 @@ if up:
         if os.path.exists(ps): os.remove(ps)
 
     if not api_keys: st.warning("⚠️ Sidebar တွင် Gemini API Key ထည့်ပေးပါ")
-    elif st.button("🚀 စတင်လုပ်ဆောင်ရန် (Start Process)"):
+    elif st.button("🚀 စတင်လုပ်ဆောင်ရန်"):
         prg = st.progress(0); stt = st.empty()
         try:
             stt.text("📊 အဆင့် ၁: အသံဖိုင်ကို ပြင်ဆင်နေပါသည်...")
@@ -321,19 +330,17 @@ if up:
             
             stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည် (Gemini)...")
             prg.progress(30)
-            prm = f"Listen to this audio and translate it into a Myanmar Movie Recap style. Target duration: {target_sec}s. Output ONLY valid SRT format. Use Myanmar language."
+            # Added explicit instruction for shorter sentences
+            prm = f"Listen to this audio and translate it into a Myanmar Movie Recap style. Target duration: {target_sec}s. Output ONLY valid SRT format. Use Myanmar language. IMPORTANT: Keep each subtitle line short and concise (maximum 10-12 words per line)."
             with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
             cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mpeg","data":b64}}]}]
             
             srt_res = None
             errors = []
-            
-            # Use detected info if available, otherwise try all
             for k in api_keys:
                 info = st.session_state.valid_keys_info.get(k)
                 versions = [info['version']] if info else API_VERSIONS
                 models = info['models'] if info else DEFAULT_MODELS
-                
                 for ver in versions:
                     for m in models:
                         try:
@@ -344,7 +351,7 @@ if up:
                                 if 'candidates' in data and data['candidates'][0]['content']['parts']:
                                     srt_res = data['candidates'][0]['content']['parts'][0]['text']
                                     if srt_res: break
-                                else: errors.append(f"Key {api_keys.index(k)+1} - {m}: အဖြေမထွက်ပါ။ (Safety Filter ကြောင့် ဖြစ်နိုင်သည်)")
+                                else: errors.append(f"Key {api_keys.index(k)+1} - {m}: အဖြေမထွက်ပါ။")
                             else:
                                 try: msg = r.json().get('error', {}).get('message', r.text)
                                 except: msg = r.text
@@ -356,7 +363,7 @@ if up:
             if not srt_res:
                 st.error("❌ Gemini ဘာသာပြန်ခြင်း မအောင်မြင်ပါ")
                 for e in errors: st.info(e)
-                raise Exception("မည်သည့် Model/Key မှ ဘာသာပြန်ခြင်း မလုပ်ဆောင်နိုင်ပါ။")
+                raise Exception("ဘာသာပြန်ခြင်း မလုပ်ဆောင်နိုင်ပါ။")
             
             stt.text("🔊 အဆင့် ၃: အသံဖိုင်နှင့် Timing ညှိနေပါသည်...")
             prg.progress(60)
@@ -379,7 +386,8 @@ if up:
                 if os.path.exists(fv): os.remove(fv)
                 if os.path.exists(stmp): os.remove(stmp)
 
-            prg.progress(100); stt.text("✅ အောင်မြင်စွာ ပြီးဆုံးပါပြီ!"); st.session_state.processing_done = True; st.balloons()
+            prg.progress(100); stt.text("✅ အောင်မြင်စွာ ပြီးဆုံးပါပြီ!"); st.balloons()
+            st.session_state.processing_done = True
             if os.path.exists(tp): os.remove(tp)
             if os.path.exists(ao): os.remove(ao)
             if os.path.exists(ag): os.remove(ag)
