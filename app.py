@@ -160,14 +160,20 @@ def create_subtitle_image(text, width, height, font_size, y_pos_pct):
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
+    font = None
     try:
-        # Use a high-quality font and ensure layout is correct
+        # Try RAQM first for best Myanmar shaping
         font = ImageFont.truetype("Pyidaungsu.ttf", font_size, layout_engine=ImageFont.Layout.RAQM)
-    except:
+    except Exception:
         try:
-            font = ImageFont.truetype("Pyidaungsu.ttf", font_size)
-        except:
-            font = ImageFont.load_default()
+            # Fallback to Basic layout if RAQM is not available
+            font = ImageFont.truetype("Pyidaungsu.ttf", font_size, layout_engine=ImageFont.Layout.BASIC)
+        except Exception:
+            try:
+                # Last resort: default truetype
+                font = ImageFont.truetype("Pyidaungsu.ttf", font_size)
+            except Exception:
+                font = ImageFont.load_default()
         
     # Split text into lines
     lines = text.split('\n')
