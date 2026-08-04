@@ -3,4 +3,3 @@ edge-tts
 requests
 numpy
 Pillow
-asyncio
