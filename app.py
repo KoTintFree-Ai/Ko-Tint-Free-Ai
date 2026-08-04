@@ -23,7 +23,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FONT_PATH = os.path.join(SCRIPT_DIR, "Pyidaungsu.ttf")
 
 st.set_page_config(
-    page_title="Movie Recap AI Pro V7.9",
+    page_title="Movie Recap AI Pro V8.0",
     page_icon="🎬",
     layout="centered",
     initial_sidebar_state="expanded"
@@ -59,7 +59,7 @@ def init_state():
 
 init_state()
 
-st.title("🎬 Movie Recap AI Pro V7.9")
+st.title("🎬 Movie Recap AI Pro V8.0")
 st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Unicode & Wrap Fix)")
 
 # --- HELPER: SLIDER WITH PLUS/MINUS (V7.4) ---
@@ -399,10 +399,17 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
         final_srt = []
         for line in "".join(srt_blocks).splitlines(keepends=True):
             if "-->" in line:
-                s, e = line.split(" --> ")
-                s_s = sum(float(x)*60**i for i,x in enumerate(reversed(s.replace(",",".").split(":")))) / factor
-                e_s = sum(float(x)*60**i for i,x in enumerate(reversed(e.replace(",",".").split(":")))) / factor
-                final_srt.append(f"{fmt_srt(s_s)} --> {fmt_srt(e_s)}\n")
+                try:
+                    s, e = line.split(" --> ")
+                    # Robust cleaning of timestamp strings (remove brackets, etc.)
+                    s = re.sub(r'[\[\]\(\)]', '', s).strip()
+                    e = re.sub(r'[\[\]\(\)]', '', e).strip()
+                    
+                    s_s = sum(float(x)*60**i for i,x in enumerate(reversed(s.replace(",",".").split(":")))) / factor
+                    e_s = sum(float(x)*60**i for i,x in enumerate(reversed(e.replace(",",".").split(":")))) / factor
+                    final_srt.append(f"{fmt_srt(s_s)} --> {fmt_srt(e_s)}\n")
+                except:
+                    final_srt.append(line) # Fallback to original if parsing fails
             else:
                 final_srt.append(line)
         res_srt = "".join(final_srt)
