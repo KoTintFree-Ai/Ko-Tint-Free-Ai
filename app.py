@@ -46,7 +46,7 @@ if 'processing_done' not in st.session_state: st.session_state.processing_done =
 if 'base_frame' not in st.session_state: st.session_state.base_frame = None
 if 'last_uploaded' not in st.session_state: st.session_state.last_uploaded = None
 
-st.title("🎬 Movie Recap AI Pro V6.1")
+st.title("🎬 Movie Recap AI Pro V6.2")
 st.markdown("English Video → Myanmar Movie Recap (Final Render Fix)")
 
 # --- SIDEBAR SETTINGS ---
@@ -77,6 +77,10 @@ with st.sidebar:
     st.session_state.blur_h_size = blur_h_size
     burn_myanmar_subs = st.checkbox("Burn Myanmar Subtitles", value=True)
     font_size = st.slider("Myanmar Font Size", 5, 30, 10) if burn_myanmar_subs else 10
+    
+    if 'sub_y_pos' not in st.session_state: st.session_state.sub_y_pos = 85.0
+    sub_y_pos = st.slider("Subtitle Y Position (%)", 0.0, 100.0, st.session_state.sub_y_pos) if burn_myanmar_subs else 85.0
+    st.session_state.sub_y_pos = sub_y_pos
     
     auto_detect_btn = st.button("✨ Auto Detect Subtitle Area")
     show_preview = st.checkbox("👀 Live Preview Blur Area", value=True)
@@ -171,6 +175,8 @@ async def generate_audio_and_srt_v44(srt_text, audio_path, v_id, s, p, target_du
 
     for i, segment in enumerate(srt_segments):
         tts_text = " ".join(segment['text'])
+        # Clean text: remove any leading numbers that might be SRT indices
+        tts_text = re.sub(r'^\d+\s*', '', tts_text).strip()
         segment_duration = segment['duration']
         
         temp_segment_audio = tempfile.mktemp(suffix=".mp3")
@@ -279,7 +285,8 @@ def get_blur_filter(mirror, scale, blur, blur_y, blur_h, burn_subs=False, srt_pa
             srt_esc = rel_srt.replace("\\", "/").replace(":", "\\:").replace("'", "'\\''")
             # Add font support for Myanmar characters
             font_dir = os.getcwd().replace("\\", "/").replace(":", "\\:")
-            fc += f",subtitles='{srt_esc}':fontsdir='{font_dir}':force_style='FontName=Pyidaungsu,FontSize={f_size},PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'[v]"
+            margin_v = max(5, int(100 - sub_y))
+            fc += f",subtitles='{srt_esc}':fontsdir='{font_dir}':force_style='FontName=Pyidaungsu,FontSize={f_size},PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginL=10,MarginR=10,MarginV={margin_v}'[v]"
         else:
             fc += "[v]"
     else:
@@ -289,21 +296,22 @@ def get_blur_filter(mirror, scale, blur, blur_y, blur_h, burn_subs=False, srt_pa
             srt_esc = rel_srt.replace("\\", "/").replace(":", "\\:").replace("'", "'\\''")
             # Add font support for Myanmar characters
             font_dir = os.getcwd().replace("\\", "/").replace(":", "\\:")
-            fc += f",subtitles='{srt_esc}':fontsdir='{font_dir}':force_style='FontName=Pyidaungsu,FontSize={f_size},PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'[v]"
+            margin_v = max(5, int(100 - sub_y))
+            fc += f",subtitles='{srt_esc}':fontsdir='{font_dir}':force_style='FontName=Pyidaungsu,FontSize={f_size},PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginL=10,MarginR=10,MarginV={margin_v}'[v]"
         else:
             fc += "[v]"
     return fc
 
-def render_pro_video_v44(video_path, audio_path, srt_path, mirror, scale, blur, burn_subs, blur_y=85, blur_h=10, f_size=10):
+def render_pro_video_v44(video_path, audio_path, srt_path, mirror, scale, blur, burn_subs, blur_y=85, blur_h=10, f_size=10, sub_y=85):
     output_video = tempfile.mktemp(suffix=".mp4")
     try:
         # Check if SRT exists if burning is requested
         if burn_subs:
-            if not os.path.exists(srt_path) or os.path.getsize(srt_path) == 0:
+            if not srt_path or not os.path.exists(srt_path) or os.path.getsize(srt_path) == 0:
                 st.warning("⚠️ SRT file is missing or empty. Subtitles will not be burned.")
                 burn_subs = False
 
-        fc = get_blur_filter(mirror, scale, blur, blur_y, blur_h, burn_subs, srt_path, f_size)
+        fc = get_blur_filter(mirror, scale, blur, blur_y, blur_h, burn_subs, srt_path, f_size, sub_y)
 
         cmd = [
             "ffmpeg", "-y", "-i", video_path, "-i", audio_path,
@@ -400,7 +408,7 @@ if uploaded_file is not None:
             bpath = os.path.abspath(bfile.name)
         
         preview_out = tempfile.mktemp(suffix=".jpg")
-        fc = get_blur_filter(mirror_video, scale_video, blur_subtitles, blur_y_pos, blur_h_size, burn_subs=False, srt_path=None, f_size=font_size)
+        fc = get_blur_filter(mirror_video, scale_video, blur_subtitles, blur_y_pos, blur_h_size, burn_subs=False, srt_path=None, f_size=font_size, sub_y=sub_y_pos)
         # Simplify filter for single image (remove [0:v] and [v])
         fc_simple = fc.replace("[0:v]", "").replace("[v]", "")
         
@@ -450,7 +458,7 @@ if uploaded_file is not None:
                     with open(srt_temp_path, "w", encoding="utf-8") as srt_f:
                         srt_f.write(st.session_state.srt_data)
                     
-                    final_video_path = render_pro_video_v44(temp_path, audio_output, srt_temp_path, mirror_video, scale_video, blur_subtitles, burn_myanmar_subs, blur_y_pos, blur_h_size, font_size)
+                    final_video_path = render_pro_video_v44(temp_path, audio_output, srt_temp_path, mirror_video, scale_video, blur_subtitles, burn_myanmar_subs, blur_y_pos, blur_h_size, font_size, sub_y_pos)
                     if final_video_path and os.path.exists(final_video_path):
                         with open(final_video_path, "rb") as f: st.session_state.video_data = f.read()
                         os.remove(final_video_path)
