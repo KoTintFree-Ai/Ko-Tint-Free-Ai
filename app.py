@@ -42,7 +42,7 @@ st.markdown("""
 
 # Session State Initialization
 def init_state():
-    keys = ['myanmar_text', 'audio_path', 'srt_data', 'video_path', 'base_frame', 'last_uploaded', 'processing_done', 'valid_keys_info']
+    keys = ['myanmar_text', 'audio_path', 'srt_data', 'video_path', 'base_frame', 'last_uploaded', 'processing_done', 'valid_keys_info', 'active_key']
     for k in keys:
         if k not in st.session_state: st.session_state[k] = None
     if st.session_state.processing_done is None: st.session_state.processing_done = False
@@ -57,15 +57,20 @@ init_state()
 st.title("🎬 Movie Recap AI Pro V6.2")
 st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Unicode & Wrap Fix)")
 
-# --- HELPER: +/- BUTTONS ---
+# --- HELPER: CONTROL WITH SLIDER & NUMBER INPUT ---
 def plus_minus_control(label, key, min_val, max_val, step=1.0):
     st.write(f"**{label}**")
-    col1, col2, col3 = st.columns([1, 3, 1])
-    def update_val(delta):
-        st.session_state[key] = float(np.clip(st.session_state[key] + delta, min_val, max_val))
-    with col1: st.button("➖", key=f"minus_{key}", on_click=update_val, args=(-step,))
-    with col2: st.slider(label, min_val, max_val, key=key, step=step, label_visibility="collapsed")
-    with col3: st.button("➕", key=f"plus_{key}", on_click=update_val, args=(step,))
+    col_s, col_n = st.columns([3, 1])
+    
+    # Use number input for precise values
+    with col_n:
+        val = st.number_input(label, min_val, max_val, key=f"num_{key}", step=step, label_visibility="collapsed", value=float(st.session_state[key]))
+        st.session_state[key] = val
+        
+    # Use slider for visual adjustment
+    with col_s:
+        st.slider(label, min_val, max_val, key=key, step=step, label_visibility="collapsed")
+        
     return st.session_state[key]
 
 # --- ERROR TRANSLATOR ---
@@ -115,11 +120,18 @@ with st.sidebar:
     
     st.markdown("---")
     st.subheader("🔑 Gemini API Keys (၅ ခုအထိ)")
-    k1 = st.text_input("API Key 1", type="password", key="key_1")
-    k2 = st.text_input("API Key 2", type="password", key="key_2")
-    k3 = st.text_input("API Key 3", type="password", key="key_3")
-    k4 = st.text_input("API Key 4", type="password", key="key_4")
-    k5 = st.text_input("API Key 5", type="password", key="key_5")
+    
+    def get_key_label(idx, key_val):
+        label = f"API Key {idx}"
+        if key_val and st.session_state.active_key == key_val:
+            return label + " 🟢 (Active)"
+        return label
+
+    k1 = st.text_input(get_key_label(1, st.session_state.get('key_1')), type="password", key="key_1")
+    k2 = st.text_input(get_key_label(2, st.session_state.get('key_2')), type="password", key="key_2")
+    k3 = st.text_input(get_key_label(3, st.session_state.get('key_3')), type="password", key="key_3")
+    k4 = st.text_input(get_key_label(4, st.session_state.get('key_4')), type="password", key="key_4")
+    k5 = st.text_input(get_key_label(5, st.session_state.get('key_5')), type="password", key="key_5")
     api_keys = [k for k in [k1, k2, k3, k4, k5] if k]
 
     if st.button("🔌 API ချိတ်ဆက်မှု စမ်းသပ်ရန်"):
@@ -528,7 +540,9 @@ FORMATTING RULES:
                                     data = r.json()
                                     if 'candidates' in data and data['candidates'][0]['content']['parts']:
                                         srt_res = data['candidates'][0]['content']['parts'][0]['text']
-                                        if srt_res: break
+                                        if srt_res:
+                                            st.session_state.active_key = k
+                                            break
                                     else: errors.append(f"Key {api_keys.index(k)+1} - {m}: အဖြေမထွက်ပါ။")
                                 else:
                                     try: msg = r.json().get('error', {}).get('message', r.text)
