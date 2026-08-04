@@ -637,11 +637,13 @@ FORMATTING RULES:
                                             with st.expander("📝 Narration Preview (AI က ရေးပေးထားသော စာသားများ)", expanded=True):
                                                 st.text_area("Narration Content", srt_res, height=200)
                                             break
-                            else:
-                                try: msg = r.json().get('error', {}).get('message', r.text)
-                                except: msg = r.text
-                                errors.append(f"{m}: {translate_error(msg, r.status_code)}")
-                        except Exception as e: errors.append(f"{m}: {translate_error(str(e))}")
+                                else:
+                                    try: msg = r.json().get('error', {}).get('message', r.text)
+                                    except: msg = r.text
+                                    errors.append(f"{m}: {translate_error(msg, r.status_code)}")
+                            except Exception as e:
+                                errors.append(f"{m}: {translate_error(str(e))}")
+                        if srt_res: break
                     if srt_res: break
 
                 if not srt_res:
