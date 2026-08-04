@@ -218,7 +218,7 @@ def parse_srt_text(text):
             # Remove leading numbers (SRT index)
             text_content = '\n'.join(lines)
             text_content = re.sub(r'^\d+\s*\n', '', text_content).strip()
-            if text_content and not re.match(r'^[\d:,.\s-->]+$', text_content):
+            if text_content and not re.match(r'^[\d:,.\s\->]+$', text_content):
                 segments.append(text_content)
     
     # Filter out empty segments
