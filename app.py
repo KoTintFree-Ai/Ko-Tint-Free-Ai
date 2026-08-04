@@ -392,24 +392,36 @@ def fmt_srt(s):
     return f"{time.strftime('%H:%M:%S', time.gmtime(s))},{m:03d}"
 
 def parse_srt_text(text):
-    text = text.strip()
-    blocks = re.split(r'\n\s*\n', text)
+    # Remove markdown code blocks if present
+    text = re.sub(r'```srt?', '', text)
+    text = re.sub(r'```', '', text).strip()
+    
+    # Split by double newline or by subtitle index pattern
+    blocks = re.split(r'\n\s*\n|\n(?=\d+\s*\n\d{2}:)', text)
     segments = []
     for block in blocks:
         lines = block.strip().split('\n')
-        found_srt = False
-        for i, line in enumerate(lines):
+        if not lines: continue
+        
+        # Look for the text part (usually after the timestamp line)
+        content_lines = []
+        found_timestamp = False
+        for line in lines:
             if '-->' in line:
-                subtitle_text = ' '.join(lines[i+1:]).strip()
-                if subtitle_text:
-                    segments.append(subtitle_text)
-                found_srt = True
-                break
-        if not found_srt and len(lines) > 0:
-            text_content = '\n'.join(lines)
-            text_content = re.sub(r'^\d+\s*\n', '', text_content).strip()
-            if text_content and not re.match(r'^[\d:,.\s\->]+$', text_content):
-                segments.append(text_content)
+                found_timestamp = True
+                continue
+            if found_timestamp:
+                content_lines.append(line)
+            elif not re.match(r'^\d+$', line.strip()):
+                # If no timestamp yet and not just a number, it might be plain text
+                content_lines.append(line)
+        
+        content = ' '.join(content_lines).strip()
+        if content:
+            # Clean up any remaining SRT artifacts from the text
+            content = re.sub(r'<[^>]*>', '', content) # Remove HTML tags
+            segments.append(content)
+            
     return [s.strip() for s in segments if s.strip()]
 
 async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
@@ -446,8 +458,8 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     num_gaps = len(raw_segments) - 1
     
     # Safe limits for natural sound
-    MIN_FACTOR = 0.92  # Don't stretch too slow
-    MAX_FACTOR = 1.25  # Don't speed up too much
+    MIN_FACTOR = 0.90  # Slightly more flexible
+    MAX_FACTOR = 1.30  # Slightly more flexible
     
     applied_factor = 1.0
     extra_gap = 0.0
@@ -463,8 +475,8 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
         # If still too short, add gaps between segments
         if stretched_dur < target and num_gaps > 0:
             remaining = target - stretched_dur
-            # Max gap of 0.8s between segments to keep it natural
-            extra_gap = min(remaining / num_gaps, 0.8)
+            # No strict 0.8s cap, but keep it reasonable
+            extra_gap = remaining / num_gaps
     
     # 3. Process segments with final timing
     final_temp_files = []
@@ -482,9 +494,8 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
         actual_dur = get_dur(p_final)
         if actual_dur > 0:
             wrapped_txt = wrap_text(seg['text'], max_len=25)
-            # SRT timing: Start exactly when audio starts, end with a tiny buffer (0.1s) for natural reading
-            # But don't overlap with the next segment's start
-            end_time = cur_time + actual_dur + 0.1
+            # SRT timing: Start exactly when audio starts
+            end_time = cur_time + actual_dur
             srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(cur_time)} --> {fmt_srt(end_time)}\n{wrapped_txt}\n\n")
             final_temp_files.append(p_final)
             cur_time += actual_dur
@@ -492,18 +503,27 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
             # Add gap if needed (except for the last segment)
             if idx < num_gaps and extra_gap > 0:
                 p_gap = tempfile.mktemp(suffix=".mp3")
-                # Create a silent audio file for the gap
                 subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=mono", "-t", str(extra_gap), p_gap], capture_output=True)
                 if os.path.exists(p_gap):
                     final_temp_files.append(p_gap)
                     cur_time += extra_gap
         
         if os.path.exists(seg['path']): os.remove(seg['path'])
-        
-    # 4. Final Concat
+    
+    # Final check: If still slightly under target, add a tiny silence at the end
+    if target > 0 and cur_time < target:
+        diff = target - cur_time
+        p_final_gap = tempfile.mktemp(suffix=".mp3")
+        subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=mono", "-t", str(diff), p_final_gap], capture_output=True)
+        if os.path.exists(p_final_gap):
+            final_temp_files.append(p_final_gap)
+            cur_time += diff
+            
+    # 4. Final Concat (Avoid -c copy to ensure perfect duration)
     l_p = tempfile.mktemp(suffix=".txt")
     with open(l_p, "w", encoding='utf-8') as f: f.write("\n".join([f"file '{p}'" for p in final_temp_files]))
-    subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", l_p, "-c", "copy", out_p], capture_output=True)
+    # Re-encode during concat for precise timing
+    subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", l_p, "-c:a", "libmp3lame", "-q:a", "4", out_p], capture_output=True)
     
     for p in final_temp_files:
         if os.path.exists(p): os.remove(p)
@@ -645,25 +665,24 @@ if up:
 
                 stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည် (Gemini)...")
                 prg.progress(30)
-                # Calculate approximate word count for target duration (Recap style: ~3.0 words/sec for Myanmar)
-                # We need a lot of text to avoid the "stretched" voice.
-                target_words = int(target_sec * 3.0)
+                # Calculate approximate word count for target duration (Recap style: ~3.5 words/sec for Myanmar to ensure fullness)
+                target_words = int(target_sec * 3.5)
                 prm = f"""Listen to this audio and translate it into a HIGH-ENERGY Myanmar Movie Recap style narration.
 Target duration: {target_sec} seconds.
-REQUIRED LENGTH: You MUST write at least {target_words} words to fill the time.
+REQUIRED LENGTH: You MUST write a VERY LONG script (at least {target_words} words) to fill the entire {target_sec} seconds.
 
 MOVIE RECAP STYLE RULES:
 1. The tone must be dramatic, fast-paced, and engaging (like popular YouTube Movie Recaps).
 2. Use conversational Myanmar language (e.g., "ဒီနေ့မှာတော့...", "နောက်ဆုံးမှာတော့...", "မထင်မှတ်ဘဲ...").
-3. Keep the narration continuous. DO NOT just summarize; tell the story in detail.
-4. Describe the characters' emotions and the atmosphere to add length naturally.
+3. Keep the narration continuous and dense. Describe every action, emotion, and plot twist in detail.
+4. The goal is to have NO SILENCE. The narrator should be talking almost the entire time.
 5. Use Standard Myanmar Unicode and correct spelling.
 
 FORMATTING RULES:
 1. Output ONLY valid SRT subtitle format.
-2. Each subtitle block should be a natural phrase (10-20 words).
-3. The total duration of all SRT blocks MUST be EXACTLY {target_sec} seconds.
-4. If the story is short, elaborate more on the details to reach the target duration.
+2. Each subtitle block should be a natural phrase (12-18 words).
+3. The timestamps in the SRT MUST span from 00:00:00,000 to exactly {fmt_srt(target_sec)}.
+4. DO NOT summarize briefly. If the audio is short, expand the story with descriptive details.
 5. Do NOT include any intro/outro text, only the SRT blocks."""
                 with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
                 cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mpeg","data":b64}}]}]
@@ -765,12 +784,15 @@ FORMATTING RULES:
                     final_duration = get_dur(ao)
                     video_duration = get_dur(tp)
                     
-                    # If video is shorter than audio, we loop the video to match audio duration
-                    if video_duration < final_duration - 0.5:
-                        cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-t", str(final_duration), fv]
+                    # Use target_sec if fit_dur is enabled, otherwise use audio duration
+                    render_duration = target_sec if fit_dur and target_sec > 0 else final_duration
+                    
+                    # If video is shorter than the required duration, we loop it
+                    if video_duration < render_duration - 0.5:
+                        cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-t", str(render_duration), fv]
                     else:
-                        # If video is longer, we use -t to cut exactly at audio duration
-                        cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-t", str(final_duration), fv]
+                        # If video is longer, we cut at the required duration
+                        cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-t", str(render_duration), fv]
                     res = subprocess.run(cmd, capture_output=True, text=True)
 
                     if res.returncode != 0:
