@@ -6,8 +6,8 @@ import json
 import tempfile
 import urllib.request
 import requests
-import shutil
-import re
+import asyncio
+import edge_tts
 import subprocess
 import numpy as np
 from PIL import Image, ImageOps
@@ -267,11 +267,6 @@ def render_pro_video_v44(video_path, audio_path, srt_path, mirror, scale, blur, 
                 st.warning("⚠️ SRT file is missing or empty. Subtitles will not be burned.")
                 burn_subs = False
 
-        # Construct Filter String carefully
-        v_filters = []
-        if mirror: v_filters.append("hflip")
-        if scale: v_filters.append("scale=1.06*iw:-1,crop=iw/1.06:ih/1.06")
-        
         fc = get_blur_filter(mirror, scale, blur, blur_y, blur_h, burn_subs, srt_path)
 
         cmd = [
