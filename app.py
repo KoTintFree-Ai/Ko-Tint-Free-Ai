@@ -13,8 +13,14 @@ import re
 import shutil
 
 # --- CONFIGURATION ---
-GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
-MODELS_TO_TRY = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-2.0-flash-exp"]
+# Multi-version support to prevent 404 errors
+API_VERSIONS = ["v1beta", "v1"]
+MODELS_TO_TRY = [
+    "gemini-1.5-flash", 
+    "gemini-1.5-flash-8b", 
+    "gemini-1.5-pro",
+    "gemini-1.0-pro"
+]
 
 st.set_page_config(
     page_title="Movie Recap AI Pro V6.2", 
@@ -48,7 +54,7 @@ def init_state():
 init_state()
 
 st.title("🎬 Movie Recap AI Pro V6.2")
-st.markdown("English Video → Myanmar Movie Recap (Professional Sync)")
+st.markdown("English Video → Myanmar Movie Recap (Stable API Fix)")
 
 # --- HELPER: +/- BUTTONS ---
 def plus_minus_control(label, key, min_val, max_val, step=1.0):
@@ -72,6 +78,24 @@ with st.sidebar:
     k5 = st.text_input("API Key 5", type="password", key="key_5")
     api_keys = [k for k in [k1, k2, k3, k4, k5] if k]
     
+    if st.button("🔌 Check API Connection"):
+        if not api_keys:
+            st.error("API Key အရင်ထည့်ပေးပါ။")
+        else:
+            found = False
+            for k in api_keys:
+                # Test with a simple model
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash?key={k}"
+                try:
+                    r = requests.get(url)
+                    if r.status_code == 200:
+                        st.success(f"✅ Key {api_keys.index(k)+1} is Working!")
+                        found = True
+                    else:
+                        st.error(f"❌ Key {api_keys.index(k)+1} Error: {r.status_code}")
+                except: st.error(f"❌ Key {api_keys.index(k)+1} Connection Failed")
+            if found: st.info("API ချိတ်ဆက်မှု အောင်မြင်ပါသည်။")
+
     st.markdown("---")
     st.subheader("🎬 Video Layout")
     mirror_v = st.checkbox("Mirror Video", value=True)
@@ -276,31 +300,39 @@ if up:
             prm = f"Listen to this audio and translate it into a Myanmar Movie Recap style. Target duration: {target_sec}s. Output ONLY valid SRT format. Use Myanmar language."
             with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
             cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mpeg","data":b64}}]}]
+            
             srt_res = None
             errors = []
+            
+            # Try different API versions and Models
             for k in api_keys:
-                for m in MODELS_TO_TRY:
-                    try:
-                        r = requests.post(f"{GEMINI_BASE_URL}/{m}:generateContent?key={k}", json={"contents":cont}, timeout=300)
-                        if r.status_code == 200:
-                            data = r.json()
-                            if 'candidates' in data and data['candidates'][0]['content']['parts']:
-                                srt_res = data['candidates'][0]['content']['parts'][0]['text']
-                                if srt_res: break
-                            else: errors.append(f"Model {m}: အကြောင်းအရာ လုံခြုံရေးကြောင့် ပိတ်ပင်ခံရခြင်း သို့မဟုတ် အဖြေမထွက်ခြင်း။")
-                        elif r.status_code == 429:
-                            errors.append(f"Model {m}: API Key Quota ပြည့်သွားပါပြီ။")
-                        elif r.status_code == 403:
-                            errors.append(f"Model {m}: API Key မမှန်ကန်ပါ။")
-                        else:
-                            errors.append(f"Model {m}: Error Code {r.status_code} ဖြစ်ပေါ်နေပါသည်။")
-                    except Exception as e: errors.append(f"Model {m}: {str(e)}")
+                for ver in API_VERSIONS:
+                    for m in MODELS_TO_TRY:
+                        try:
+                            url = f"https://generativelanguage.googleapis.com/{ver}/models/{m}:generateContent?key={k}"
+                            r = requests.post(url, json={"contents":cont}, timeout=300)
+                            if r.status_code == 200:
+                                data = r.json()
+                                if 'candidates' in data and data['candidates'][0]['content']['parts']:
+                                    srt_res = data['candidates'][0]['content']['parts'][0]['text']
+                                    if srt_res: break
+                                else: errors.append(f"Model {m} ({ver}): အဖြေမထွက်ပါ။")
+                            elif r.status_code == 404:
+                                errors.append(f"Model {m} ({ver}): URL Not Found (404)")
+                            elif r.status_code == 429:
+                                errors.append(f"Model {m} ({ver}): Quota ပြည့်သွားပါပြီ (429)")
+                            else:
+                                try: msg = r.json().get('error', {}).get('message', r.text)
+                                except: msg = r.text
+                                errors.append(f"Model {m} ({ver}): Error {r.status_code} - {msg}")
+                        except Exception as e: errors.append(f"Model {m} ({ver}): {str(e)}")
+                    if srt_res: break
                 if srt_res: break
             
             if not srt_res:
                 st.error("❌ Gemini ဘာသာပြန်ခြင်း မအောင်မြင်ပါ")
                 for e in errors: st.info(e)
-                raise Exception("မည်သည့် Model မှ ဘာသာပြန်ခြင်း မလုပ်ဆောင်နိုင်ပါ။")
+                raise Exception("မည်သည့် Model/Key မှ ဘာသာပြန်ခြင်း မလုပ်ဆောင်နိုင်ပါ။")
             
             stt.text("🔊 အဆင့် ၃: အသံဖိုင်နှင့် Timing ညှိနေပါသည်...")
             prg.progress(60)
