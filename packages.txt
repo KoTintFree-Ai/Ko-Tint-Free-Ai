@@ -1,1 +1,4 @@
 ffmpeg
+libraqm-dev
+libharfbuzz-dev
+libfribidi-dev
