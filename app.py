@@ -503,16 +503,21 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     extra_gap = 0.0
     
     if target > 0:
+        # We calculate the EXACT factor needed to hit the target
+        # If the script is too long, we speed it up. If too short, we slow it down.
         global_factor = total_raw_dur / target
-        # Recap style: 1.0x to 2.0x speed
-        if global_factor > 1.0:
-            applied_factor = min(global_factor, 2.0)
-        else:
-            applied_factor = max(global_factor, 0.9)
-            
+        
+        # We allow a wider range (0.7x to 2.5x) to ensure the target is met
+        # 2.5x is very fast but common in recap styles.
+        applied_factor = np.clip(global_factor, 0.7, 2.5)
+        
         stretched_dur = total_raw_dur / applied_factor
+        
+        # If still too short (even at 0.7x), we add gaps
         if stretched_dur < target and num_gaps > 0:
             extra_gap = (target - stretched_dur) / num_gaps
+        # If still too long (even at 2.5x), the audio will be longer than target,
+        # but the rendering logic will ensure it's not cut.
     
     # 3. Process segments with final timing
     final_temp_files = []
@@ -700,25 +705,24 @@ if up:
 
                 stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည် (Gemini)...")
                 prg.progress(30)
-                # Calculate approximate word count for target duration (Recap style: ~3.5 words/sec for Myanmar to ensure fullness)
-                target_words = int(target_sec * 3.5)
+                # Refined word count for Myanmar (average 3.0 to 4.0 words per second for fast recap)
+                target_words = int(target_sec * 3.8)
                 prm = f"""Listen to this audio and translate it into a HIGH-ENERGY Myanmar Movie Recap style narration.
-Target duration: {target_sec} seconds.
-REQUIRED LENGTH: You MUST write a VERY LONG script (at least {target_words} words) to fill the entire {target_sec} seconds.
+TARGET DURATION: {target_sec} seconds.
+REQUIRED SCRIPT LENGTH: You MUST write exactly around {target_words} Myanmar words to fill the {target_sec} seconds timeframe perfectly.
 
 MOVIE RECAP STYLE RULES:
-1. The tone must be dramatic, fast-paced, and engaging (like popular YouTube Movie Recaps).
-2. Use conversational Myanmar language (e.g., "ဒီနေ့မှာတော့...", "နောက်ဆုံးမှာတော့...", "မထင်မှတ်ဘဲ...").
-3. Keep the narration continuous and dense. Describe every action, emotion, and plot twist in detail.
-4. The goal is to have NO SILENCE. The narrator should be talking almost the entire time.
-5. Use Standard Myanmar Unicode and correct spelling.
+1. The tone must be dramatic, fast-paced, and extremely engaging.
+2. Use natural, conversational Myanmar language.
+3. Keep the narration DENSE and CONTINUOUS. Describe every scene, action, and character emotion in detail to fill the time.
+4. There should be ALMOST NO SILENCE. If the source audio is shorter than {target_sec} seconds, you MUST EXPAND the story with more descriptive details to reach the required length.
+5. Use Standard Myanmar Unicode.
 
 FORMATTING RULES:
 1. Output ONLY valid SRT subtitle format.
-2. Each subtitle block should be a natural phrase (12-18 words).
-3. The timestamps in the SRT MUST span from 00:00:00,000 to exactly {fmt_srt(target_sec)}.
-4. DO NOT summarize briefly. If the audio is short, expand the story with descriptive details.
-5. Do NOT include any intro/outro text, only the SRT blocks."""
+2. Each subtitle block should be a natural phrase (approx 15 words).
+3. The timestamps in your SRT output MUST span the entire range from 00:00:00,000 to {fmt_srt(target_sec)}.
+4. DO NOT include any preamble or conclusion. Just the SRT blocks."""
                 with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
                 cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mpeg","data":b64}}]}]
 
