@@ -565,19 +565,24 @@ FORMATTING RULES:
                     spath = os.path.join(sub_dir, f"sub_{i}.png")
                     simg.save(spath)
                     temp_imgs.append(spath)
-                    overlay_filters.append(f"movie={spath.replace('\\','/').replace(':','\\\\')}[s{i}];[v][s{i}]overlay=0:0:enable='between(t,{seg['start']},{seg['end']})'[v]")
+                    # Proper escaping for movie filter paths in FFmpeg
+                    safe_spath = spath.replace('\\', '/').replace(':', '\\\\').replace("'", "'\\\\\\''")
+                    overlay_filters.append(f"movie='{safe_spath}'[s{i}];[v][s{i}]overlay=0:0:enable='between(t,{seg['start']},{seg['end']})'[v]")
                 
                 fcf = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, False, None, 0, 0)
-                fcf = fcf.replace("[v]", "[v_base]")
                 
                 # Combine all
-                full_filter = fcf + ";[v_base]null[v]"
-                for filt in overlay_filters:
-                    full_filter = full_filter.replace("[v]", f"[v_pre{i}]")
-                    full_filter += ";" + filt.replace("[v]", f"[v_pre{i}]").replace("[v]", "[v]")
+                full_filter = fcf.replace("[v]", "[v0]")
+                for i, filt in enumerate(overlay_filters):
+                    # Replace first [v] with input from previous filter, second [v] with output for next
+                    current_filt = filt.replace("[v]", f"[v{i}]", 1).replace("[v]", f"[v{i+1}]")
+                    full_filter += ";" + current_filt
+                
+                # Final output label
+                full_filter += f";[v{len(overlay_filters)}]null[v]"
                 
                 fv = tempfile.mktemp(suffix=".mp4")
-                cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex", full_filter, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
+                cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex", full_filter, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
                 res = subprocess.run(cmd, capture_output=True, text=True)
                 
                 if res.returncode == 0:
