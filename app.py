@@ -16,16 +16,23 @@ import shutil
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 MODELS_TO_TRY = ["gemini-1.5-flash", "gemini-3.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b"]
 
-st.set_page_config(page_title="Movie Recap AI Pro", page_icon="🎬", layout="centered")
+# Force sidebar to be expanded by default
+st.set_page_config(
+    page_title="Movie Recap AI Pro", 
+    page_icon="🎬", 
+    layout="centered",
+    initial_sidebar_state="expanded"
+)
 
-# --- HIDE STREAMLIT BRANDING & GITHUB LINKS ---
+# --- HIDE ONLY UNNECESSARY BRANDING (Keeping Sidebar Toggle) ---
 hide_st_style = """
             <style>
             #MainMenu {visibility: hidden;}
             footer {visibility: hidden;}
-            header {visibility: hidden;}
             .stDeployButton {display:none;}
             #stDecoration {display:none;}
+            /* Ensure the sidebar toggle is visible even if header is modified */
+            [data-testid="stSidebarNav"] {display: none;}
             </style>
             """
 st.markdown(hide_st_style, unsafe_allow_html=True)
@@ -36,7 +43,7 @@ if 'audio_data' not in st.session_state: st.session_state.audio_data = None
 if 'srt_data' not in st.session_state: st.session_state.srt_data = None
 if 'processing_done' not in st.session_state: st.session_state.processing_done = False
 
-# Version Tag (Internal use)
+# UI Header
 st.title("🎬 Movie Recap AI Pro")
 st.markdown("English Video/Audio → Myanmar Movie Recap Style")
 
@@ -129,13 +136,11 @@ def translate_error_to_myanmar(error_msg):
     if not is_ffmpeg_installed():
         return "❌ စနစ်ပိုင်းဆိုင်ရာ အမှားအယွင်းရှိနေပါသည်။ (FFmpeg not found)"
     if "429" in error_msg or "quota" in error_msg:
-        return "❌ Gemini API အသုံးပြုမှု ကန့်သတ်ချက် ပြည့်သွားပါပြီ။ နောက်ထပ် API Key တစ်ခုကို စမ်းကြည့်ပါ။"
-    elif "413" in error_msg or "payload too large" in error_msg:
-        return "❌ ဖိုင်ဆိုဒ် အရမ်းကြီးနေပါသည်။"
+        return "❌ Gemini API အသုံးပြုမှု ကန့်သတ်ချက် ပြည့်သွားပါပြီ။"
     else:
         return f"❌ အမှားအယွင်းတစ်ခု ဖြစ်ပွားခဲ့ပါသည်: {error_msg}"
 
-async def generate_audio_and_srt_v38(text, audio_path, v_id, s, p, target_duration=0):
+async def generate_audio_and_srt_v39(text, audio_path, v_id, s, p, target_duration=0):
     rate = speed_to_edge_rate(s)
     p_hz = pitch_to_edge_hz(p)
     communicate = edge_tts.Communicate(text, v_id, rate=rate, pitch=p_hz)
@@ -160,7 +165,7 @@ async def generate_audio_and_srt_v38(text, audio_path, v_id, s, p, target_durati
     actual_duration = get_duration(temp_audio)
     if actual_duration is None or actual_duration == 0:
         if os.path.exists(temp_audio): os.remove(temp_audio)
-        raise Exception("အသံဖိုင်မှ ကြာချိန်ကို ရှာမတွေ့ပါဘူး။")
+        raise Exception("Audio duration error.")
 
     speed_multiplier = 1.0
     if target_duration > 0:
@@ -227,10 +232,9 @@ def gemini_generate_auto(contents, keys):
 def translate_content(audio_path, target_sec, keys):
     duration_prompt = f"- TARGET DURATION: Approx {target_sec} seconds." if target_sec > 0 else ""
     prompt = f"""You are a professional movie recap expert and Myanmar translator. 
-Listen to this English audio and translate it into Myanmar language in the dramatic storytelling style of "Thiha Voice".
+Translate the English content into Myanmar Recap Style.
 {duration_prompt}
 - Dramatic tone.
-- Use phrases like "ဆိုပြီး...", "ဒီမှာတော့...".
 Write ENTIRELY in Myanmar language."""
     with open(audio_path, 'rb') as f:
         file_data = base64.b64encode(f.read()).decode('utf-8')
@@ -271,7 +275,7 @@ if uploaded_file is not None:
                 progress_bar.progress(80)
                 audio_output = tempfile.mktemp(suffix='.mp3')
                 st.session_state.srt_data, final_dur = asyncio.run(
-                    generate_audio_and_srt_v38(st.session_state.myanmar_text, audio_output, voice_id, speed, pitch, total_target_sec)
+                    generate_audio_and_srt_v39(st.session_state.myanmar_text, audio_output, voice_id, speed, pitch, total_target_sec)
                 )
                 if os.path.exists(audio_output):
                     with open(audio_output, "rb") as f:
