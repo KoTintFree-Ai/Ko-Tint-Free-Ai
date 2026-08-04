@@ -138,6 +138,7 @@ async def generate_audio_and_srt_v44(text, audio_path, v_id, s, p, target_durati
     srt_lines = []
     counter = 1
     current_sentence = []
+    actual_dur = get_duration(audio_path)
     if word_boundaries:
         start_time = word_boundaries[0]["start"] / speed_multiplier
         for i, wb in enumerate(word_boundaries):
@@ -157,8 +158,16 @@ async def generate_audio_and_srt_v44(text, audio_path, v_id, s, p, target_durati
                 if not is_last:
                     current_sentence = []
                     start_time = word_boundaries[i+1]["start"] / speed_multiplier
+    
+    # Fallback: If no word boundaries or SRT lines generated, create one single block
+    if not srt_lines and text and actual_dur:
+        srt_lines.append("1")
+        srt_lines.append(f"00:00:00,000 --> {format_srt_time(actual_dur)}")
+        srt_lines.append(text[:100] + ("..." if len(text) > 100 else ""))
+        srt_lines.append("")
+
     if os.path.exists(temp_audio): os.remove(temp_audio)
-    return "\n".join(srt_lines), get_duration(audio_path)
+    return "\n".join(srt_lines), actual_dur
 
 def render_pro_video_v44(video_path, audio_path, srt_path, mirror, scale, blur, burn_subs):
     output_video = tempfile.mktemp(suffix='.mp4')
