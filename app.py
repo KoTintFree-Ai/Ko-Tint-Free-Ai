@@ -42,26 +42,39 @@ st.markdown("""
 
 # Session State Initialization
 def init_state():
-    keys = ['myanmar_text', 'audio_path', 'srt_data', 'video_path', 'base_frame', 'last_uploaded', 'processing_done', 'api_key']
+    keys = ['myanmar_text', 'audio_path', 'srt_data', 'video_path', 'base_frame', 'last_uploaded', 'processing_done', 'valid_keys_info', 'active_key']
     for k in keys:
         if k not in st.session_state: st.session_state[k] = None
+    for i in range(1, 6):
+        if f'key_{i}' not in st.session_state: st.session_state[f'key_{i}'] = ""
     if st.session_state.processing_done is None: st.session_state.processing_done = False
+    if st.session_state.valid_keys_info is None: st.session_state.valid_keys_info = {}
+    if 'do_test_keys' not in st.session_state: st.session_state.do_test_keys = False
     if 'blur_y_pos' not in st.session_state: st.session_state.blur_y_pos = 85
     if 'blur_h_size' not in st.session_state: st.session_state.blur_h_size = 10
     if 'sub_y_pos' not in st.session_state: st.session_state.sub_y_pos = 85
     if 'font_size' not in st.session_state: st.session_state.font_size = 22
-    if 'target_sec' not in st.session_state: st.session_state.target_sec = 150
+    if 'target_min' not in st.session_state: st.session_state.target_min = 2
+    if 'target_sec' not in st.session_state: st.session_state.target_sec = 30
 
 init_state()
 
-st.title("🎬 Movie Recap AI Pro V7.3")
+st.title("🎬 Movie Recap AI Pro V7.4")
 st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Unicode & Wrap Fix)")
 
-# --- HELPER: SIMPLE SLIDER CONTROL (V7.3) ---
-def simple_slider(label, key, min_val, max_val, step=1):
+# --- HELPER: SLIDER WITH PLUS/MINUS (V7.4) ---
+def plus_minus_slider(label, key, min_val, max_val, step=1):
     st.write(f"**{label}**")
-    val = st.slider(label, min_val, max_val, step=step, key=key, label_visibility="collapsed")
-    return val
+    if key not in st.session_state: st.session_state[key] = min_val
+    
+    def on_btn(delta):
+        st.session_state[key] = int(np.clip(st.session_state[key] + delta, min_val, max_val))
+    
+    col1, col2, col3 = st.columns([1, 4, 1])
+    with col1: st.button("➖", key=f"btn_min_{key}", on_click=on_btn, args=(-step,))
+    with col2: st.slider(label, min_val, max_val, step=step, key=key, label_visibility="collapsed")
+    with col3: st.button("➕", key=f"btn_pls_{key}", on_click=on_btn, args=(step,))
+    return st.session_state[key]
 
 # --- ERROR TRANSLATOR ---
 def translate_error(err_msg, status_code=None):
@@ -109,26 +122,37 @@ with st.sidebar:
         st.rerun()
     
     st.markdown("---")
-    st.subheader("🔑 Gemini API Key")
-    api_key = st.text_input("Gemini API Key ကို ဤနေရာတွင် ထည့်ပါ", type="password", key="api_key")
+    st.subheader("🔑 Gemini API Keys (၅ ခုအထိ)")
+    if st.session_state.active_key:
+        st.success("🟢 API Key အလုပ်လုပ်နေပါသည်")
     
-    if st.button("🔌 Key စမ်းသပ်ရန်"):
-        if not api_key:
+    k1 = st.text_input("API Key 1", type="password", key="key_1")
+    k2 = st.text_input("API Key 2", type="password", key="key_2")
+    k3 = st.text_input("API Key 3", type="password", key="key_3")
+    k4 = st.text_input("API Key 4", type="password", key="key_4")
+    k5 = st.text_input("API Key 5", type="password", key="key_5")
+    api_keys = [k for k in [k1, k2, k3, k4, k5] if k]
+
+    if st.button("🔌 Keys အားလုံး စမ်းသပ်ရန်"):
+        if not api_keys:
             st.error("API Key အရင်ထည့်ပေးပါ။")
         else:
-            with st.spinner("Key ကို စစ်ဆေးနေသည်..."):
-                success = False
-                for ver in API_VERSIONS:
-                    try:
-                        url = f"https://generativelanguage.googleapis.com/{ver}/models?key={api_key}"
-                        r = requests.get(url, timeout=15)
-                        if r.status_code == 200:
-                            st.success(f"✅ API Key အလုပ်လုပ်ပါသည်။ (Version: {ver})")
-                            success = True
-                            break
-                    except: continue
-                if not success:
-                    st.error("❌ API Key မမှန်ကန်ပါ သို့မဟုတ် အလုပ်မလုပ်ပါ။")
+            st.session_state.valid_keys_info = {}
+            with st.spinner("Keys များကို စစ်ဆေးနေသည်..."):
+                for i, k in enumerate(api_keys):
+                    for ver in API_VERSIONS:
+                        try:
+                            url = f"https://generativelanguage.googleapis.com/{ver}/models?key={k}"
+                            r = requests.get(url, timeout=15)
+                            if r.status_code == 200:
+                                data = r.json()
+                                models = [m['name'].split('/')[-1] for m in data.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
+                                st.session_state.valid_keys_info[k] = {"version": ver, "models": models}
+                                if not st.session_state.active_key: st.session_state.active_key = k
+                                st.success(f"✅ Key {i+1} အောင်မြင်ပါသည်။")
+                                break
+                        except: continue
+            st.rerun()
 
     st.markdown("---")
     st.subheader("🎬 ဗီဒီယို ပုံစံညှိရန်")
@@ -138,8 +162,8 @@ with st.sidebar:
     st.markdown("---")
     blur_s = st.checkbox("မူရင်းစာတန်းထိုး ဝါးရန် (Blur)", value=True)
     if blur_s:
-        b_y = simple_slider("ဝါးမည့်နေရာ (Y %)", "blur_y_pos", 0, 100, 1)
-        b_h = simple_slider("ဝါးမည့်အကျယ် (H %)", "blur_h_size", 1, 30, 1)
+        b_y = plus_minus_slider("ဝါးမည့်နေရာ (Y %)", "blur_y_pos", 0, 100, 1)
+        b_h = plus_minus_slider("ဝါးမည့်အကျယ် (H %)", "blur_h_size", 1, 30, 1)
     else:
         st.session_state.blur_y_pos = 85
         st.session_state.blur_h_size = 10
@@ -147,8 +171,8 @@ with st.sidebar:
     st.markdown("---")
     burn_s = st.checkbox("မြန်မာစာတန်းထိုး ထည့်ရန်", value=True)
     if burn_s:
-        f_s = simple_slider("စာလုံးအရွယ်အစား", "font_size", 5, 100, 1)
-        s_y = simple_slider("စာတန်းထိုးနေရာ (Y %)", "sub_y_pos", 0, 100, 1)
+        f_s = plus_minus_slider("စာလုံးအရွယ်အစား", "font_size", 5, 100, 1)
+        s_y = plus_minus_slider("စာတန်းထိုးနေရာ (Y %)", "sub_y_pos", 0, 100, 1)
     else:
         st.session_state.sub_y_pos = 85
 
@@ -162,16 +186,24 @@ with st.sidebar:
     fit_dur = st.toggle("သတ်မှတ်အချိန်အတွင်း အပြီးပြောရန်", value=True)
     target_sec = 0
     if fit_dur:
-        target_sec = st.slider("Target Duration (စက္ကန့်)", 10, 600, st.session_state.target_sec)
-        st.session_state.target_sec = target_sec
-        st.info(f"သတ်မှတ်ထားသော အချိန်: {target_sec // 60} မိနစ် {target_sec % 60} စက္ကန့်")
+        tm = plus_minus_slider("မိနစ်", "target_min", 0, 60, 1)
+        ts = plus_minus_slider("စက္ကန့်", "target_sec", 0, 59, 1)
+        target_sec = (tm * 60) + ts
+        st.info(f"သတ်မှတ်ထားသော အချိန်: {tm} မိနစ် {ts} စက္ကန့်")
+    else:
+        target_sec = 0
 
     st.markdown("---")
     st.subheader("🔊 အသံ ဆက်တင်များ")
     v_choice = st.selectbox("အသံရွေးချယ်ပါ", ["သီဟ (အမျိုးသားသံ)", "နီလာ (အမျိုးသမီးသံ)"])
     v_id = "my-MM-ThihaNeural" if "သီဟ" in v_choice else "my-MM-NilarNeural"
-    v_speed = st.slider("အသံနှုန်း", 1, 100, 55)
-    v_pitch = st.slider("Pitch", 1, 100, 50)
+    
+    # Initialize voice settings if not present
+    if 'v_speed' not in st.session_state: st.session_state.v_speed = 55
+    if 'v_pitch' not in st.session_state: st.session_state.v_pitch = 50
+    
+    v_speed = plus_minus_slider("အသံနှုန်း", "v_speed", 1, 100, 1)
+    v_pitch = plus_minus_slider("Pitch", "v_pitch", 1, 100, 1)
 
 # --- UTILITIES ---
 def create_subtitle_image(text, font_size):
@@ -543,7 +575,7 @@ if up:
         if os.path.exists(bp): os.remove(bp)
         if os.path.exists(sub_p): os.remove(sub_p)
 
-    if not st.session_state.api_key: st.warning("⚠️ Sidebar တွင် Gemini API Key ထည့်ပေးပါ")
+    if not api_keys: st.warning("⚠️ Sidebar တွင် Gemini API Key ထည့်ပေးပါ")
     elif st.button("🚀 စတင်လုပ်ဆောင်ရန်"):
         # Check if ffmpeg is available
         ffmpeg_path = shutil.which("ffmpeg")
@@ -587,20 +619,24 @@ FORMATTING RULES:
 
                 srt_res = None
                 errors = []
-                k = st.session_state.api_key
-                for ver in API_VERSIONS:
-                    for m in DEFAULT_MODELS:
-                        try:
-                            url = f"https://generativelanguage.googleapis.com/{ver}/models/{m}:generateContent?key={k}"
-                            r = requests.post(url, json={"contents":cont}, timeout=300)
-                            if r.status_code == 200:
-                                data = r.json()
-                                if 'candidates' in data and data['candidates'][0]['content']['parts']:
-                                    srt_res = data['candidates'][0]['content']['parts'][0]['text']
-                                    if srt_res:
-                                        with st.expander("📝 Narration Preview (AI က ရေးပေးထားသော စာသားများ)", expanded=True):
-                                            st.text_area("Narration Content", srt_res, height=200)
-                                        break
+                for k in api_keys:
+                    info = st.session_state.valid_keys_info.get(k)
+                    versions = [info['version']] if info else API_VERSIONS
+                    models = info['models'] if info else DEFAULT_MODELS
+                    for ver in versions:
+                        for m in models:
+                            try:
+                                url = f"https://generativelanguage.googleapis.com/{ver}/models/{m}:generateContent?key={k}"
+                                r = requests.post(url, json={"contents":cont}, timeout=300)
+                                if r.status_code == 200:
+                                    data = r.json()
+                                    if 'candidates' in data and data['candidates'][0]['content']['parts']:
+                                        srt_res = data['candidates'][0]['content']['parts'][0]['text']
+                                        if srt_res:
+                                            st.session_state.active_key = k
+                                            with st.expander("📝 Narration Preview (AI က ရေးပေးထားသော စာသားများ)", expanded=True):
+                                                st.text_area("Narration Content", srt_res, height=200)
+                                            break
                             else:
                                 try: msg = r.json().get('error', {}).get('message', r.text)
                                 except: msg = r.text
