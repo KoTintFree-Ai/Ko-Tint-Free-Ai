@@ -163,6 +163,12 @@ async def generate_audio_and_srt_v44(text, audio_path, v_id, s, p, target_durati
 def render_pro_video_v44(video_path, audio_path, srt_path, mirror, scale, blur, burn_subs):
     output_video = tempfile.mktemp(suffix='.mp4')
     try:
+        # Check if SRT exists if burning is requested
+        if burn_subs:
+            if not os.path.exists(srt_path) or os.path.getsize(srt_path) == 0:
+                st.warning("⚠️ SRT file is missing or empty. Subtitles will not be burned.")
+                burn_subs = False
+
         # Construct Filter String carefully
         v_filters = []
         if mirror: v_filters.append("hflip")
@@ -173,14 +179,18 @@ def render_pro_video_v44(video_path, audio_path, srt_path, mirror, scale, blur, 
             base_v = ",".join(v_filters) if v_filters else "null"
             fc = f"[0:v]{base_v},split[m][b];[b]crop=iw:ih*0.2:0:ih*0.8,boxblur=20:10[blurred];[m][blurred]overlay=0:main_h*0.8"
             if burn_subs:
-                srt_esc = srt_path.replace("\\", "/").replace(":", "\\:")
+                # Use relative path and escape for FFmpeg subtitles filter
+                rel_srt = os.path.relpath(srt_path)
+                srt_esc = rel_srt.replace("\\", "/").replace(":", "\\:").replace("'", "'\\''")
                 fc += f",subtitles='{srt_esc}':force_style='FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'[v]"
             else:
                 fc += "[v]"
         else:
             fc = "[0:v]" + ("," + ",".join(v_filters) if v_filters else "")
             if burn_subs:
-                srt_esc = srt_path.replace("\\", "/").replace(":", "\\:")
+                # Use relative path and escape for FFmpeg subtitles filter
+                rel_srt = os.path.relpath(srt_path)
+                srt_esc = rel_srt.replace("\\", "/").replace(":", "\\:").replace("'", "'\\''")
                 fc += f",subtitles='{srt_esc}':force_style='FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'[v]"
             else:
                 fc += "[v]"
