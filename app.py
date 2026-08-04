@@ -288,7 +288,7 @@ def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sy):
         if brn and sp and os.path.exists(sp):
             se = os.path.abspath(sp).replace("\\","/").replace(":","\\\\").replace("'","'\\''")
             mv = int((100 - sy) * 10)
-            res += f",subtitles='{se}':fontsdir='.':force_style='FontName=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv}'"
+            res += f",subtitles='{se}':fontsdir='.':force_style='FontName=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv},Spacing=1.0'"
         return res + "[v]"
     else:
         # Complex case: region blur
@@ -308,7 +308,7 @@ def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sy):
         if brn and sp and os.path.exists(sp):
             se = os.path.abspath(sp).replace("\\","/").replace(":","\\\\").replace("'","'\\''")
             mv = int((100 - sy) * 10)
-            res += f"subtitles='{se}':fontsdir='.':force_style='FontName=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv}'"
+            res += f"subtitles='{se}':fontsdir='.':force_style='FontName=Pyidaungsu,FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv},Spacing=1.0'"
         
         return filter_complex + ";" + res + "[v]"
 
