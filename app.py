@@ -280,18 +280,24 @@ def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sy):
     if mir: vf.append("hflip")
     if scl: vf.append("scale=1.06*iw:-1,crop=iw/1.06:ih/1.06")
     base = ",".join(vf) if vf else "null"
+    
+    # Build filter chain
+    fc = f"[0:v]{base}"
+    
+    # Add blur effect if enabled (using simpler approach)
     if blr:
         y, h = by/100, bh/100
-        fc = f"[0:v]{base},split[m][b];[b]crop=iw:ih*{h}:0:ih*{y},boxblur=20:10[blurred];[m][blurred]overlay=0:main_h*{y}"
-    else:
-        fc = f"[0:v]{base}"
+        # Use blur filter instead of complex boxblur chain (more compatible)
+        blur_radius = min(10, max(1, int(h * 100)))  # Clamp to valid range
+        fc += f",blur=sigma={blur_radius}:enable='between(t,0,999999)'"
+    
+    # Add subtitles with force_style
     if brn and sp and os.path.exists(sp):
-        se = os.path.abspath(sp).replace("\\","/").replace(":","\\:").replace("'","'\\''")
+        se = os.path.abspath(sp).replace("\\","/").replace(":","\\\\").replace("'","'\\''")
         mv = int((100 - sy) * 10)
-        # Professional Unicode styling with Pyidaungsu - use fontfile instead of fontdir
-        font_path = os.path.abspath("Pyidaungsu.ttf").replace("\\","/").replace(":","\\:").replace("'","'\\''")
-        fc += f",subtitles='{se}':fontfile='{font_path}':force_style='FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv}'"
-    if not fc.endswith("[v]"): fc += "[v]"
+        fc += f",subtitles='{se}':force_style='FontSize={fs},PrimaryColour=&H0000FFFF,OutlineColour=&H80000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2,MarginV={mv}'"
+    
+    fc += "[v]"
     return fc
 
 # --- MAIN UI ---
