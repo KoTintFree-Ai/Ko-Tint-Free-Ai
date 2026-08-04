@@ -245,7 +245,12 @@ def get_blur_filter(mirror, scale, blur, blur_y, blur_h, burn_subs=False, srt_pa
         if burn_subs and srt_path:
             rel_srt = os.path.relpath(srt_path)
             srt_esc = rel_srt.replace("\\", "/").replace(":", "\\:").replace("'", "'\\''")
-            fc += f",subtitles='{srt_esc}':force_style='FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'[v]"
+            # Add font support for Myanmar characters
+            fc += f",subtitles='{srt_esc}':force_style='Fontname=Pyidaungsu,FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'"
+            if os.path.exists("Pyidaungsu.ttf"):
+                fc = fc[:-1] + f",fontsdir=.,FontFile=Pyidaungsu.ttf'[v]"
+            else:
+                fc += "[v]"
         else:
             fc += "[v]"
     else:
@@ -253,7 +258,12 @@ def get_blur_filter(mirror, scale, blur, blur_y, blur_h, burn_subs=False, srt_pa
         if burn_subs and srt_path:
             rel_srt = os.path.relpath(srt_path)
             srt_esc = rel_srt.replace("\\", "/").replace(":", "\\:").replace("'", "'\\''")
-            fc += f",subtitles='{srt_esc}':force_style='FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'[v]"
+            # Add font support for Myanmar characters
+            fc += f",subtitles='{srt_esc}':force_style='Fontname=Pyidaungsu,FontSize=12,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=3,Alignment=2,MarginV=10'"
+            if os.path.exists("Pyidaungsu.ttf"):
+                fc = fc[:-1] + f",fontsdir=.,FontFile=Pyidaungsu.ttf'[v]"
+            else:
+                fc += "[v]"
         else:
             fc += "[v]"
     return fc
