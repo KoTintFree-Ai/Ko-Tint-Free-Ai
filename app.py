@@ -166,77 +166,50 @@ def create_subtitle_image(text, width, height, font_size, y_pos_pct):
 
     font = None
     try:
-        # Try RAQM first for best Myanmar shaping
         font = ImageFont.truetype(FONT_PATH, font_size, layout_engine=ImageFont.Layout.RAQM)
     except Exception:
         try:
-            # Fallback to Basic layout if RAQM is not available
             font = ImageFont.truetype(FONT_PATH, font_size, layout_engine=ImageFont.Layout.BASIC)
         except Exception:
             try:
-                # Last resort: default truetype
                 font = ImageFont.truetype(FONT_PATH, font_size)
             except Exception:
                 font = ImageFont.load_default()
 
-    # Split text into lines
     lines = text.split('\n')
-
-    # Calculate total height of all lines
     line_heights = [draw.textbbox((0, 0), line, font=font)[3] for line in lines]
     total_text_height = sum(line_heights) + (len(lines) - 1) * 10
-
-    # Starting Y position
     current_y = int(height * (y_pos_pct / 100)) - (total_text_height // 2)
 
     for line in lines:
-        # Calculate X to center text
         bbox = draw.textbbox((0, 0), line, font=font)
         w = bbox[2] - bbox[0]
         x = (width - w) // 2
-
-        # Draw shadow/outline for readability
         for offset in [(-2,-2), (2,-2), (-2,2), (2,2)]:
             draw.text((x+offset[0], current_y+offset[1]), line, font=font, fill=(0,0,0,200))
-
-        # Draw main text (Yellow)
         draw.text((x, current_y), line, font=font, fill=(255, 255, 0, 255))
         current_y += bbox[3] + 10
 
     return img
 
 def normalize_myanmar(text):
-    """Normalize Myanmar characters to standard Unicode order (NFC)"""
     if not text: return text
     import unicodedata
-    # NFC is the standard for web and most modern rendering engines including Pillow
-    # It ensures characters like ေ (U+1031) are stored in the correct sequence
     return unicodedata.normalize('NFC', text)
 
 def wrap_text(text, max_len=25):
-    """Intelligently wrap Myanmar text to prevent long lines without breaking clusters"""
     if not text: return text
-
-    # First normalize the text
     text = normalize_myanmar(text)
-
-    # Remove any extra spaces that might cause issues
     text = " ".join(text.split())
-
     if len(text) <= max_len:
         return text
-
     import re
-    # A more robust cluster pattern for Myanmar Unicode
     cluster_pattern = r'[\u1000-\u102A\u103F\u1040-\u1049][\u102B-\u103E\u1037\u1038\u1039\u103A]*'
     clusters = re.findall(cluster_pattern + r'|[^\u1000-\u1049]', text)
-
     lines = []
     cur_line = ""
     cur_len = 0
-
     for c in clusters:
-        # If cluster is a space, handle separately
         if c == " ":
             if cur_len >= max_len:
                 lines.append(cur_line.strip())
@@ -246,9 +219,6 @@ def wrap_text(text, max_len=25):
                 cur_line += c
                 cur_len += 1
             continue
-
-        # If adding this cluster exceeds max_len, wrap
-        # Note: Myanmar characters are narrow, but we count by visual units (clusters)
         if cur_len + 1 > max_len and cur_line:
             lines.append(cur_line.strip())
             cur_line = c
@@ -256,12 +226,9 @@ def wrap_text(text, max_len=25):
         else:
             cur_line += c
             cur_len += 1
-
     if cur_line:
         lines.append(cur_line.strip())
-
-    # Final cleanup: ensure no more than 2 lines if possible, or join with \n
-    return "\n".join(lines[:3]) # Limit to 3 lines max for readability
+    return "\n".join(lines[:3])
 
 def get_dur(p):
     try:
@@ -275,37 +242,24 @@ def fmt_srt(s):
     return f"{time.strftime('%H:%M:%S', time.gmtime(s))},{m:03d}"
 
 def parse_srt_text(text):
-    """Parse SRT or plain text and extract subtitle segments"""
-    # Remove any leading/trailing whitespace
     text = text.strip()
-
-    # Try to parse as SRT format first
     blocks = re.split(r'\n\s*\n', text)
     segments = []
-
     for block in blocks:
         lines = block.strip().split('\n')
-
-        # Look for SRT format (has --> marker)
         found_srt = False
         for i, line in enumerate(lines):
             if '-->' in line:
-                # Collect all lines after the timestamp as subtitle text
                 subtitle_text = ' '.join(lines[i+1:]).strip()
                 if subtitle_text:
                     segments.append(subtitle_text)
                 found_srt = True
                 break
-
-        # If not SRT format, treat the whole block as text (skip if it's just a number)
         if not found_srt and len(lines) > 0:
-            # Remove leading numbers (SRT index)
             text_content = '\n'.join(lines)
             text_content = re.sub(r'^\d+\s*\n', '', text_content).strip()
             if text_content and not re.match(r'^[\d:,.\s\->]+$', text_content):
                 segments.append(text_content)
-
-    # Filter out empty segments
     return [s.strip() for s in segments if s.strip()]
 
 async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
@@ -319,30 +273,24 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     for idx, txt in enumerate(segments):
         clean_txt = re.sub(r'^\d+\s*', '', txt).strip()
         if not clean_txt: continue
-
-        # Basic Myanmar Unicode Normalization (Optional but helpful for some shapers)
-        # Ensure medials and vowels are in a predictable order
         import unicodedata
         clean_txt = unicodedata.normalize('NFC', clean_txt)
-
         p = tempfile.mktemp(suffix=".mp3")
         try:
             communicate = edge_tts.Communicate(clean_txt, vid, rate=rate, pitch=pitch)
             await communicate.save(p)
             d = get_dur(p)
             if d > 0:
-                # Split text into smaller timed chunks if too long
                 sub_segments = re.split(r'([။၊ ])', clean_txt)
                 sub_parts = []
                 temp_part = ""
                 for part in sub_segments:
-                    if len(temp_part) + len(part) < 20: # Short segments for clarity
+                    if len(temp_part) + len(part) < 20:
                         temp_part += part
                     else:
                         if temp_part.strip(): sub_parts.append(temp_part.strip())
                         temp_part = part
                 if temp_part.strip(): sub_parts.append(temp_part.strip())
-
                 if len(sub_parts) > 1:
                     part_dur = d / len(sub_parts)
                     for i, sp in enumerate(sub_parts):
@@ -353,7 +301,6 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
                 else:
                     wrapped_txt = wrap_text(clean_txt, max_len=20)
                     srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(cur_t)} --> {fmt_srt(cur_t+d)}\n{wrapped_txt}\n\n")
-
                 temp_files.append(p)
                 cur_t += d + 0.1
         except: continue
@@ -386,33 +333,27 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     return res_srt, get_dur(out_p)
 
 def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sy):
-    # Base chain for hflip and scale
     base_parts = []
     if mir: base_parts.append("hflip")
     if scl: base_parts.append("scale=1.06*iw:-1,crop=iw/1.06:ih/1.06")
     base_str = ",".join(base_parts) if base_parts else "null"
 
     if not blr:
-        # Simple case: no blur
         res = f"[0:v]{base_str}"
         if brn and sp and os.path.exists(sp):
             res += f",overlay=0:0"
         return res + "[v]"
     else:
-        # Complex case: region blur
         y_p = by / 100
         h_p = bh / 100
-        # Build filter complex string
         fc = f"[0:v]{base_str}[preblur];"
         fc += f"[preblur]split[main][to_blur];"
         fc += f"[to_blur]crop=iw:ih*{h_p}:0:ih*{y_p},boxblur=15[blurred];"
-
         if brn and sp and os.path.exists(sp):
             fc += f"[main][blurred]overlay=0:H*{y_p}[postblur];"
             fc += f"[postblur][1:v]overlay=0:0[v]"
         else:
             fc += f"[main][blurred]overlay=0:H*{y_p}[v]"
-
         return fc
 
 # --- MAIN UI ---
@@ -422,12 +363,10 @@ if up:
     fid = up.name + str(up.size)
     if st.session_state.last_uploaded != fid:
         st.session_state.last_uploaded = fid
-        # Store input in a persistent session-based file
         tp = os.path.join(tempfile.gettempdir(), f"input_{fid}." + up.name.split(".")[-1])
         if not os.path.exists(tp):
             with open(tp, "wb") as f:
                 f.write(up.getvalue())
-
         if up.name.lower().endswith((".mp4", ".mov", ".avi")):
             d = get_dur(tp)
             bi = tempfile.mktemp(suffix=".jpg")
@@ -455,29 +394,21 @@ if up:
         st.subheader("🖼️ Layout Preview")
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as bf:
             bf.write(st.session_state.base_frame); bp = bf.name
-
-        # 1. Generate transparent subtitle image
         with Image.open(bp) as base_img:
             w, h = base_img.size
             sub_img = create_subtitle_image("မြန်မာစာ ယူနီကုတ်\nစမ်းသပ်ကြည့်ရှုခြင်း", w, h, st.session_state.font_size, st.session_state.sub_y_pos)
             sub_p = tempfile.mktemp(suffix=".png")
             sub_img.save(sub_p)
-
         po = tempfile.mktemp(suffix=".jpg")
         fc = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, burn_s, sub_p, st.session_state.font_size, st.session_state.sub_y_pos)
-
         filter_script_p = tempfile.mktemp(suffix=".txt")
         filter_str = fc if burn_s else fc.replace("[postblur][1:v]overlay=0:0", "[postblur]")
         with open(filter_script_p, "w", encoding="utf-8") as f: f.write(filter_str)
-
-        # Try new syntax first, then fallback to old
         inputs = ["-i", bp, "-i", sub_p] if burn_s else ["-i", bp]
-        # Modern FFmpeg uses -filter_complex with string, or -filter_complex_script for scripts
         if len(filter_str) < 2000:
             cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_str, "-map", "[v]", po]
         else:
             cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex_script", filter_script_p, "-map", "[v]", po]
-
         subprocess.run(cmd, capture_output=True)
         if os.path.exists(filter_script_p): os.remove(filter_script_p)
         if os.path.exists(po): st.image(po); os.remove(po)
@@ -488,7 +419,6 @@ if up:
     elif st.button("🚀 စတင်လုပ်ဆောင်ရန်"):
         prg = st.progress(0); stt = st.empty()
         try:
-            # Cleanup old results
             if st.session_state.video_path and os.path.exists(st.session_state.video_path):
                 try: os.remove(st.session_state.video_path)
                 except: pass
@@ -498,8 +428,6 @@ if up:
 
             stt.text("📊 အဆင့် ၁: အသံဖိုင်ကို ပြင်ဆင်နေပါသည်...")
             prg.progress(10)
-
-            # Use the already saved input file
             tp = os.path.join(tempfile.gettempdir(), f"input_{fid}." + up.name.split(".")[-1])
             ag = tempfile.mktemp(suffix=".mp3")
             if up.name.lower().endswith((".mp4", ".mov", ".avi")):
@@ -508,7 +436,6 @@ if up:
 
             stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည် (Gemini)...")
             prg.progress(30)
-            # Improved instruction for better SRT formatting with shorter lines
             prm = f"""Listen to this audio and translate it into a Myanmar Movie Recap style narration.
 Target duration: {target_sec} seconds.
 Output ONLY valid SRT subtitle format with proper timing.
@@ -559,7 +486,6 @@ FORMATTING RULES:
 
             stt.text("🔊 အဆင့် ၃: အသံဖိုင်နှင့် Timing ညှိနေပါသည်...")
             prg.progress(60)
-            # Use a unique name for audio to avoid conflicts
             ao_name = f"audio_{fid}_{int(time.time())}.mp3"
             ao = os.path.join(tempfile.gettempdir(), ao_name)
             st.session_state.srt_data, _ = asyncio.run(gen_audio_srt(srt_res, ao, v_id, v_speed, v_pitch, target_sec if fit_dur else 0))
@@ -568,19 +494,13 @@ FORMATTING RULES:
             if up.name.lower().endswith((".mp4", ".mov", ".avi")):
                 stt.text("🎬 အဆင့် ၄: ဗီဒီယိုကို တည်းဖြတ်နေပါသည် (Rendering)...")
                 prg.progress(80)
-
-                # 1. Create a transparent subtitle video using Python rendering
                 stt.text("🎬 အဆင့် ၄: စာတန်းထိုးများကို ပုံဖော်နေပါသည်...")
                 sub_dir = tempfile.mkdtemp()
-
-                # Get video dimensions
                 cmd_dim = ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", tp]
                 v_dim = subprocess.run(cmd_dim, capture_output=True, text=True).stdout.strip().split('x')
                 vw, vh = int(v_dim[0]), int(v_dim[1])
 
-                # Parse SRT and generate frames
                 segments = []
-                import re
                 blocks = re.split(r'\n\s*\n', st.session_state.srt_data)
                 for block in blocks:
                     lines = block.strip().split('\n')
@@ -591,9 +511,6 @@ FORMATTING RULES:
                         text = "\n".join(lines[2:])
                         segments.append({'start': start, 'end': end, 'text': text})
 
-                # Create a temporary subtitle video
-                sub_vid = tempfile.mktemp(suffix=".mp4")
-                # We'll use a complex filter to overlay at specific times
                 overlay_filters = []
                 temp_imgs = []
                 for i, seg in enumerate(segments):
@@ -601,23 +518,16 @@ FORMATTING RULES:
                     spath = os.path.join(sub_dir, f"sub_{i}.png")
                     simg.save(spath)
                     temp_imgs.append(spath)
-                    # Proper escaping for movie filter paths in FFmpeg
                     safe_spath = spath.replace('\\', '/').replace(':', '\\\\').replace("'", "'\\\\\\''")
                     overlay_filters.append(f"movie='{safe_spath}'[s{i}];[v][s{i}]overlay=0:0:enable='between(t,{seg['start']},{seg['end']})'[v]")
 
                 fcf = get_filter(mirror_v, scale_v, blur_s, st.session_state.blur_y_pos, st.session_state.blur_h_size, False, None, 0, 0)
-
-                # Combine all
                 full_filter = fcf.replace("[v]", "[v0]")
                 for i, filt in enumerate(overlay_filters):
-                    # Replace first [v] with input from previous filter, second [v] with output for next
                     current_filt = filt.replace("[v]", f"[v{i}]", 1).replace("[v]", f"[v{i+1}]")
                     full_filter += ";" + current_filt
-
-                # Final output label
                 full_filter += f";[v{len(overlay_filters)}]null[v]"
 
-                # Use a filter script file to avoid command line length limits
                 filter_script = tempfile.mktemp(suffix=".txt")
                 with open(filter_script, "w", encoding="utf-8") as f:
                     f.write(full_filter)
@@ -631,7 +541,7 @@ FORMATTING RULES:
                 if res.returncode != 0:
                     # Fallback: try direct filter_complex instead of script
                     if len(full_filter) < 5000:
-                        cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex", full_filter, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
+                        cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "--filter_complex", full_filter, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
                         res = subprocess.run(cmd, capture_output=True, text=True)
 
                 if os.path.exists(filter_script): os.remove(filter_script)
@@ -644,7 +554,6 @@ FORMATTING RULES:
 
             prg.progress(100); stt.text("✅ အောင်မြင်စွာ ပြီးဆုံးပါပြီ!"); st.balloons()
             st.session_state.processing_done = True
-            # Keep files for download buttons
             if os.path.exists(ag): os.remove(ag)
         except Exception as e:
             st.error(f"❌ အမှားအယွင်း: {str(e)}")
