@@ -414,7 +414,7 @@ def get_filter(mir, scl, blr, by, bh, brn, sp, fs, sy):
 # --- MAIN UI ---
 up = st.file_uploader("ဗီဒီယို သို့မဟုတ် အော်ဒီယိုဖိုင် ရွေးချယ်ပါ", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"])
 
-    if up:
+if up:
     fid = up.name + str(up.size)
     if st.session_state.last_uploaded != fid:
         st.session_state.last_uploaded = fid
