@@ -2,4 +2,4 @@ streamlit
 edge-tts
 requests
 numpy
-Pillow
+Pillow>=10.0.0,<12.0.0
