@@ -270,7 +270,7 @@ def auto_detect_subtitle_y(video_path):
         st.error(f"Auto Detect Error: {e}")
     return 85, 10 # Default fallback
 
-def get_blur_filter(mirror, scale, blur, blur_y, blur_h, burn_subs=False, srt_path=None, f_size=10):
+def get_blur_filter(mirror, scale, blur, blur_y, blur_h, burn_subs=False, srt_path=None, f_size=10, sub_y=85):
     v_filters = []
     if mirror: v_filters.append("hflip")
     if scale: v_filters.append("scale=1.06*iw:-1,crop=iw/1.06:ih/1.06")
@@ -410,7 +410,8 @@ if uploaded_file is not None:
         preview_out = tempfile.mktemp(suffix=".jpg")
         fc = get_blur_filter(mirror_video, scale_video, blur_subtitles, blur_y_pos, blur_h_size, burn_subs=False, srt_path=None, f_size=font_size, sub_y=sub_y_pos)
         # Simplify filter for single image (remove [0:v] and [v])
-        fc_simple = fc.replace("[0:v]", "").replace("[v]", "")
+        fc_simple = fc.replace("[0:v]", "").replace("[v]", "").strip(",")
+        if not fc_simple: fc_simple = "null"
         
         try:
             subprocess.run(["ffmpeg", "-y", "-i", bpath, "-vf", fc_simple, preview_out], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
