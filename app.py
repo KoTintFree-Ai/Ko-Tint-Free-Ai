@@ -19,7 +19,7 @@ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 MODELS_TO_TRY = ["gemini-1.5-flash", "gemini-3.5-flash", "gemini-2.0-flash-exp", "gemini-1.5-flash-8b"]
 
 st.set_page_config(
-    page_title="Movie Recap AI Pro V5.2", 
+    page_title="Movie Recap AI Pro V6.0", 
     page_icon="🎬", 
     layout="centered",
     initial_sidebar_state="expanded"
@@ -46,7 +46,7 @@ if 'processing_done' not in st.session_state: st.session_state.processing_done =
 if 'base_frame' not in st.session_state: st.session_state.base_frame = None
 if 'last_uploaded' not in st.session_state: st.session_state.last_uploaded = None
 
-st.title("🎬 Movie Recap AI Pro V5.2")
+st.title("🎬 Movie Recap AI Pro V6.0")
 st.markdown("English Video → Myanmar Movie Recap (Final Render Fix)")
 
 # --- SIDEBAR SETTINGS ---
@@ -132,20 +132,27 @@ def format_srt_time(seconds):
     millis = int((seconds % 1) * 1000)
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
-async def generate_audio_and_srt_v44(text, audio_path, v_id, s, p, target_duration=0):
+async def generate_audio_and_srt_v44(srt_text, audio_path, v_id, s, p, target_duration=0):
+    # Extract only the text content from SRT for TTS to avoid reading numbers/timestamps
+    clean_lines = []
+    for line in srt_text.splitlines():
+        line = line.strip()
+        if not line or line.isdigit() or "-->" in line:
+            continue
+        clean_lines.append(line)
+    
+    tts_text = " ".join(clean_lines)
+    
     rate = f"+{int((s-50)*2)}%" if s>=50 else f"{int((s-50)*2)}%"
     p_hz = f"+{int((p-50)*2)}Hz" if p>=50 else f"{int((p-50)*2)}Hz"
-    communicate = edge_tts.Communicate(text, v_id, rate=rate, pitch=p_hz)
+    
+    communicate = edge_tts.Communicate(tts_text, v_id, rate=rate, pitch=p_hz)
     temp_audio = tempfile.mktemp(suffix='.mp3')
-    word_boundaries = []
     with open(temp_audio, "wb") as f:
         async for chunk in communicate.stream():
             if chunk["type"] == "audio": f.write(chunk["data"])
-            elif chunk["type"] == "WordBoundary":
-                word_boundaries.append({"start": chunk["offset"] / 10000000, "duration": chunk["duration"] / 10000000, "text": chunk["text"]})
     
     actual_duration = get_duration(temp_audio)
-    speed_multiplier = 1.0
     if target_duration > 0 and actual_duration:
         speed_multiplier = actual_duration / target_duration
         speed_multiplier = max(0.5, min(2.0, speed_multiplier))
@@ -153,39 +160,8 @@ async def generate_audio_and_srt_v44(text, audio_path, v_id, s, p, target_durati
     else:
         shutil.copy(temp_audio, audio_path)
 
-    srt_lines = []
-    counter = 1
-    current_sentence = []
-    actual_dur = get_duration(audio_path)
-    if word_boundaries:
-        start_time = word_boundaries[0]["start"] / speed_multiplier
-        for i, wb in enumerate(word_boundaries):
-            current_sentence.append(wb["text"])
-            end_time = (wb["start"] + wb["duration"]) / speed_multiplier
-            is_last = (i == len(word_boundaries) - 1)
-            has_marker = any(m in wb["text"] for m in ["။", "!", "?", " "])
-            line_too_long = len("".join(current_sentence)) > 45
-            if is_last or has_marker or line_too_long:
-                sentence_text = "".join(current_sentence).strip()
-                if sentence_text:
-                    srt_lines.append(str(counter))
-                    srt_lines.append(f"{format_srt_time(start_time)} --> {format_srt_time(end_time)}")
-                    srt_lines.append(sentence_text)
-                    srt_lines.append("")
-                    counter += 1
-                if not is_last:
-                    current_sentence = []
-                    start_time = word_boundaries[i+1]["start"] / speed_multiplier
-    
-    # Fallback: If no word boundaries or SRT lines generated, create one single block
-    if not srt_lines and text and actual_dur:
-        srt_lines.append("1")
-        srt_lines.append(f"00:00:00,000 --> {format_srt_time(actual_dur)}")
-        srt_lines.append(text[:100] + ("..." if len(text) > 100 else ""))
-        srt_lines.append("")
-
     if os.path.exists(temp_audio): os.remove(temp_audio)
-    return "\n".join(srt_lines), actual_dur
+    return srt_text, get_duration(audio_path)
 
 def auto_detect_subtitle_y(video_path):
     """Detects the likely Y position and height of subtitles in the video."""
@@ -310,7 +286,13 @@ def gemini_generate_auto(contents, keys):
 
 def translate_content(audio_path, target_sec, keys):
     duration_prompt = f"- TARGET DURATION: Approx {target_sec} seconds." if target_sec > 0 else ""
-    prompt = f"Translate the English content into Myanmar Recap Style. {duration_prompt} - Dramatic tone. Write ENTIRELY in Myanmar language."
+    prompt = (
+        f"Listen to this English audio and translate it into a Myanmar Movie Recap style. "
+        f"{duration_prompt} - Dramatic tone. "
+        f"IMPORTANT: Output the result ONLY in valid SRT (SubRip Subtitle) format. "
+        f"Ensure the timestamps match the original audio events precisely. "
+        f"Use Myanmar language for all subtitle text."
+    )
     with open(audio_path, 'rb') as f: file_data = base64.b64encode(f.read()).decode('utf-8')
     contents = [{"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mime_type": "audio/mp3", "data": file_data}}]}]
     return gemini_generate_auto(contents, keys)
