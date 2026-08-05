@@ -199,56 +199,11 @@ def translate_error(err_msg, status_code=None):
 # --- GEMINI VISION AUTO DETECT SUBTITLE AREA ---
 def auto_detect_subtitle_area(frame_bytes, api_keys=None, grok_keys=None):
     """Use AI Vision to accurately detect subtitle text area in video frame.
-    Falls back to NumPy-based detection if no API keys available."""
-    # Try Groq first if keys are provided (Llama 3.3 is fast and accurate)
-    if grok_keys:
-        for gk in grok_keys:
-            try:
-                info = st.session_state.valid_grok_info.get(gk)
-                groq_models = info.get("models", []) if info else []
-                # Use text-only models for subtitle detection since Groq vision models are deprecated
-                t_models = [m for m in groq_models if "vision" not in m.lower()]
-                # Prefer powerful models for vision-like tasks
-                preferred = [m for m in t_models if "70b" in m.lower()]
-                fallback = [m for m in t_models if "8b" in m.lower()]
-                other = [m for m in t_models if "70b" not in m.lower() and "8b" not in m.lower()]
-                ordered_models = preferred + fallback + other
-                if not ordered_models:
-                    ordered_models = ["llama-3.3-70b-versatile"]
-                
-                b64 = base64.b64encode(frame_bytes).decode()
-                prompt = """Look at this video frame carefully.
-Find the EXACT location of the subtitle/caption text overlay area.
-Reply ONLY with two numbers in this exact format: Y_PERCENTAGE HEIGHT_PERCENTAGE
-Where Y is the top edge (0-100) and HEIGHT is the area height (1-30).
-Example: 78 6"""
-
-                for m in ordered_models:
-                    try:
-                        url = "https://api.groq.com/openai/v1/chat/completions"
-                        headers = {"Authorization": f"Bearer {gk}", "Content-Type": "application/json"}
-                        payload = {
-                            "model": m,
-                            "messages": [{"role": "user", "content": prompt}],
-                            "temperature": 0.1,
-                            "max_tokens": 20
-                        }
-                        r = requests.post(url, json=payload, headers=headers, timeout=30)
-                        if r.status_code == 200:
-                            res = r.json()['choices'][0]['message']['content'].strip()
-                            parts = res.split()
-                            if len(parts) >= 2:
-                                by, bh = float(parts[0]), float(parts[1])
-                                # Shrink Logic
-                                sk = bh * 0.30
-                                by = by + (sk / 2)
-                                bh = bh - sk
-                                st.session_state.active_grok_key = gk
-                                return np.clip(by, 50, 98), np.clip(bh, 1.2, 8.0)
-                    except: continue
-            except: continue
-
-    # Try Gemini Vision if API keys are provided
+    Priority: Gemini Vision (real vision) > NumPy fallback > Groq (text-only, unreliable for vision).
+    Groq API vision models are DEPRECATED, so Groq is NOT used for subtitle detection.
+    Groq is reserved for translation only."""
+    
+    # === PRIORITY 1: Gemini Vision (best - can actually see the image) ===
     if api_keys:
         try:
             for k in api_keys:
@@ -265,23 +220,23 @@ Example: 78 6"""
                             b64 = base64.b64encode(frame_bytes).decode()
                             prompt = """Look at this video frame carefully.
 
-	Find the EXACT location of the subtitle/caption text overlay area.
-	This is the text that appears ON TOP of the video (not part of the video content itself).
-	
-	Reply ONLY with two numbers in this exact format:
-	Y_PERCENTAGE HEIGHT_PERCENTAGE
-	
-	Where:
-	- Y_PERCENTAGE = the top edge of the subtitle area as percentage from top (0-100)
-	- HEIGHT_PERCENTAGE = the height of the subtitle area as percentage of total height (1-30)
-	
-	IMPORTANT: Provide the ABSOLUTE MINIMUM height that covers ONLY the text pixels. 
-	Do NOT include any background space. The bounding box must be as thin as possible.
-	Reply with the TIGHTEST coordinates.
-	
-	Example reply: 78 6
-	
-	If no subtitle text is visible, reply: 85 10"""
+Find the EXACT location of the subtitle/caption text overlay area.
+This is the text that appears ON TOP of the video (not part of the video content itself).
+
+Reply ONLY with two numbers in this exact format:
+Y_PERCENTAGE HEIGHT_PERCENTAGE
+
+Where:
+- Y_PERCENTAGE = the top edge of the subtitle area as percentage from top (0-100)
+- HEIGHT_PERCENTAGE = the height of the subtitle area as percentage of total height (1-30)
+
+IMPORTANT: Provide the ABSOLUTE MINIMUM height that covers ONLY the text pixels. 
+Do NOT include any background space. The bounding box must be as thin as possible.
+Reply with the TIGHTEST coordinates.
+
+Example reply: 78 6
+
+If no subtitle text is visible, reply: 85 10"""
                             
                             cont = [{"role":"user","parts":[
                                 {"text": prompt},
