@@ -462,13 +462,20 @@ with st.sidebar:
                     # Retry logic (2 attempts)
                     for attempt in range(2):
                         try:
-                            url = "https://api.x.ai/v1/models"
-                            headers = {**HTTP_HEADERS, "Authorization": f"Bearer {gk}"}
-                            r = requests.get(url, headers=headers, timeout=30)
+                            url = "https://api.x.ai/v1/chat/completions"
+                            headers = {
+                                "Authorization": f"Bearer {gk}",
+                                "Content-Type": "application/json"
+                            }
+                            payload = {
+                                "model": "grok-2",
+                                "messages": [{"role": "user", "content": "Hello"}],
+                                "max_tokens": 10
+                            }
+                            r = requests.post(url, json=payload, headers=headers, timeout=30)
                             if r.status_code == 200:
                                 data = r.json()
-                                models = [m['id'] for m in data.get('data', [])]
-                                st.session_state.valid_grok_info[gk] = {"models": models}
+                                st.session_state.valid_grok_info[gk] = {"models": ["grok-2", "grok-2-vision-1212"]}
                                 if not st.session_state.active_grok_key: st.session_state.active_grok_key = gk
                                 st.session_state.test_results.append(f"✅ Grok Key {i+1} အောင်မြင်ပါသည်။")
                                 success = True
