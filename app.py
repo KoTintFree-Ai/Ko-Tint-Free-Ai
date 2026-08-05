@@ -122,7 +122,7 @@ def auto_detect_subtitle_area(frame_bytes, api_keys=None):
 	- Y_PERCENTAGE = the top edge of the subtitle area as percentage from top (0-100)
 	- HEIGHT_PERCENTAGE = the height of the subtitle area as percentage of total height (1-30)
 	
-	IMPORTANT: Provide TIGHT bounds around the text. Do not include excessive empty space.
+	IMPORTANT: Provide the MINIMUM possible height that covers ONLY the text. No padding. Tightest bounds possible.
 	
 	Example reply: 78 6
 	
@@ -144,8 +144,13 @@ def auto_detect_subtitle_area(frame_bytes, api_keys=None):
                                     if len(parts) >= 2:
                                         blur_y = float(parts[0])
                                         blur_h = float(parts[1])
+                                        # Shrink Logic: Reduce detected height by 15% to ensure tightness
+                                        shrink = blur_h * 0.15
+                                        blur_y = blur_y + (shrink / 2)
+                                        blur_h = blur_h - shrink
+                                        
                                         blur_y = np.clip(blur_y, 50, 98)
-                                        blur_h = np.clip(blur_h, 2, 30)
+                                        blur_h = np.clip(blur_h, 1.5, 20)
                                         st.session_state.active_key = k
                                         return blur_y, blur_h
                             elif r.status_code == 404:
@@ -188,11 +193,11 @@ def auto_detect_subtitle_area(frame_bytes, api_keys=None):
         if np.max(score) > 5:
             text_rows = np.where(score > np.percentile(score[score > 0], 50) if np.any(score > 0) else 10)[0]
             if len(text_rows) >= 2:
-                # Reduced padding for tighter blur
-                blur_y = float((bottom_start + text_rows[0]) / h * 100)
-                blur_h = float((text_rows[-1] - text_rows[0] + 2) / h * 100)
+                # Ultra-tight padding for fallback
+                blur_y = float((bottom_start + text_rows[0] + 1) / h * 100)
+                blur_h = float((text_rows[-1] - text_rows[0]) / h * 100)
                 blur_y = np.clip(blur_y, 50, 98)
-                blur_h = np.clip(blur_h, 1.5, 15)
+                blur_h = np.clip(blur_h, 1.0, 12)
                 os.remove(tf)
                 return blur_y, blur_h
         
@@ -227,9 +232,19 @@ with st.sidebar:
         st.error("🚨 RAM ပြည့်ခါနီးနေပါပြီ! App Crash ဖြစ်နိုင်ပါသည်။")
     
     if st.button("🧹 RAM ရှင်းထုတ်ရန်"):
+        # Explicitly preserve keys in session state before clearing cache
+        keys_to_keep = {f'key_{i}': st.session_state.get(f'key_{i}', "") for i in range(1, 6)}
+        keys_to_keep['valid_keys_info'] = st.session_state.get('valid_keys_info', {})
+        keys_to_keep['active_key'] = st.session_state.get('active_key', None)
+        
         st.cache_data.clear()
+        
+        # Restore preserved keys
+        for k, v in keys_to_keep.items():
+            st.session_state[k] = v
+            
         gc.collect()
-        st.success("RAM ရှင်းလင်းပြီးပါပြီ")
+        st.success("RAM ရှင်းလင်းပြီးပါပြီ (Keys များကို ထိန်းသိမ်းထားပါသည်)")
     
     if st.button("🗑️ Data အားလုံးဖျက်ရန် (Keys မပါ)"):
         preserve = [f'key_{i}' for i in range(1, 6)] + ['valid_keys_info', 'active_key', 'target_min', 'target_sec', 'blur_y_pos', 'blur_h_size', 'sub_y_pos', 'font_size', 'v_speed', 'v_pitch']
