@@ -218,25 +218,41 @@ def auto_detect_subtitle_area(frame_bytes, api_keys=None, grok_keys=None):
                             continue
                         try:
                             b64 = base64.b64encode(frame_bytes).decode()
-                            prompt = """Look at this video frame carefully.
+                            prompt = """You are a subtitle detection AI. Analyze this video frame VERY carefully.
 
-Find the EXACT location of the subtitle/caption text overlay area.
-This is the text that appears ON TOP of the video (not part of the video content itself).
+TASK: Find the EXACT pixel location of the subtitle/caption text that is overlaid ON TOP of the video.
+This is foreign language text (usually white or yellow text) that appears at the bottom of the video as a subtitle.
 
-Reply ONLY with two numbers in this exact format:
-Y_PERCENTAGE HEIGHT_PERCENTAGE
+STEP-BY-STEP ANALYSIS:
+1. First, scan the entire bottom 40% of the image for any text overlay.
+2. Identify ONLY the text that is clearly a subtitle/caption (NOT scene text, NOT credits, NOT watermark).
+3. The subtitle text is typically:
+   - White or light-colored text
+   - Located in the bottom-center area of the frame
+   - Often has a black/dark background behind it
+   - Usually spans 30-80% of the image width
 
-Where:
-- Y_PERCENTAGE = the top edge of the subtitle area as percentage from top (0-100)
-- HEIGHT_PERCENTAGE = the height of the subtitle area as percentage of total height (1-30)
+4. Calculate the exact position:
+   - Y_PERCENTAGE: The top edge of the text (not the background box) as percentage from the top of the image (0-100)
+   - HEIGHT_PERCENTAGE: The height of ONLY the text content (not the full background box) as percentage of total image height
 
-IMPORTANT: Provide the ABSOLUTE MINIMUM height that covers ONLY the text pixels. 
-Do NOT include any background space. The bounding box must be as thin as possible.
-Reply with the TIGHTEST coordinates.
+5. Be VERY PRECISE - measure in pixels mentally, then convert to percentage.
+   For a 1080p video, subtitles are typically at Y=80-92% with height of 2-5%.
 
-Example reply: 78 6
+Reply format: Y_PERCENTAGE HEIGHT_PERCENTAGE (two numbers separated by space)
 
-If no subtitle text is visible, reply: 85 10"""
+Examples:
+- Subtitle at pixel 864 in 1080p, height 30px: reply "80 2.8"
+- Subtitle at pixel 950 in 1080p, height 25px: reply "88 2.3"
+- No subtitle visible: reply "85 10"
+
+CRITICAL RULES:
+- DO NOT include the dark background box, ONLY the text pixels
+- The height should be AS SMALL as possible while still covering all text
+- Do NOT count any blank space above or below the text
+- If multiple lines of text, measure from top of first line to bottom of last line
+
+Reply ONLY with two numbers, nothing else."""
                             
                             cont = [{"role":"user","parts":[
                                 {"text": prompt},
