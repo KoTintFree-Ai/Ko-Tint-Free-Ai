@@ -481,10 +481,16 @@ if up:
         if up.name.lower().endswith((".mp4", ".mov", ".avi")):
             d = get_dur(tp)
             bi = tempfile.mktemp(suffix=".jpg")
-            subprocess.run(["ffmpeg", "-y", "-ss", str(d*0.2), "-i", tp, "-frames:v", "1", bi], capture_output=True)
-            if os.path.exists(bi):
+            result = subprocess.run(["ffmpeg", "-y", "-ss", str(d*0.2), "-i", tp, "-frames:v", "1", bi], capture_output=True)
+            if result.returncode != 0:
+                st.error(f"❌ ဗီဒီယို Frame ထုတ်ယူရာတွင် အမှားအယွင်းရှိပါသည်။ (FFmpeg Error: {result.stderr.decode()})")
+                st.session_state.base_frame = None # Ensure it's explicitly None on error
+            elif os.path.exists(bi):
                 with open(bi, "rb") as f: st.session_state.base_frame = f.read()
                 os.remove(bi)
+            else:
+                st.error("❌ ဗီဒီယို Frame ထုတ်ယူပြီးစီးသော်လည်း ဖိုင်ကို ရှာမတွေ့ပါ။")
+                st.session_state.base_frame = None
 
     if st.session_state.get("do_detect"):
         tp = os.path.join(tempfile.gettempdir(), f"input_{fid}." + up.name.split(".")[-1])
@@ -501,43 +507,48 @@ if up:
         except: pass
         st.session_state.do_detect = False; st.rerun()
 
-    if show_prev and st.session_state.base_frame:
-        st.subheader("🖼️ Layout Preview")
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as bf:
-            bf.write(st.session_state.base_frame); bp = bf.name
-        with Image.open(bp) as base_img:
-            w, h = base_img.size
-            sub_img, sw, sh = create_subtitle_image("မြန်မာစာ ယူနီကုတ်\nစမ်းသပ်ကြည့်ရှုခြင်း", st.session_state.font_size)
-            sub_p = tempfile.mktemp(suffix=".png")
-            sub_img.save(sub_p)
-        po = tempfile.mktemp(suffix=".jpg")
-        
-        # Calculate preview overlay position
-        x_p = (w - sw) // 2
-        y_p = int(h * (st.session_state.sub_y_pos / 100)) - (sh // 2)
-        
-        # Calculate absolute pixel coordinates for blur
-        by_px = int(h * (st.session_state.blur_y_pos / 100))
-        bh_px = int(h * (st.session_state.blur_h_size / 100))
-        
-        # Pass calculated pixel coordinates directly to get_filter
-        fc = get_filter(mirror_v, scale_v, blur_s, by_px, bh_px, burn_s, sub_p, st.session_state.font_size, x_p, y_p)
-        
-        filter_script_p = tempfile.mktemp(suffix=".txt")
-        filter_str = fc
-        with open(filter_script_p, "w", encoding="utf-8") as f: f.write(filter_str)
-        inputs = ["-i", bp, "-i", sub_p] if burn_s else ["-i", bp]
-        if len(filter_str) < 2000:
-            cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_str, "-map", "[v]", po]
+    if show_prev:
+        if not st.session_state.base_frame:
+            st.warning("⚠️ Layout Preview ကို မပြသနိုင်သေးပါ။ ဗီဒီယို Frame ထုတ်ယူရာတွင် ပြဿနာရှိနိုင်ပါသည်။")
         else:
-            cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex_script", filter_script_p, "-map", "[v]", po]
-        
-        subprocess.run(cmd, capture_output=True)
-        if os.path.exists(filter_script_p): os.remove(filter_script_p)
-        if os.path.exists(po):
-            # Read image into memory before deleting to ensure it shows correctly in Streamlit
-            with Image.open(po) as img_prev:
-                st.image(img_prev)
+            st.subheader("🖼️ Layout Preview")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as bf:
+                bf.write(st.session_state.base_frame); bp = bf.name
+            with Image.open(bp) as base_img:
+                w, h = base_img.size
+                sub_img, sw, sh = create_subtitle_image("မြန်မာစာ ယူနီကုတ်\nစမ်းသပ်ကြည့်ရှုခြင်း", st.session_state.font_size)
+                sub_p = tempfile.mktemp(suffix=".png")
+                sub_img.save(sub_p)
+            po = tempfile.mktemp(suffix=".jpg")
+            
+            # Calculate preview overlay position
+            x_p = (w - sw) // 2
+            y_p = int(h * (st.session_state.sub_y_pos / 100)) - (sh // 2)
+            
+            # Calculate absolute pixel coordinates for blur
+            by_px = int(h * (st.session_state.blur_y_pos / 100))
+            bh_px = int(h * (st.session_state.blur_h_size / 100))
+            
+            # Pass calculated pixel coordinates directly to get_filter
+            fc = get_filter(mirror_v, scale_v, blur_s, by_px, bh_px, burn_s, sub_p, st.session_state.font_size, x_p, y_p)
+            
+            filter_script_p = tempfile.mktemp(suffix=".txt")
+            filter_str = fc
+            with open(filter_script_p, "w", encoding="utf-8") as f: f.write(filter_str)
+            inputs = ["-i", bp, "-i", sub_p] if burn_s else ["-i", bp]
+            if len(filter_str) < 2000:
+                cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_str, "-map", "[v]", po]
+            else:
+                cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex_script", filter_script_p, "-map", "[v]", po]
+            
+            preview_result = subprocess.run(cmd, capture_output=True)
+            if preview_result.returncode != 0:
+                st.error(f"❌ Layout Preview ပုံဖော်ရာတွင် အမှားအယွင်းရှိပါသည်။ (FFmpeg Error: {preview_result.stderr.decode()})")
+            if os.path.exists(filter_script_p): os.remove(filter_script_p)
+            if os.path.exists(po):
+                # Read image into memory before deleting to ensure it shows correctly in Streamlit
+                with Image.open(po) as img_prev:
+                    st.image(img_prev)
             os.remove(po)
         if os.path.exists(bp): os.remove(bp)
         if os.path.exists(sub_p): os.remove(sub_p)
