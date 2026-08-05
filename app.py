@@ -455,11 +455,16 @@ def get_filter(mir, scl, blr, by_px, bh_px, brn, sp, fs, sx, sy):
             fc += ";[main]null[v]"
         return fc
     else:
+        # Calculate a safe blur radius. FFmpeg boxblur radius must be <= min(w,h)/2 for luma
+        # and even smaller for chroma planes (usually min(w,h)/4 for yuv420p).
+        # We use a safe radius that works even for small blur areas.
+        safe_r = min(15, max(1, bh_px // 4))
+        
         # Important: Since we scaled/cropped in base_str, we must use pixel coordinates
         # because 'H' and 'ih' inside the filter now refer to the new (cropped) dimensions.
         fc = f"[0:v]{base_str}[preblur];"
         fc += f"[preblur]split[main][to_blur];"
-        fc += f"[to_blur]crop=iw:{bh_px}:0:{by_px},boxblur=15[blurred];"
+        fc += f"[to_blur]crop=iw:{bh_px}:0:{by_px},boxblur={safe_r}[blurred];"
         fc += f"[main][blurred]overlay=0:{by_px}[postblur]"
         if brn and sp and os.path.exists(sp):
             fc += f";[postblur][1:v]overlay={sx}:{sy}[v]"
@@ -549,9 +554,9 @@ if up:
                 # Read image into memory before deleting to ensure it shows correctly in Streamlit
                 with Image.open(po) as img_prev:
                     st.image(img_prev)
-            os.remove(po)
-        if os.path.exists(bp): os.remove(bp)
-        if os.path.exists(sub_p): os.remove(sub_p)
+                os.remove(po)
+            if os.path.exists(bp): os.remove(bp)
+            if os.path.exists(sub_p): os.remove(sub_p)
 
     if not api_keys: st.warning("⚠️ Sidebar တွင် Gemini API Key ထည့်ပေးပါ")
     elif st.button("🚀 စတင်လုပ်ဆောင်ရန်"):
