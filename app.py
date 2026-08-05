@@ -705,12 +705,23 @@ FORMATTING RULES:
                     # We use the actual duration of the generated audio as the master duration.
                     final_audio_dur = get_dur(ao)
                     
-                    # If video is shorter than audio, loop it INFINITELY and use -shortest
-                    if video_duration < final_audio_dur - 0.5:
-                        cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
-                    else:
-                        # If video is longer, cut exactly at the end of the audio
-                        cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-t", str(final_audio_dur), fv]
+                    # Calculate video speed adjustment factor
+                    speed_factor = video_duration / final_audio_dur if final_audio_dur > 0 else 1.0
+                    # Ensure speed_factor is within reasonable limits for setpts to avoid extreme results
+                    speed_factor = max(0.1, min(10.0, speed_factor)) # Limit between 0.1x and 10x speed
+
+                    # Add setpts filter to adjust video speed
+                    # The setpts filter needs to be applied to the video stream before any other complex filters.
+                    # We'll prepend it to the full_filter string.
+                    setpts_filter = f"setpts={speed_factor}*PTS"
+                    full_filter_with_speed = f"[0:v]{setpts_filter},{full_filter.split("[0:v]")[1]}" if "[0:v]" in full_filter else f"{setpts_filter},{full_filter}"
+
+                    filter_script = tempfile.mktemp(suffix=".txt")
+                    with open(filter_script, "w", encoding="utf-8") as f:
+                        f.write(full_filter_with_speed)
+
+                    # Always use -t to ensure the video is exactly the length of the audio
+                    cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-t", str(final_audio_dur), fv]
                     res = subprocess.run(cmd, capture_output=True, text=True)
 
                     if res.returncode != 0:
