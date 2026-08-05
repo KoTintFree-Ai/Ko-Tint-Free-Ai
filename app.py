@@ -63,28 +63,47 @@ def init_state():
 def auto_fill_callback():
     if 'bulk_key_input' in st.session_state and st.session_state.bulk_key_input:
         text = st.session_state.bulk_key_input
-        # Regex to find Gemini keys
-        gemini_found = re.findall(r'(AIza[0-9A-Za-z-_]{35}|AQ\.[0-9A-Za-z-_]{30,})', text)
-        # Regex to find Grok keys
-        grok_found = re.findall(r'(gsk_[0-9A-Za-z]{40,})', text)
+        # Enhanced extraction: split by any whitespace, common separators, and Burmese punctuation
+        parts = re.split(r'[\s,၊။၊၊\t\n\r]+', text)
+        
+        gemini_found = []
+        grok_found = []
+        
+        for p in parts:
+            # Clean common wrappers and punctuation
+            clean_p = p.strip().strip('။၊.()[]{}<>:;*')
+            if not clean_p: continue
+            
+            # Match Gemini Keys (AIza... or AQ.Ab8RN6...)
+            if (clean_p.startswith('AIza') and len(clean_p) >= 35) or (clean_p.startswith('AQ.') and len(clean_p) >= 30):
+                if clean_p not in gemini_found: gemini_found.append(clean_p)
+            # Match Grok Keys (gsk_...)
+            elif clean_p.startswith('gsk_') and len(clean_p) >= 30:
+                if clean_p not in grok_found: grok_found.append(clean_p)
         
         msg = []
         if gemini_found:
-            for i, k in enumerate(gemini_found[:5]):
-                st.session_state[f'key_{i+1}'] = k
+            # Fill Gemini slots
+            for i in range(5):
+                slot = f'key_{i+1}'
+                if i < len(gemini_found):
+                    st.session_state[slot] = gemini_found[i]
             msg.append(f"✅ Gemini Keys {len(gemini_found[:5])} ခု")
         
         if grok_found:
-            for i, k in enumerate(grok_found[:5]):
-                st.session_state[f'grok_key_{i+1}'] = k
+            # Fill Grok slots
+            for i in range(5):
+                slot = f'grok_key_{i+1}'
+                if i < len(grok_found):
+                    st.session_state[slot] = grok_found[i]
             msg.append(f"✅ Grok Keys {len(grok_found[:5])} ခု")
         
         if msg:
             st.session_state.bulk_msg = " ဖြည့်ပြီးပါပြီ: " + ", ".join(msg)
         else:
-            st.session_state.bulk_msg = "⚠️ API Key ရှာမတွေ့ပါ။"
+            st.session_state.bulk_msg = "⚠️ စာသားထဲတွင် API Key တစ်ခုမှ ရှာမတွေ့ပါ။ (AIza..., AQ... သို့မဟုတ် gsk_... ဖြင့် စရပါမည်)"
         
-        # Clear the input box safely via session state
+        # Clear the input box safely
         st.session_state.bulk_key_input = ""
 
 init_state()
