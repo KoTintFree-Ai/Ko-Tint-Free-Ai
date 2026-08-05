@@ -179,9 +179,18 @@ def wrap_text(text, max_len=25):
     return "\n".join(lines[:3])
 
 def get_plain_text(srt_text):
-    # Remove SRT indexes and timestamps
-    text = re.sub(r'\d+\n\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}\n', '', srt_text)
-    # Remove any extra formatting or empty lines
+    """Aggressively clean SRT to get ONLY the narration text."""
+    # 1. Remove markdown code blocks if any
+    text = re.sub(r'```srt?', '', srt_text, flags=re.IGNORECASE)
+    text = re.sub(r'```', '', text).strip()
+    # 2. Remove SRT timestamps (00:00:00,000 --> 00:00:00,000)
+    text = re.sub(r'\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}', '', text)
+    # 3. Remove standalone line numbers (SRT indexes)
+    text = re.sub(r'^\s*\d+\s*$', '', text, flags=re.MULTILINE)
+    # 4. Remove brackets/parentheses content often used for timestamps in AI output
+    text = re.sub(r'\[\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\]', '', text)
+    text = re.sub(r'\(\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\)', '', text)
+    # 5. Clean up extra newlines and spaces
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     return ' '.join(lines)
 
@@ -193,31 +202,13 @@ def count_myanmar_words(text):
     return len(clusters)
 
 def parse_srt_text(text):
-    text = re.sub(r'```srt?', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'```', '', text).strip()
-    text = re.sub(r'\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}', '', text)
-    text = re.sub(r'^\s*\d+\s*$', '', text, flags=re.MULTILINE)
-    text = re.sub(r'\[\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\]', '', text)
-    text = re.sub(r'\(\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\)', '', text)
-
-    lines = text.split('\n')
-    clean_lines = []
-    for line in lines:
-        line = line.strip()
-        if not line: continue
-        if re.match(r'^\d+$', line): continue
-        if re.match(r'^\(?\d+[\.\)]\s*$', line): continue
-        if re.match(r'^\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}$', line): continue
-        if re.match(r'^\[\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\]$', line): continue
-        if re.match(r'^\(\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\)$', line): continue
-        if re.match(r'(?i)^(here is|narration|recap|script|translation):', line): continue
-        clean_lines.append(line)
-
-    full_content = ' '.join(clean_lines)
-    full_content = re.sub(r'\s+', ' ', full_content).strip()
-
+    """Clean and split SRT text into segments for TTS, ensuring NO numbers are included."""
+    # First, get the cleaned plain text to ensure no SRT metadata is left
+    clean_full_text = get_plain_text(text)
+    
+    # Split into segments based on Myanmar punctuation for better TTS flow
     segments = []
-    parts = re.split(r'([။၊.!?;])', full_content)
+    parts = re.split(r'([။၊.!?;])', clean_full_text)
     for i in range(0, len(parts)-1, 2):
         seg = (parts[i] + parts[i+1]).strip()
         if seg: segments.append(seg)
@@ -229,8 +220,10 @@ def parse_srt_text(text):
 async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     rate = f"+{int((spd-55)*2)}%" if spd>=55 else f"{int((spd-55)*2)}%"
     pitch = f"+{int((ptc-50)*2)}Hz" if ptc>=50 else f"{int((ptc-50)*2)}Hz"
+    
+    # Use the robust parser to get clean segments for TTS
     segments = parse_srt_text(text)
-    if not segments: segments = [text]
+    if not segments: segments = [get_plain_text(text)]
 
     temp_files = []
     cur_t = 0.0
@@ -239,6 +232,10 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     for idx, txt in enumerate(segments):
         clean_txt = txt.strip()
         if not clean_txt: continue
+        
+        # Double check to remove any accidental numbers at the start of segment
+        clean_txt = re.sub(r'^\d+[\.\)]\s*', '', clean_txt)
+        
         p = tempfile.mktemp(suffix=".mp3")
         try:
             communicate = edge_tts.Communicate(clean_txt, vid, rate=rate, pitch=pitch)
@@ -505,8 +502,6 @@ FORMATTING RULES:
                                             if srt_res:
                                                 st.session_state.active_key = k
                                                 status.update(label="✅ Gemini ဖြင့် ဘာသာပြန်ခြင်း ပြီးမြောက်ပါပြီ!", state="complete")
-                                                with st.expander("📝 Narration Preview (Gemini)", expanded=True):
-                                                    st.text_area("Narration Content", srt_res, height=200)
                                                 break
                                     else:
                                         try:
@@ -531,13 +526,16 @@ FORMATTING RULES:
                 ao = os.path.join(tempfile.gettempdir(), ao_name)
 
                 with st.status("🔊 အသံဖိုင်များကို တစ်ခုချင်းစီ ထုတ်လုပ်နေပါသည်...", expanded=False) as status:
+                    # First generate the full plain text and word count from the raw AI response
+                    st.session_state.plain_text = get_plain_text(srt_res)
+                    st.session_state.word_count = count_myanmar_words(st.session_state.plain_text)
+                    
+                    # Then generate audio and SRT
                     st.session_state.srt_data, audio_final_dur = asyncio.run(
                         gen_audio_srt(srt_res, ao, v_id, st.session_state.v_speed, st.session_state.v_pitch, target_sec if fit_dur else 0)
                     )
-                    # Extract plain text and word count
-                    st.session_state.plain_text = get_plain_text(st.session_state.srt_data)
-                    st.session_state.word_count = count_myanmar_words(st.session_state.plain_text)
                     status.update(label="✅ အသံဖိုင်အားလုံး ပေါင်းစပ်ပြီးပါပြီ!", state="complete")
+                
                 st.session_state.audio_path = ao
                 prg.progress(100)
                 stt.text("✅ အောင်မြင်စွာ ပြီးဆုံးပါပြီ!")
@@ -570,7 +568,7 @@ if st.session_state.processing_done:
 
     if st.session_state.plain_text:
         with st.expander("📝 စာသားသက်သက် ကြည့်ရန် (Plain Text)", expanded=True):
-            st.text_area("Plain Text Content", st.session_state.plain_text, height=250)
+            st.text_area("Plain Text Content", st.session_state.plain_text, height=300)
             st.download_button("📥 စာသားသက်သက်ကို သိမ်းဆည်းရန် (TXT)", st.session_state.plain_text, "recap_text.txt", "text/plain")
 
     if st.button("🔄 ပြန်လုပ်ရန်"):
