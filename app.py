@@ -42,22 +42,50 @@ st.markdown("""
 
 # Session State Initialization
 def init_state():
-    keys = ['myanmar_text', 'audio_path', 'srt_data', 'video_path', 'base_frame', 'last_uploaded', 'processing_done', 'valid_keys_info', 'active_key', 'valid_grok_info', 'active_grok_key']
+    keys = ['myanmar_text', 'audio_path', 'srt_data', 'video_path', 'base_frame', 'last_uploaded', 'processing_done', 'valid_keys_info', 'active_key', 'valid_grok_info', 'active_grok_key', 'bulk_msg']
     for k in keys:
         if k not in st.session_state: st.session_state[k] = None
     for i in range(1, 6):
         if f'key_{i}' not in st.session_state: st.session_state[f'key_{i}'] = ""
         if f'grok_key_{i}' not in st.session_state: st.session_state[f'grok_key_{i}'] = ""
     if st.session_state.processing_done is None: st.session_state.processing_done = False
+    if st.session_state.bulk_msg is None: st.session_state.bulk_msg = ""
     if st.session_state.valid_keys_info is None: st.session_state.valid_keys_info = {}
     if st.session_state.valid_grok_info is None: st.session_state.valid_grok_info = {}
     if 'do_test_keys' not in st.session_state: st.session_state.do_test_keys = False
     if 'blur_y_pos' not in st.session_state: st.session_state.blur_y_pos = 85
-    if 'blur_h_size' not in st.session_state: st.session_state.blur_h_size = 10
+    if 'blur_h_size' not in st.session_state: st.session_state.blur_h_size = 6
     if 'sub_y_pos' not in st.session_state: st.session_state.sub_y_pos = 85
     if 'font_size' not in st.session_state: st.session_state.font_size = 22
     if 'target_min' not in st.session_state: st.session_state.target_min = 2
     if 'target_sec' not in st.session_state: st.session_state.target_sec = 30
+
+def auto_fill_callback():
+    if 'bulk_key_input' in st.session_state and st.session_state.bulk_key_input:
+        text = st.session_state.bulk_key_input
+        # Regex to find Gemini keys
+        gemini_found = re.findall(r'(AIza[0-9A-Za-z-_]{35}|AQ\.[0-9A-Za-z-_]{30,})', text)
+        # Regex to find Grok keys
+        grok_found = re.findall(r'(gsk_[0-9A-Za-z]{40,})', text)
+        
+        msg = []
+        if gemini_found:
+            for i, k in enumerate(gemini_found[:5]):
+                st.session_state[f'key_{i+1}'] = k
+            msg.append(f"✅ Gemini Keys {len(gemini_found[:5])} ခု")
+        
+        if grok_found:
+            for i, k in enumerate(grok_found[:5]):
+                st.session_state[f'grok_key_{i+1}'] = k
+            msg.append(f"✅ Grok Keys {len(grok_found[:5])} ခု")
+        
+        if msg:
+            st.session_state.bulk_msg = " ဖြည့်ပြီးပါပြီ: " + ", ".join(msg)
+        else:
+            st.session_state.bulk_msg = "⚠️ API Key ရှာမတွေ့ပါ။"
+        
+        # Clear the input box safely via session state
+        st.session_state.bulk_key_input = ""
 
 init_state()
 
@@ -308,45 +336,27 @@ with st.sidebar:
     
     st.markdown("---")
     st.subheader("🪄 Smart Auto-Fill Keys")
-    bulk_text = st.text_area("Key များအားလုံးကို ဤနေရာတွင် Paste ချပါ", placeholder="ဥပမာ- ၁။ AIza... ၂။ gsk_... စသည်ဖြင့် အပိုစာသားများပါလျှင်လည်း ရပါသည်", height=100, key="bulk_key_input")
-    if st.button("🪄 Auto-Fill (အလိုအလျောက် ဖြည့်ရန်)"):
-        if st.session_state.bulk_key_input:
-            text = st.session_state.bulk_key_input
-            # Regex to find Gemini keys (AIza... or AQ.Ab8RN6...)
-            gemini_found = re.findall(r'(AIza[0-9A-Za-z-_]{35}|AQ\.[0-9A-Za-z-_]{30,})', text)
-            # Regex to find Grok keys (gsk_...)
-            grok_found = re.findall(r'(gsk_[0-9A-Za-z]{40,})', text)
-            
-            if gemini_found:
-                for i, k in enumerate(gemini_found[:5]):
-                    st.session_state[f'key_{i+1}'] = k
-                st.success(f"✅ Gemini Keys {len(gemini_found[:5])} ခု ဖြည့်ပြီးပါပြီ")
-            
-            if grok_found:
-                for i, k in enumerate(grok_found[:5]):
-                    st.session_state[f'grok_key_{i+1}'] = k
-                st.success(f"✅ Grok Keys {len(grok_found[:5])} ခု ဖြည့်ပြီးပါပြီ")
-            
-            if not gemini_found and not grok_found:
-                st.warning("⚠️ စာသားထဲတွင် API Key ရှာမတွေ့ပါ။")
-            else:
-                # Clear the input box after successful extraction
-                st.session_state.bulk_key_input = ""
-                st.rerun()
+    st.text_area("Key များအားလုံးကို ဤနေရာတွင် Paste ချပါ", placeholder="ဥပမာ- ၁။ AIza... ၂။ gsk_... စသည်ဖြင့် အပိုစာသားများပါလျှင်လည်း ရပါသည်", height=100, key="bulk_key_input")
+    st.button("🪄 Auto-Fill (အလိုအလျောက် ဖြည့်ရန်)", on_click=auto_fill_callback)
+    
+    if st.session_state.bulk_msg:
+        if "✅" in st.session_state.bulk_msg: st.success(st.session_state.bulk_msg)
+        else: st.warning(st.session_state.bulk_msg)
+        st.session_state.bulk_msg = ""
 
     st.markdown("---")
     st.subheader("🔑 Gemini API Keys (၅ ခုအထိ)")
     if st.session_state.active_key:
         st.success("🟢 API Key အလုပ်လုပ်နေပါသည်")
     
-    # Collapsible API Keys section
-    k1 = st.text_input("API Key 1", type="password", key="key_1")
+    # API Key inputs directly tied to session state
+    st.text_input("API Key 1", type="password", key="key_1")
     show_more_keys = st.toggle("🔽 ကျန် API Keys များ ဖော်ပြရန်", value=False, key="show_more_keys_toggle")
     if show_more_keys:
-        k2 = st.text_input("API Key 2", type="password", key="key_2")
-        k3 = st.text_input("API Key 3", type="password", key="key_3")
-        k4 = st.text_input("API Key 4", type="password", key="key_4")
-        k5 = st.text_input("API Key 5", type="password", key="key_5")
+        st.text_input("API Key 2", type="password", key="key_2")
+        st.text_input("API Key 3", type="password", key="key_3")
+        st.text_input("API Key 4", type="password", key="key_4")
+        st.text_input("API Key 5", type="password", key="key_5")
     
     api_keys = [st.session_state.get(f'key_{i}', "") for i in range(1, 6) if st.session_state.get(f'key_{i}', "")]
     
@@ -355,13 +365,13 @@ with st.sidebar:
     if st.session_state.active_grok_key:
         st.success("🟢 Grok API အလုပ်လုပ်နေပါသည်")
     
-    gk1 = st.text_input("Grok Key 1", type="password", key="grok_key_1")
+    st.text_input("Grok Key 1", type="password", key="grok_key_1")
     show_more_grok = st.toggle("🔽 ကျန် Grok Keys များ ဖော်ပြရန်", value=False, key="show_more_grok_toggle")
     if show_more_grok:
-        gk2 = st.text_input("Grok Key 2", type="password", key="grok_key_2")
-        gk3 = st.text_input("Grok Key 3", type="password", key="grok_key_3")
-        gk4 = st.text_input("Grok Key 4", type="password", key="grok_key_4")
-        gk5 = st.text_input("Grok Key 5", type="password", key="grok_key_5")
+        st.text_input("Grok Key 2", type="password", key="grok_key_2")
+        st.text_input("Grok Key 3", type="password", key="grok_key_3")
+        st.text_input("Grok Key 4", type="password", key="grok_key_4")
+        st.text_input("Grok Key 5", type="password", key="grok_key_5")
     
     grok_keys = [st.session_state.get(f'grok_key_{i}', "") for i in range(1, 6) if st.session_state.get(f'grok_key_{i}', "")]
     
