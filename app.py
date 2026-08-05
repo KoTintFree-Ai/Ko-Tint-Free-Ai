@@ -48,7 +48,6 @@ def init_state():
     if 'v_pitch' not in st.session_state: st.session_state.v_pitch = 50
     if 'target_min' not in st.session_state: st.session_state.target_min = 2
     if 'target_sec' not in st.session_state: st.session_state.target_sec = 30
-    if 'bulk_keys' not in st.session_state: st.session_state.bulk_keys = ""
 
 init_state()
 
@@ -84,11 +83,8 @@ with st.sidebar:
     
     # RAM Monitor
     st.subheader("🖥️ RAM စောင့်ကြည့်ရန်")
-    def get_ram_usage():
-        process = psutil.Process(os.getpid())
-        return process.memory_info().rss / (1024 * 1024)
-
-    ram_used = get_ram_usage()
+    process = psutil.Process(os.getpid())
+    ram_used = process.memory_info().rss / (1024 * 1024)
     ram_limit = 1024 
     ram_pct = min(ram_used / ram_limit, 1.0)
     col_r1, col_r2 = st.columns([2, 1])
@@ -102,21 +98,21 @@ with st.sidebar:
     
     st.markdown("---")
     st.subheader("🔑 Gemini API Keys")
-    
-    # Auto-parsing callback
-    def parse_keys():
-        raw = st.session_state.bulk_keys
-        if raw:
-            found = re.findall(r'AIzaSy[a-zA-Z0-9_-]+', raw)
-            if found:
-                for i, k in enumerate(found[:5]):
-                    st.session_state[f'key_{i+1}'] = k
-                st.session_state.bulk_keys = "" # Clear the input area
-                st.toast(f"✅ Keys {len(found[:5])} ခုကို ခွဲထုတ်ပြီးပါပြီ။")
 
-    st.text_area("Key များအားလုံး စုပြုံထည့်ရန် (Bulk Paste)", key="bulk_keys", on_change=parse_keys, height=100, help="Paste keys here and they will be automatically extracted.")
+    # AUTO PARSING LOGIC FOR KEY 1
+    def on_key_1_change():
+        val = st.session_state.key_1
+        # Find all Gemini keys (AIzaSy followed by 33 characters)
+        found = re.findall(r'AIzaSy[a-zA-Z0-9_-]{33}', val)
+        if len(found) > 1:
+            for i, k in enumerate(found[:5]):
+                st.session_state[f'key_{i+1}'] = k
+            st.toast(f"✅ Keys {len(found[:5])} ခုကို အလိုအလျောက် ခွဲထုတ်ပြီးပါပြီ။")
+        elif len(found) == 1:
+            st.session_state.key_1 = found[0]
+
+    st.text_input("API Key 1 (Paste all here)", type="password", key="key_1", on_change=on_key_1_change, help="Key အားလုံးကို ဒီနေရာမှာ စုပြုံထည့်လိုက်ရင် အလိုအလျောက် ခွဲထုတ်ပေးပါမယ်။")
     
-    st.text_input("API Key 1", type="password", key="key_1")
     show_more = st.toggle("🔽 ကျန် API Keys များ ဖော်ပြရန်", value=False)
     if show_more:
         st.text_input("API Key 2", type="password", key="key_2")
@@ -234,8 +230,6 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
             if "-->" in line:
                 try:
                     s, e = line.split(" --> ")
-                    s = re.sub(r'[\[\]\(\)]', '', s).strip()
-                    e = re.sub(r'[\[\]\(\)]', '', e).strip()
                     s_s = sum(float(x)*60**i for i,x in enumerate(reversed(s.replace(",",".").split(":")))) / factor
                     e_s = sum(float(x)*60**i for i,x in enumerate(reversed(e.replace(",",".").split(":")))) / factor
                     final_srt.append(f"{fmt_srt(s_s)} --> {fmt_srt(e_s)}\n")
