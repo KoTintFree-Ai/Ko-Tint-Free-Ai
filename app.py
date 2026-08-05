@@ -18,6 +18,21 @@ import gc
 API_VERSIONS = ["v1beta", "v1"]
 DEFAULT_MODELS = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", "gemini-pro"]
 
+# Advanced Networking: Force IPv4 for better stability on Streamlit Cloud
+import socket
+import urllib3
+orig_getaddrinfo = socket.getaddrinfo
+def filtered_getaddrinfo(*args, **kwargs):
+    res = orig_getaddrinfo(*args, **kwargs)
+    return [r for r in res if r[0] == socket.AF_INET]
+socket.getaddrinfo = filtered_getaddrinfo
+
+# Standard Headers to mimic a browser
+HTTP_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+}
+
 # Get the directory where this script is located (for font file path)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FONT_PATH = os.path.join(SCRIPT_DIR, "Pyidaungsu.ttf")
@@ -358,23 +373,26 @@ with st.sidebar:
     if st.session_state.active_key:
         st.success("🟢 API Key အလုပ်လုပ်နေပါသည်")
     
-    # API Key inputs with absolute persistence logic
-    # We use a robust sync function to ensure values are NEVER lost during toggle
-    def sync_all_keys():
+    # API Key inputs with ultra-reliable persistence logic
+    # Sync function that works both on change and as a fallback
+    def sync_keys_to_state():
         for i in range(1, 6):
-            if f"w_key_{i}" in st.session_state:
-                st.session_state[f"key_{i}"] = st.session_state[f"w_key_{i}"]
-            if f"w_grok_key_{i}" in st.session_state:
-                st.session_state[f"grok_key_{i}"] = st.session_state[f"w_grok_key_{i}"]
+            wk = f"w_key_{i}"
+            wgk = f"w_grok_key_{i}"
+            if wk in st.session_state and st.session_state[wk]:
+                st.session_state[f"key_{i}"] = st.session_state[wk]
+            if wgk in st.session_state and st.session_state[wgk]:
+                st.session_state[f"grok_key_{i}"] = st.session_state[wgk]
 
     # Gemini Section
-    st.text_input("API Key 1", type="password", value=st.session_state.key_1, key="w_key_1", on_change=sync_all_keys)
+    st.text_input("API Key 1", type="password", value=st.session_state.key_1, key="w_key_1", on_change=sync_keys_to_state)
     show_more_keys = st.toggle("🔽 ကျန် API Keys များ ဖော်ပြရန်", value=False, key="show_more_keys_toggle")
     if show_more_keys:
         for i in range(2, 6):
-            st.text_input(f"API Key {i}", type="password", value=st.session_state.get(f"key_{i}", ""), key=f"w_key_{i}", on_change=sync_all_keys)
+            st.text_input(f"API Key {i}", type="password", value=st.session_state.get(f"key_{i}", ""), key=f"w_key_{i}", on_change=sync_keys_to_state)
     
-    sync_all_keys()
+    # Force sync and collect
+    sync_keys_to_state()
     api_keys = [st.session_state.get(f'key_{i}', "").strip() for i in range(1, 6) if st.session_state.get(f'key_{i}', "").strip()]
     
     st.markdown("---")
@@ -383,13 +401,13 @@ with st.sidebar:
         st.success("🟢 Grok API အလုပ်လုပ်နေပါသည်")
     
     # Grok Section
-    st.text_input("Grok Key 1", type="password", value=st.session_state.grok_key_1, key="w_grok_key_1", on_change=sync_all_keys)
+    st.text_input("Grok Key 1", type="password", value=st.session_state.grok_key_1, key="w_grok_key_1", on_change=sync_keys_to_state)
     show_more_grok = st.toggle("🔽 ကျန် Grok Keys များ ဖော်ပြရန်", value=False, key="show_more_grok_toggle")
     if show_more_grok:
         for i in range(2, 6):
-            st.text_input(f"Grok Key {i}", type="password", value=st.session_state.get(f"grok_key_{i}", ""), key=f"w_grok_key_{i}", on_change=sync_all_keys)
+            st.text_input(f"Grok Key {i}", type="password", value=st.session_state.get(f"grok_key_{i}", ""), key=f"w_grok_key_{i}", on_change=sync_keys_to_state)
     
-    sync_all_keys()
+    sync_keys_to_state()
     grok_keys = [st.session_state.get(f'grok_key_{i}', "").strip() for i in range(1, 6) if st.session_state.get(f'grok_key_{i}', "").strip()]
     
     if st.button("🔌 Keys အားလုံး စမ်းသပ်ရန်"):
@@ -408,7 +426,7 @@ with st.sidebar:
                     for ver in API_VERSIONS:
                         try:
                             url = f"https://generativelanguage.googleapis.com/{ver}/models?key={k}"
-                            r = requests.get(url, timeout=20)
+                            r = requests.get(url, headers=HTTP_HEADERS, timeout=25)
                             if r.status_code == 200:
                                 data = r.json()
                                 models = [m['name'].split('/')[-1] for m in data.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
@@ -425,8 +443,8 @@ with st.sidebar:
                                 break
                             else:
                                 error_detail = f"အမှားရှိနေပါသည်။ (Status: {r.status_code})"
-                        except requests.exceptions.ConnectionError:
-                            error_detail = "ဆက်သွယ်မှု မအောင်မြင်ပါ။ (အင်တာနက် သို့မဟုတ် VPN စစ်ဆေးပါ)"
+                        except requests.exceptions.ConnectionError as ce:
+                            error_detail = f"ဆက်သွယ်မှု မအောင်မြင်ပါ။ (Connection Error: {str(ce)[:40]})"
                         except Exception as e:
                             error_detail = f"ဆက်သွယ်မှု မအောင်မြင်ပါ။ ({str(e)[:40]})"
                     if not success:
@@ -443,8 +461,8 @@ with st.sidebar:
                     for attempt in range(2):
                         try:
                             url = "https://api.xai.ai/v1/models"
-                            headers = {"Authorization": f"Bearer {gk}"}
-                            r = requests.get(url, headers=headers, timeout=25)
+                            headers = {**HTTP_HEADERS, "Authorization": f"Bearer {gk}"}
+                            r = requests.get(url, headers=headers, timeout=30)
                             if r.status_code == 200:
                                 data = r.json()
                                 models = [m['id'] for m in data.get('data', [])]
@@ -462,8 +480,8 @@ with st.sidebar:
                             else:
                                 error_detail = f"အမှားရှိနေပါသည်။ (Status: {r.status_code})"
                                 break
-                        except requests.exceptions.ConnectionError:
-                            error_detail = "ဆက်သွယ်မှု မအောင်မြင်ပါ။ (VPN အသုံးပြုရန် လိုအပ်နိုင်ပါသည်)"
+                        except requests.exceptions.ConnectionError as ce:
+                            error_detail = f"ဆက်သွယ်မှု မအောင်မြင်ပါ။ (Network Error: {str(ce)[:40]})"
                             time.sleep(1)
                         except requests.exceptions.Timeout:
                             error_detail = "ဆက်သွယ်မှု အချိန်ကျော်လွန်သွားပါသည်။ (Timeout)"
