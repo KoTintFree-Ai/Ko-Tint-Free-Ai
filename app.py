@@ -195,23 +195,28 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("🤖 မူရင်းစာတန်းထိုး ဝါးရန် (Blur)")
     
-    # Auto Detect vs Manual toggle
+    # Auto Detect toggle
     use_auto = st.toggle("🤖 AI အလိုအလျောက် ရှာဖွေရန်", value=True, key="blur_auto_toggle", help="AI က ဗီဒီယိုတွင် မူရင်းစာတန်းထိုးပါသော နေရာကို အလိုအလျောက် ရှာဖွေပြီး ဝါးပေးပါမည်")
-    use_manual = st.toggle("✏️ Manual ညှိရန်", value=False, key="blur_manual_toggle")
     
     blur_s = st.checkbox("မူရင်းစာတန်းထိုး ဝါးရန် (Blur Enable)", value=True, key="blur_enable_check")
     
     if blur_s:
-        if use_auto and not use_manual:
-            st.info("🤖 **AI Auto Detect Mode**\nဗီဒီယိုတင်ပြီး \"စတင်လုပ်ဆောင်ရန်\" နှိပ်ပါက AI က မူရင်းစာတန်းထိုး နေရာကို အလိုအလျောက် ရှာဖွေပြီး ဝါးပေးပါမည်။")
-        elif use_manual:
-            st.info("✏️ **Manual Mode** — အောက်ပါ slider များဖြင့် ညှိပါ")
-            b_y = plus_minus_slider("ဝါးမည့်နေရာ (Y %)", "blur_y_pos", 0, 100, 1)
-            b_h = plus_minus_slider("ဝါးမည့်အကျယ် (H %)", "blur_h_size", 1, 30, 1)
+        if use_auto:
+            # AUTO MODE — lock manual toggles and sliders
+            st.info("🤖 **AI Auto Detect Mode**\nဗီဒီယိုတင်ပြီး \"စတင်လုပ်ဆောင်ရန်\" နှိပ်ပါက AI က မူရင်းစာတန်းထိုး နေရာကို အလိုအလျောက် ရှာဖွေပြီး ဝါးပေးပါမည်။\n\n🔒 Manual ညှိရန် လိုချင်ပါက AI Auto Detect ကို OFF ဖွင့်ပါ။")
+            # Force manual off
+            use_manual = False
         else:
-            st.info("⚙️ **Default Mode** — Y: 85%, H: 10%")
-            st.session_state.blur_y_pos = 85
-            st.session_state.blur_h_size = 10
+            # AUTO OFF — show manual toggle and sliders
+            use_manual = st.toggle("✏️ Manual ညှိရန်", value=False, key="blur_manual_toggle")
+            if use_manual:
+                st.info("✏️ **Manual Mode** — အောက်ပါ slider များဖြင့် ညှိပါ")
+                b_y = plus_minus_slider("ဝါးမည့်နေရာ (Y %)", "blur_y_pos", 0, 100, 1)
+                b_h = plus_minus_slider("ဝါးမည့်အကျယ် (H %)", "blur_h_size", 1, 30, 1)
+            else:
+                st.info("⚙️ **Default Mode** — Y: 85%, H: 10%")
+                st.session_state.blur_y_pos = 85
+                st.session_state.blur_h_size = 10
     else:
         st.session_state.blur_y_pos = 85
         st.session_state.blur_h_size = 10
@@ -222,14 +227,22 @@ with st.sidebar:
     burn_s = st.checkbox("မြန်မာစာတန်းထိုး ထည့်ရန်", value=True, key="burn_enable_check")
     
     if burn_s:
-        burn_manual = st.toggle("✏️ Manual ညှိရန်", value=False, key="subtitle_manual_toggle")
-        if burn_manual:
-            f_s = plus_minus_slider("စာလုံးအရွယ်အစား", "font_size", 5, 100, 1)
-            s_y = plus_minus_slider("စာတန်းထိုးနေရာ (Y %)", "sub_y_pos", 0, 100, 1)
-        else:
-            st.info("📍 Default: ဗီဒီယိုအောက်ခြေ အလယ်တည့်တည့် (Y: 85%, Font: 22)")
+        if use_auto:
+            # AUTO MODE — lock subtitle manual toggles too
+            burn_manual = False
+            st.info("📍 **Auto Mode** — Default ဖြင့် ဗီဒီယိုအောက်ခြေ အလယ်တည့်တည့် (Y: 85%, Font: 22)\n\n🔒 Manual ညှိရန် လိုချင်ပါက AI Auto Detect ကို OFF ဖွင့်ပါ။")
             st.session_state.font_size = 22
             st.session_state.sub_y_pos = 85
+        else:
+            # AUTO OFF — show manual toggle
+            burn_manual = st.toggle("✏️ Manual ညှိရန်", value=False, key="subtitle_manual_toggle")
+            if burn_manual:
+                f_s = plus_minus_slider("စာလုံးအရွယ်အစား", "font_size", 5, 100, 1)
+                s_y = plus_minus_slider("စာတန်းထိုးနေရာ (Y %)", "sub_y_pos", 0, 100, 1)
+            else:
+                st.info("📍 Default: ဗီဒီယိုအောက်ခြေ အလယ်တည့်တည့် (Y: 85%, Font: 22)")
+                st.session_state.font_size = 22
+                st.session_state.sub_y_pos = 85
     else:
         st.session_state.sub_y_pos = 85
 
@@ -466,7 +479,7 @@ def get_filter(mir, scl, blr, by_px, bh_px, brn, sp, fs, sx, sy):
     else:
         fc = f"[0:v]{base_str}[preblur];"
         fc += f"[preblur]split[main][to_blur];"
-        fc += f"[to_blur]crop=iw:{bh_px}:0:{by_px},boxblur=10[blurred];"
+        fc += f"[to_blur]crop=iw:{bh_px}:0:{by_px},boxblur=luma_radius=10:chroma_radius=4:alpha_radius=1[blurred];"
         fc += f"[main][blurred]overlay=0:{by_px}[postblur]"
         if brn and sp and os.path.exists(sp):
             fc += f";[postblur][1:v]overlay={sx}:{sy}[v]"
