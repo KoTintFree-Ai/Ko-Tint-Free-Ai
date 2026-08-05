@@ -317,23 +317,20 @@ def parse_srt_text(text):
     # Aggressively remove any timestamp-like patterns and SRT index numbers
     text = re.sub(r'\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}', '', text)
     text = re.sub(r'^\s*\d+\s*$', '', text, flags=re.MULTILINE)
-    text = re.sub(r'\[\d{1,2}:\d{1,2}:\d{1,2}\.\d{3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{3}\]', '', text)
-    text = re.sub(r'\(\d{1,2}:\d{1,2}:\d{1,2}\.\d{3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{3}\)', '', text)
+    text = re.sub(r'\[\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\]', '', text)
+    text = re.sub(r'\(\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\)', '', text)
     
     lines = text.split('\n')
     clean_lines = []
     for line in lines:
         line = line.strip()
         if not line: continue
-        # Skip lines that are just numbers (SRT indices)
-        if re.match(r'^\d+$', line): continue
-        # Skip lines like "1.", "(1)", etc.
         # Skip lines that are just numbers (SRT indices) or common timestamp patterns
         if re.match(r'^\d+$', line): continue
         if re.match(r'^\(?\d+[\.\)]\s*$', line): continue
         if re.match(r'^\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}$', line): continue
-        if re.match(r'^\[\d{1,2}:\d{1,2}:\d{1,2}\.\d{3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{3}\]$', line): continue
-        if re.match(r'^\(\d{1,2}:\d{1,2}:\d{1,2}\.\d{3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{3}\)$', line): continue
+        if re.match(r'^\[\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\]$', line): continue
+        if re.match(r'^\(\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\)$', line): continue
         # Skip common headers
         if re.match(r'(?i)^(here is|narration|recap|script|translation):', line): continue
         
@@ -636,9 +633,12 @@ FORMATTING RULES:
                 
                 # Use a small status update during generation
                 with st.status("🔊 အသံဖိုင်များကို တစ်ခုချင်းစီ ထုတ်လုပ်နေပါသည်...", expanded=False) as status:
-                    st.session_state.srt_data, _ = asyncio.run(gen_audio_srt(srt_res, ao, v_id, v_speed, v_pitch, target_sec if fit_dur else 0))
+                    st.session_state.srt_data, audio_final_dur = asyncio.run(gen_audio_srt(srt_res, ao, v_id, v_speed, v_pitch, target_sec if fit_dur else 0))
                     status.update(label="✅ အသံဖိုင်အားလုံး ပေါင်းစပ်ပြီးပါပြီ!", state="complete")
                 st.session_state.audio_path = ao
+                
+                # Store the actual final audio duration for sync calculations
+                audio_final_dur = get_dur(ao)
 
                 if up.name.lower().endswith((".mp4", ".mov", ".avi")):
                     stt.text("🎬 အဆင့် ၄: ဗီဒီယိုကို တည်းဖြတ်နေပါသည် (Rendering)...")
@@ -647,6 +647,7 @@ FORMATTING RULES:
                     sub_dir = tempfile.mkdtemp()
                     cmd_dim = ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", tp]
                     v_dim = subprocess.run(cmd_dim, capture_output=True, text=True).stdout.strip().split('x')
+                    vw, vh = int(v_dim[0]), int(vh[1])
                     vw, vh = int(v_dim[0]), int(v_dim[1])
 
                     segments = []
@@ -673,8 +674,6 @@ FORMATTING RULES:
                         y_pos = int(vh * (st.session_state.sub_y_pos / 100)) - (sh // 2)
                         
                         # More robust path escaping for FFmpeg movie filter on Linux
-                        # The movie filter path needs ':' and ',' and '[' and ']' escaped.
-                        # Using filename= is safer.
                         safe_spath = spath.replace("'", "'\\''").replace(":", "\\:")
                         overlay_filters.append(f"movie=filename='{safe_spath}'[s{i}];[v][s{i}]overlay={x_pos}:{y_pos}:enable='between(t,{seg['start']},{seg['end']})'[v]")
 
@@ -682,9 +681,35 @@ FORMATTING RULES:
                     by_px_r = int(vh * (st.session_state.blur_y_pos / 100))
                     bh_px_r = int(vh * (st.session_state.blur_h_size / 100))
                     
+                    # Get video duration for speed calculation
+                    video_duration = get_dur(tp)
+                    
+                    # === FIX: Video-Audio Speed Sync ===
+                    # When target duration is set, we need to speed up the VIDEO too
+                    # so both video and audio end at exactly the target time
+                    video_speed_factor = 1.0
+                    if fit_dur and target_sec > 0 and video_duration > 0:
+                        video_speed_factor = video_duration / target_sec
+                        # Clip to safe range (0.5x to 2.0x speed)
+                        video_speed_factor = np.clip(video_speed_factor, 0.5, 2.0)
+                        stt.text(f"🎬 Video Speed Factor: {video_speed_factor:.2f}x (Video: {video_duration:.1f}s → Target: {target_sec}s)")
+                    
                     # For rendering, the base filter (mirror, scale, blur) comes first
+                    # Add video speed adjustment BEFORE the base filters
+                    if abs(video_speed_factor - 1.0) > 0.01:
+                        speed_filter = f"setpts=1/{video_speed_factor}*PTS"
+                        base_filter_with_speed = f"[0:v]{speed_filter}[speedup]"
+                    else:
+                        base_filter_with_speed = "[0:v]"
+                    
                     fcf = get_filter(mirror_v, scale_v, blur_s, by_px_r, bh_px_r, False, None, 0, 0, 0)
-                    full_filter = fcf.replace("[v]", "[v0]")
+                    # Insert speed filter before the main processing
+                    if abs(video_speed_factor - 1.0) > 0.01:
+                        full_filter = base_filter_with_speed + ";" + fcf.replace("[0:v]", "[speedup]")
+                    else:
+                        full_filter = fcf
+                    
+                    full_filter = full_filter.replace("[v]", "[v0]")
                     for i, filt in enumerate(overlay_filters):
                         current_filt = filt.replace("[v]", f"[v{i}]", 1).replace("[v]", f"[v{i+1}]")
                         full_filter += ";" + current_filt
@@ -698,19 +723,36 @@ FORMATTING RULES:
                     fv = os.path.join(tempfile.gettempdir(), fv_name)
 
                     # Determine final duration based on actual generated audio
-                    final_duration = get_dur(ao)
-                    video_duration = get_dur(tp)
+                    final_audio_dur = audio_final_dur
                     
-                    # ABSOLUTE FIX: Ensure audio is NEVER cut.
-                    # We use the actual duration of the generated audio as the master duration.
-                    final_audio_dur = get_dur(ao)
-                    
-                    # If video is shorter than audio, loop it INFINITELY and use -shortest
-                    if video_duration < final_audio_dur - 0.5:
-                        cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
+                    # Build FFmpeg command with proper audio-video sync
+                    if abs(video_speed_factor - 1.0) > 0.01:
+                        # Video speed is already adjusted via setpts filter
+                        # Now we need to match audio to the same duration
+                        # The video will be: video_duration / video_speed_factor seconds
+                        adjusted_video_dur = video_duration / video_speed_factor
+                        
+                        if final_audio_dur > adjusted_video_dur + 0.5:
+                            # Audio is longer than adjusted video - need to speed up audio more
+                            audio_speed_factor = final_audio_dur / adjusted_video_dur
+                            audio_speed_factor = np.clip(audio_speed_factor, 0.5, 2.0)
+                            
+                            # Create sped-up audio version
+                            ao_sped = tempfile.mktemp(suffix=".mp3")
+                            subprocess.run(["ffmpeg", "-y", "-i", ao, "-filter:a", f"atempo={audio_speed_factor}", ao_sped], capture_output=True)
+                            cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", tp, "-i", ao_sped, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
+                            if os.path.exists(ao_sped):
+                                st.session_state.audio_path = ao_sped
+                        else:
+                            # Cut at the adjusted video duration
+                            cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-t", str(adjusted_video_dur), fv]
                     else:
-                        # If video is longer, cut exactly at the end of the audio
-                        cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-t", str(final_audio_dur), fv]
+                        # No speed adjustment needed - original behavior
+                        if video_duration < final_audio_dur - 0.5:
+                            cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
+                        else:
+                            cmd = ["ffmpeg", "-y", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-t", str(final_audio_dur), fv]
+                    
                     res = subprocess.run(cmd, capture_output=True, text=True)
 
                     if res.returncode != 0:
