@@ -765,6 +765,12 @@ FORMATTING RULES:
                             text = "\n".join(lines[2:])
                             segments.append({'start': start, 'end': end, 'text': text})
 
+                    # Calculate blur positions and subtitle position BEFORE overlay loop
+                    by_px_r = int(vh * (st.session_state.blur_y_pos / 100))
+                    bh_px_r = int(vh * (st.session_state.blur_h_size / 100))
+                    sub_gap = 5  # small gap between subtitle and blur area
+                    sub_y_px = by_px_r - sub_gap  # subtitle sits above blur area
+                    
                     overlay_filters = []
                     temp_imgs = []
                     for i, seg in enumerate(segments):
@@ -786,13 +792,7 @@ FORMATTING RULES:
                         out_label = f"vout{i}"
                         overlay_filters.append(f"movie=filename='{safe_spath}'[s{i}];[{in_label}][s{i}]overlay={x_pos}:{y_pos}:enable='between(t,{seg['start']},{seg['end']})'[{out_label}]")
 
-                    by_px_r = int(vh * (st.session_state.blur_y_pos / 100))
-                    bh_px_r = int(vh * (st.session_state.blur_h_size / 100))
-                    
-                    # Subtitle position: place subtitle ABOVE the blur area
-                    # Calculate subtitle Y position so it sits right above the blur
-                    sub_gap = 5  # small gap between subtitle and blur area
-                    sub_y_px = by_px_r - sub_gap
+                    # by_px_r and bh_px_r already calculated above
                     
                     # Get video duration for speed calculation
                     video_duration = get_dur(tp)
