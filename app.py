@@ -67,9 +67,13 @@ def auto_fill_callback():
         text = st.session_state.bulk_key_input
         
         # Enhanced Regex: Capture Gemini (AIza... or AQ...) and Grok (gsk_...)
-        # We look for alphanumeric strings starting with these prefixes
+        # Handle cases where keys might be followed by Burmese punctuation or other separators
         gemini_found = re.findall(r'(AIza[0-9A-Za-z-_]{30,}|AQ\.[0-9A-Za-z-_]{30,})', text)
         grok_found = re.findall(r'(gsk_[0-9A-Za-z]{30,})', text)
+        
+        # Clean up any trailing punctuation that might be caught
+        gemini_found = [k.strip().strip('။၊.()[]{}<>:;*') for k in gemini_found]
+        grok_found = [k.strip().strip('။၊.()[]{}<>:;*') for k in grok_found]
         
         gemini_found = list(dict.fromkeys(gemini_found))
         grok_found = list(dict.fromkeys(grok_found))
@@ -354,31 +358,42 @@ with st.sidebar:
     if st.session_state.active_key:
         st.success("🟢 API Key အလုပ်လုပ်နေပါသည်")
     
-    # API Key inputs directly tied to session state for persistence
-    st.text_input("API Key 1", type="password", key="key_1")
+    # API Key inputs with absolute persistence logic
+    # Sync widget values to session state immediately using a loop to avoid widget deletion issues
+    def sync_keys():
+        for i in range(1, 6):
+            if f"w_key_{i}" in st.session_state:
+                st.session_state[f"key_{i}"] = st.session_state[f"w_key_{i}"]
+            if f"w_grok_key_{i}" in st.session_state:
+                st.session_state[f"grok_key_{i}"] = st.session_state[f"w_grok_key_{i}"]
+
+    st.text_input("API Key 1", type="password", value=st.session_state.key_1, key="w_key_1", on_change=sync_keys)
     show_more_keys = st.toggle("🔽 ကျန် API Keys များ ဖော်ပြရန်", value=False, key="show_more_keys_toggle")
     if show_more_keys:
-        st.text_input("API Key 2", type="password", key="key_2")
-        st.text_input("API Key 3", type="password", key="key_3")
-        st.text_input("API Key 4", type="password", key="key_4")
-        st.text_input("API Key 5", type="password", key="key_5")
+        st.text_input("API Key 2", type="password", value=st.session_state.key_2, key="w_key_2", on_change=sync_keys)
+        st.text_input("API Key 3", type="password", value=st.session_state.key_3, key="w_key_3", on_change=sync_keys)
+        st.text_input("API Key 4", type="password", value=st.session_state.key_4, key="w_key_4", on_change=sync_keys)
+        st.text_input("API Key 5", type="password", value=st.session_state.key_5, key="w_key_5", on_change=sync_keys)
     
-    api_keys = [st.session_state.get(f'key_{i}', "") for i in range(1, 6) if st.session_state.get(f'key_{i}', "")]
+    # Run sync to ensure values are captured
+    sync_keys()
+    api_keys = [st.session_state.get(f'key_{i}', "").strip() for i in range(1, 6) if st.session_state.get(f'key_{i}', "").strip()]
     
     st.markdown("---")
     st.subheader("🔑 Grok API Keys (၅ ခုအထိ)")
     if st.session_state.active_grok_key:
         st.success("🟢 Grok API အလုပ်လုပ်နေပါသည်")
     
-    st.text_input("Grok Key 1", type="password", key="grok_key_1")
+    st.text_input("Grok Key 1", type="password", value=st.session_state.grok_key_1, key="w_grok_key_1", on_change=sync_keys)
     show_more_grok = st.toggle("🔽 ကျန် Grok Keys များ ဖော်ပြရန်", value=False, key="show_more_grok_toggle")
     if show_more_grok:
-        st.text_input("Grok Key 2", type="password", key="grok_key_2")
-        st.text_input("Grok Key 3", type="password", key="grok_key_3")
-        st.text_input("Grok Key 4", type="password", key="grok_key_4")
-        st.text_input("Grok Key 5", type="password", key="grok_key_5")
+        st.text_input("Grok Key 2", type="password", value=st.session_state.grok_key_2, key="w_grok_key_2", on_change=sync_keys)
+        st.text_input("Grok Key 3", type="password", value=st.session_state.grok_key_3, key="w_grok_key_3", on_change=sync_keys)
+        st.text_input("Grok Key 4", type="password", value=st.session_state.grok_key_4, key="w_grok_key_4", on_change=sync_keys)
+        st.text_input("Grok Key 5", type="password", value=st.session_state.grok_key_5, key="w_grok_key_5", on_change=sync_keys)
     
-    grok_keys = [st.session_state.get(f'grok_key_{i}', "") for i in range(1, 6) if st.session_state.get(f'grok_key_{i}', "")]
+    sync_keys()
+    grok_keys = [st.session_state.get(f'grok_key_{i}', "").strip() for i in range(1, 6) if st.session_state.get(f'grok_key_{i}', "").strip()]
     
     if st.button("🔌 Keys အားလုံး စမ်းသပ်ရန်"):
         if not api_keys and not grok_keys:
@@ -410,20 +425,28 @@ with st.sidebar:
                 
                 # Test Grok Keys
                 for i, gk in enumerate(grok_keys):
+                    gk = gk.strip()
+                    if not gk: continue
                     try:
                         url = "https://api.xai.ai/v1/models"
                         headers = {"Authorization": f"Bearer {gk}"}
-                        r = requests.get(url, headers=headers, timeout=15)
+                        r = requests.get(url, headers=headers, timeout=20)
                         if r.status_code == 200:
                             data = r.json()
                             models = [m['id'] for m in data.get('data', [])]
                             st.session_state.valid_grok_info[gk] = {"models": models}
                             if not st.session_state.active_grok_key: st.session_state.active_grok_key = gk
                             st.session_state.test_results.append(f"✅ Grok Key {i+1} အောင်မြင်ပါသည်။")
+                        elif r.status_code == 401:
+                            st.session_state.test_results.append(f"❌ Grok Key {i+1} မမှန်ကန်ပါ။ (Unauthorized)")
+                        elif r.status_code == 429:
+                            st.session_state.test_results.append(f"❌ Grok Key {i+1} အသုံးပြုမှု များနေပါသည်။ (Rate Limit)")
                         else:
-                            st.session_state.test_results.append(f"❌ Grok Key {i+1} မမှန်ကန်ပါ။")
-                    except:
-                        st.session_state.test_results.append(f"❌ Grok Key {i+1} ဆက်သွယ်မှု မအောင်မြင်ပါ။")
+                            st.session_state.test_results.append(f"❌ Grok Key {i+1} အမှားရှိနေပါသည်။ (Status: {r.status_code})")
+                    except requests.exceptions.Timeout:
+                        st.session_state.test_results.append(f"❌ Grok Key {i+1} ဆက်သွယ်မှု အချိန်ကျော်လွန်သွားပါသည်။ (Timeout)")
+                    except Exception as e:
+                        st.session_state.test_results.append(f"❌ Grok Key {i+1} ဆက်သွယ်မှု မအောင်မြင်ပါ။ ({str(e)[:50]})")
             st.rerun()
 
     # Persistent display of test results
@@ -901,7 +924,8 @@ FORMATTING RULES:
                                             with st.expander("📝 Narration Preview (Grok)", expanded=True):
                                                 st.text_area("Narration Content", srt_res, height=200)
                                             break
-                                except: continue
+                                except Exception:
+                                    continue
                             if srt_res: break
 
                     # Fallback to Gemini
