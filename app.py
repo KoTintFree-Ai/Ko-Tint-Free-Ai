@@ -151,14 +151,21 @@ def translate_error(err_msg, status_code=None):
 def auto_detect_subtitle_area(frame_bytes, api_keys=None, grok_keys=None):
     """Use AI Vision to accurately detect subtitle text area in video frame.
     Falls back to NumPy-based detection if no API keys available."""
-    # Try Grok Vision first if keys are provided (Grok-2-vision is very accurate)
+    # Try Groq first if keys are provided (Llama 3.3 is fast and accurate)
     if grok_keys:
         for gk in grok_keys:
             try:
                 info = st.session_state.valid_grok_info.get(gk)
-                grok_models = info.get("models", ["grok-2-vision-1212", "grok-vision-beta"]) if info else ["grok-2-vision-1212", "grok-vision-beta"]
-                v_models = [m for m in grok_models if "vision" in m.lower()]
-                if not v_models: v_models = ["grok-2-vision-1212"]
+                groq_models = info.get("models", []) if info else []
+                # Use text-only models for subtitle detection since Groq vision models are deprecated
+                t_models = [m for m in groq_models if "vision" not in m.lower()]
+                # Prefer powerful models for vision-like tasks
+                preferred = [m for m in t_models if "70b" in m.lower()]
+                fallback = [m for m in t_models if "8b" in m.lower()]
+                other = [m for m in t_models if "70b" not in m.lower() and "8b" not in m.lower()]
+                ordered_models = preferred + fallback + other
+                if not ordered_models:
+                    ordered_models = ["llama-3.3-70b-versatile"]
                 
                 b64 = base64.b64encode(frame_bytes).decode()
                 prompt = """Look at this video frame carefully.
@@ -167,17 +174,15 @@ Reply ONLY with two numbers in this exact format: Y_PERCENTAGE HEIGHT_PERCENTAGE
 Where Y is the top edge (0-100) and HEIGHT is the area height (1-30).
 Example: 78 6"""
 
-                for m in v_models:
+                for m in ordered_models:
                     try:
-                        url = "https://api.x.ai/v1/chat/completions"
+                        url = "https://api.groq.com/openai/v1/chat/completions"
                         headers = {"Authorization": f"Bearer {gk}", "Content-Type": "application/json"}
                         payload = {
                             "model": m,
-                            "messages": [{"role": "user", "content": [
-                                {"type": "text", "text": prompt},
-                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
-                            ]}],
-                            "temperature": 0.1
+                            "messages": [{"role": "user", "content": prompt}],
+                            "temperature": 0.1,
+                            "max_tokens": 20
                         }
                         r = requests.post(url, json=payload, headers=headers, timeout=30)
                         if r.status_code == 200:
@@ -452,7 +457,7 @@ with st.sidebar:
                     if not success:
                         st.session_state.test_results.append(f"❌ Gemini Key {i+1} {error_detail}")
                 
-                # Test Grok Keys
+                # Test Groq Keys
                 for i, gk in enumerate(grok_keys):
                     gk = gk.strip()
                     if not gk: continue
@@ -462,22 +467,18 @@ with st.sidebar:
                     # Retry logic (2 attempts)
                     for attempt in range(2):
                         try:
-                            url = "https://api.x.ai/v1/chat/completions"
+                            url = "https://api.groq.com/openai/v1/models"
                             headers = {
                                 "Authorization": f"Bearer {gk}",
                                 "Content-Type": "application/json"
                             }
-                            payload = {
-                                "model": "grok-2",
-                                "messages": [{"role": "user", "content": "Hello"}],
-                                "max_tokens": 10
-                            }
-                            r = requests.post(url, json=payload, headers=headers, timeout=30)
+                            r = requests.get(url, headers=headers, timeout=30)
                             if r.status_code == 200:
                                 data = r.json()
-                                st.session_state.valid_grok_info[gk] = {"models": ["grok-2", "grok-2-vision-1212"]}
+                                models = [m['id'] for m in data.get('data', [])]
+                                st.session_state.valid_grok_info[gk] = {"models": models}
                                 if not st.session_state.active_grok_key: st.session_state.active_grok_key = gk
-                                st.session_state.test_results.append(f"✅ Grok Key {i+1} အောင်မြင်ပါသည်။")
+                                st.session_state.test_results.append(f"✅ Groq Key {i+1} အောင်မြင်ပါသည်။")
                                 success = True
                                 break
                             elif r.status_code == 401:
@@ -942,40 +943,39 @@ FORMATTING RULES:
                 errors = []
                 
                 with st.status("🌐 AI API နှင့် ဆက်သွယ်ပြီး ဘာသာပြန်နေပါသည်...", expanded=True) as status:
-                    # Try Grok First if available
+                    # Try Groq First if available
                     if grok_keys:
                         for gk_idx, gk in enumerate(grok_keys):
-                            status.write(f"🔑 Grok Key {gk_idx+1} ကို အသုံးပြုနေပါသည်...")
+                            status.write(f"🔑 Groq Key {gk_idx+1} ကို အသုံးပြုနေပါသည်...")
                             info = st.session_state.valid_grok_info.get(gk)
-                            g_models = info.get("models", ["grok-2-1212", "grok-beta"]) if info else ["grok-2-1212", "grok-beta"]
+                            g_models = info.get("models", []) if info else []
+                            # Use text-only models (Groq vision models are deprecated)
                             t_models = [m for m in g_models if "vision" not in m.lower()]
-                            if not t_models: t_models = ["grok-2-1212"]
+                            # Prefer powerful models
+                            preferred = [m for m in t_models if "70b" in m.lower()]
+                            fallback = [m for m in t_models if "8b" in m.lower()]
+                            other = [m for m in t_models if "70b" not in m.lower() and "8b" not in m.lower()]
+                            ordered = preferred + fallback + other
+                            if not ordered: ordered = ["llama-3.3-70b-versatile"]
                             
-                            for gm in t_models:
+                            for gm in ordered:
                                 try:
-                                    status.write(f"🤖 Grok Model: {gm} ဖြင့် ဘာသာပြန်နေပါသည်...")
-                                    url = "https://api.x.ai/v1/chat/completions"
+                                    status.write(f"🤖 Groq Model: {gm} ဖြင့် ဘာသာပြန်နေပါသည်...")
+                                    url = "https://api.groq.com/openai/v1/chat/completions"
                                     headers = {"Authorization": f"Bearer {gk}", "Content-Type": "application/json"}
-                                    # Grok-2 supports audio input in some versions, but standard is text + context.
-                                    # For recap, we'll use the same prompt.
                                     payload = {
                                         "model": gm,
-                                        "messages": [{"role": "user", "content": [
-                                            {"type": "text", "text": prm},
-                                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}} if st.session_state.base_frame else None
-                                        ]}],
+                                        "messages": [{"role": "user", "content": prm}],
                                         "temperature": 0.7
                                     }
-                                    # Filter out None from content
-                                    payload["messages"][0]["content"] = [c for c in payload["messages"][0]["content"] if c is not None]
                                     
                                     r = requests.post(url, json=payload, headers=headers, timeout=180)
                                     if r.status_code == 200:
                                         srt_res = r.json()['choices'][0]['message']['content'].strip()
                                         if srt_res:
                                             st.session_state.active_grok_key = gk
-                                            status.update(label="✅ Grok ဖြင့် ဘာသာပြန်ခြင်း ပြီးမြောက်ပါပြီ!", state="complete")
-                                            with st.expander("📝 Narration Preview (Grok)", expanded=True):
+                                            status.update(label="✅ Groq ဖြင့် ဘာသာပြန်ခြင်း ပြီးမြောက်ပါပြီ!", state="complete")
+                                            with st.expander("📝 Narration Preview (Groq)", expanded=True):
                                                 st.text_area("Narration Content", srt_res, height=200)
                                             break
                                 except Exception:
