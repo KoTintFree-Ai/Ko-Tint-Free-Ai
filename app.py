@@ -827,28 +827,28 @@ FORMATTING RULES:
                                     status.write(f"🤖 Grok Model: {gm} ဖြင့် ဘာသာပြန်နေပါသည်...")
                                     url = "https://api.xai.ai/v1/chat/completions"
                                     headers = {"Authorization": f"Bearer {gk}", "Content-Type": "application/json"}
-                                # Grok-2 supports audio input in some versions, but standard is text + context.
-                                # For recap, we'll use the same prompt.
-                                payload = {
-                                    "model": gm,
-                                    "messages": [{"role": "user", "content": [
-                                        {"type": "text", "text": prm},
-                                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}} if st.session_state.base_frame else None
-                                    ]}],
-                                    "temperature": 0.7
-                                }
-                                # Filter out None from content
-                                payload["messages"][0]["content"] = [c for c in payload["messages"][0]["content"] if c is not None]
-                                
-                                r = requests.post(url, json=payload, headers=headers, timeout=180)
-                                if r.status_code == 200:
-                                    srt_res = r.json()['choices'][0]['message']['content'].strip()
-                                    if srt_res:
-                                        st.session_state.active_grok_key = gk
-                                        status.update(label="✅ Grok ဖြင့် ဘာသာပြန်ခြင်း ပြီးမြောက်ပါပြီ!", state="complete")
-                                        with st.expander("📝 Narration Preview (Grok)", expanded=True):
-                                            st.text_area("Narration Content", srt_res, height=200)
-                                        break
+                                    # Grok-2 supports audio input in some versions, but standard is text + context.
+                                    # For recap, we'll use the same prompt.
+                                    payload = {
+                                        "model": gm,
+                                        "messages": [{"role": "user", "content": [
+                                            {"type": "text", "text": prm},
+                                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}} if st.session_state.base_frame else None
+                                        ]}],
+                                        "temperature": 0.7
+                                    }
+                                    # Filter out None from content
+                                    payload["messages"][0]["content"] = [c for c in payload["messages"][0]["content"] if c is not None]
+                                    
+                                    r = requests.post(url, json=payload, headers=headers, timeout=180)
+                                    if r.status_code == 200:
+                                        srt_res = r.json()['choices'][0]['message']['content'].strip()
+                                        if srt_res:
+                                            st.session_state.active_grok_key = gk
+                                            status.update(label="✅ Grok ဖြင့် ဘာသာပြန်ခြင်း ပြီးမြောက်ပါပြီ!", state="complete")
+                                            with st.expander("📝 Narration Preview (Grok)", expanded=True):
+                                                st.text_area("Narration Content", srt_res, height=200)
+                                            break
                                 except: continue
                             if srt_res: break
                         if srt_res: break
