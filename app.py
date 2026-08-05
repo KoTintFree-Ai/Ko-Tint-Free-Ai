@@ -23,10 +23,10 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FONT_PATH = os.path.join(SCRIPT_DIR, "Pyidaungsu.ttf")
 
 st.set_page_config(
-    page_title="Movie Recap AI Pro V8.1",
+    page_title="Movie Recap AI Pro V8.2",
     page_icon="🎬",
     layout="centered",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed" # Changed to collapsed for cleaner initial view
 )
 
 # --- CSS: CUSTOM STYLING ---
@@ -36,7 +36,19 @@ st.markdown("""
     footer {visibility: hidden;}
     .stDeployButton {display:none;}
     [data-testid="stSidebarNav"] {display: none;}
-    .stButton>button {width: 100%;}
+    .stButton>button {width: 100%; border-radius: 0.5rem; height: 3rem; font-size: 1.1rem;}
+    .stTextInput>div>div>input {border-radius: 0.5rem;}
+    .stTextArea>div>div>textarea {border-radius: 0.5rem;}
+    .stSelectbox>div>div {border-radius: 0.5rem;}
+    .stSlider>div>div>div {border-radius: 0.5rem;}
+    .stProgress>div>div>div {border-radius: 0.5rem;}
+    
+    /* Custom button colors */
+    .stButton>button:hover {background-color: #4CAF50; color: white;}
+    .stButton>button:active {background-color: #4CAF50; color: white;}
+    /* Streamlit's default primary button color */
+    .stButton>button:focus:not(:active) {border-color: #4CAF50; box-shadow: none;}
+    
     </style>
     """, unsafe_allow_html=True)
 
@@ -59,114 +71,15 @@ def init_state():
 
 init_state()
 
-st.title("🎬 Movie Recap AI Pro V8.1")
-st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Unicode & Wrap Fix)")
+st.title("🎬 Movie Recap AI Pro V8.2")
+st.markdown("**အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Unicode & Wrap Fix)**")
 
-# --- HELPER: SLIDER WITH PLUS/MINUS (V7.4) ---
-def plus_minus_slider(label, key, min_val, max_val, step=1):
-    st.write(f"**{label}**")
-    if key not in st.session_state: st.session_state[key] = min_val
-    
-    def on_btn(delta):
-        st.session_state[key] = int(np.clip(st.session_state[key] + delta, min_val, max_val))
-    
-    col1, col2, col3 = st.columns([1, 4, 1])
-    with col1: st.button("➖", key=f"btn_min_{key}", on_click=on_btn, args=(-step,))
-    with col2: st.slider(label, min_val, max_val, step=step, key=key, label_visibility="collapsed")
-    with col3: st.button("➕", key=f"btn_pls_{key}", on_click=on_btn, args=(step,))
-    return st.session_state[key]
+# --- MAIN CONTENT AREA ---
+tab1, tab2 = st.tabs(["⚙️ ဆက်တင်များ", "🚀 စတင်လုပ်ဆောင်ရန်"])
 
-# --- ERROR TRANSLATOR ---
-def translate_error(err_msg, status_code=None):
-    err_msg = str(err_msg).lower()
-    if "api_key_invalid" in err_msg or "invalid api key" in err_msg or status_code == 403:
-        return "API Key မမှန်ကန်ပါ။ (Key ကို သေချာပြန်စစ်ပြီး ကူးထည့်ပေးပါ)"
-    if "quota" in err_msg or "429" in err_msg or status_code == 429:
-        return "API Key အသုံးပြုမှု ပမာဏ ပြည့်သွားပါပြီ။ (ခဏစောင့်ပါ သို့မဟုတ် Key အသစ်ပြောင်းသုံးပါ)"
-    if "location" in err_msg or "not supported" in err_msg:
-        return "သင်၏ ဒေသ (Region) တွင် ဤ API ကို ပိတ်ထားပါသည်။ (VPN သုံးရန် လိုအပ်ပါသည်)"
-    if "404" in err_msg or status_code == 404:
-        return "API URL သို့မဟုတ် Model အမည်ကို ရှာမတွေ့ပါ။ (URL လွဲချော်နေပါသည်)"
-    if "safety" in err_msg or "blocked" in err_msg:
-        return "မူပိုင်ခွင့် သို့မဟုတ် လုံခြုံရေး စည်းကမ်းချက်များကြောင့် Google မှ ဘာသာပြန်ရန် ငြင်းဆိုလိုက်ပါသည်။"
-    return f"အမှားအယွင်းတစ်ခု ဖြစ်ပေါ်နေပါသည်။ ({err_msg})"
-
-# --- SIDEBAR ---
-with st.sidebar:
-    st.header("⚙️ ဆက်တင်များ")
-    
-    # RAM Monitor
-    st.subheader("🖥️ RAM စောင့်ကြည့်ရန်")
-    def get_ram_usage():
-        process = psutil.Process(os.getpid())
-        mem_info = process.memory_info()
-        return mem_info.rss / (1024 * 1024)  # MB
-
-    ram_used = get_ram_usage()
-    # Streamlit Cloud free tier limit is usually 1GB (1024MB)
-    ram_limit = 1024 
-    ram_pct = min(ram_used / ram_limit, 1.0)
-    
-    col_r1, col_r2 = st.columns([2, 1])
-    col_r1.progress(ram_pct)
-    col_r2.write(f"{ram_used:.0f}/{ram_limit}MB")
-    
-    if ram_used > 800:
-        st.warning("⚠️ RAM သုံးစွဲမှု များနေပါသည်။ (Limit: 1024MB)")
-    if ram_used > 950:
-        st.error("🚨 RAM ပြည့်ခါနီးနေပါပြီ! App Crash ဖြစ်နိုင်ပါသည်။")
-    
-    if st.button("🧹 RAM ရှင်းထုတ်ရန်"):
-        st.cache_data.clear()
-        gc.collect()
-        st.success("RAM ရှင်းလင်းပြီးပါပြီ")
-        # No rerun here to avoid potential input loss
-    
-    if st.button("🗑️ Data အားလုံးဖျက်ရန် (Keys မပါ)"):
-        # List of keys to preserve
-        preserve = [f'key_{i}' for i in range(1, 6)] + ['valid_keys_info', 'active_key', 'target_min', 'target_sec', 'blur_y_pos', 'blur_h_size', 'sub_y_pos', 'font_size', 'v_speed', 'v_pitch']
-        for k in list(st.session_state.keys()):
-            if k not in preserve:
-                del st.session_state[k]
-        st.cache_data.clear()
-        gc.collect()
-        st.rerun()
-    
-    st.markdown("---")
-    st.subheader("🔑 Gemini API Keys (၅ ခုအထိ)")
-    if st.session_state.active_key:
-        st.success("🟢 API Key အလုပ်လုပ်နေပါသည်")
-    
-    k1 = st.text_input("API Key 1", type="password", key="key_1")
-    k2 = st.text_input("API Key 2", type="password", key="key_2")
-    k3 = st.text_input("API Key 3", type="password", key="key_3")
-    k4 = st.text_input("API Key 4", type="password", key="key_4")
-    k5 = st.text_input("API Key 5", type="password", key="key_5")
-    api_keys = [k for k in [k1, k2, k3, k4, k5] if k]
-
-    if st.button("🔌 Keys အားလုံး စမ်းသပ်ရန်"):
-        if not api_keys:
-            st.error("API Key အရင်ထည့်ပေးပါ။")
-        else:
-            st.session_state.valid_keys_info = {}
-            with st.spinner("Keys များကို စစ်ဆေးနေသည်..."):
-                for i, k in enumerate(api_keys):
-                    for ver in API_VERSIONS:
-                        try:
-                            url = f"https://generativelanguage.googleapis.com/{ver}/models?key={k}"
-                            r = requests.get(url, timeout=15)
-                            if r.status_code == 200:
-                                data = r.json()
-                                models = [m['name'].split('/')[-1] for m in data.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
-                                st.session_state.valid_keys_info[k] = {"version": ver, "models": models}
-                                if not st.session_state.active_key: st.session_state.active_key = k
-                                st.success(f"✅ Key {i+1} အောင်မြင်ပါသည်။")
-                                break
-                        except: continue
-            st.rerun()
-
-    st.markdown("---")
-    st.subheader("🎬 ဗီဒီယို ပုံစံညှိရန်")
+with tab1:
+    st.header("⚙️ ဗီဒီယိုနှင့် စာတန်းထိုး ဆက်တင်များ")
+    st.markdown("--- ")
     mirror_v = st.checkbox("ဗီဒီယို Mirror လှန်ရန်", value=True)
     scale_v = st.checkbox("ဗီဒီယို Scale 106% ချဲ့ရန်", value=True)
 
@@ -215,6 +128,169 @@ with st.sidebar:
     
     v_speed = plus_minus_slider("အသံနှုန်း", "v_speed", 1, 100, 1)
     v_pitch = plus_minus_slider("Pitch", "v_pitch", 1, 100, 1)
+
+with tab2:
+    st.header("🚀 စတင်လုပ်ဆောင်ရန်")
+    # This is where the file uploader and the main processing button will go.
+    # The API Keys section will remain in the sidebar.
+
+# --- SIDEBAR ---
+with st.sidebar:
+    st.header("⚙️ စနစ် ဆက်တင်များ")
+    # RAM Monitor
+    st.subheader("🖥️ RAM စောင့်ကြည့်ရန်")
+    # ... (RAM monitoring code will be moved here)
+    
+    # Data Clear Button
+    if st.button("🗑️ Data အားလုံးဖျက်ရန် (Keys မပါ)"):
+        preserve = [f'key_{i}' for i in range(1, 6)] + ['valid_keys_info', 'active_key', 'target_min', 'target_sec', 'blur_y_pos', 'blur_h_size', 'sub_y_pos', 'font_size', 'v_speed', 'v_pitch']
+        for k in list(st.session_state.keys()):
+            if k not in preserve:
+                del st.session_state[k]
+        st.cache_data.clear()
+        gc.collect()
+        st.rerun()
+    
+    st.markdown("---")
+    st.subheader("🔑 Gemini API Keys (၅ ခုအထိ)")
+    if st.session_state.active_key:
+        st.success("🟢 API Key အလုပ်လုပ်နေပါသည်")
+    
+    k1 = st.text_input("API Key 1", type="password", key="key_1")
+    k2 = st.text_input("API Key 2", type="password", key="key_2")
+    k3 = st.text_input("API Key 3", type="password", key="key_3")
+    k4 = st.text_input("API Key 4", type="password", key="key_4")
+    k5 = st.text_input("API Key 5", type="password", key="key_5")
+    api_keys = [k for k in [k1, k2, k3, k4, k5] if k]
+
+    if st.button("🔌 Keys အားလုံး စမ်းသပ်ရန်"):
+        if not api_keys:
+            st.error("API Key အရင်ထည့်ပေးပါ။")
+        else:
+            st.session_state.valid_keys_info = {}
+            with st.spinner("Keys များကို စစ်ဆေးနေသည်..."):
+                for i, k in enumerate(api_keys):
+                    for ver in API_VERSIONS:
+                        try:
+                            url = f"https://generativelanguage.googleapis.com/{ver}/models?key={k}"
+                            r = requests.get(url, timeout=15)
+                            if r.status_code == 200:
+                                data = r.json()
+                                models = [m['name'].split('/')[-1] for m in data.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
+                                st.session_state.valid_keys_info[k] = {"version": ver, "models": models}
+                                if not st.session_state.active_key: st.session_state.active_key = k
+                                st.success(f"✅ Key {i+1} အောင်မြင်ပါသည်။")
+                                break
+                        except: continue
+            st.rerun()
+    st.markdown("---")
+
+
+
+# --- HELPER: SLIDER WITH PLUS/MINUS (V7.4) ---
+def plus_minus_slider(label, key, min_val, max_val, step=1):
+    st.write(f"**{label}**")
+    if key not in st.session_state: st.session_state[key] = min_val
+    
+    def on_btn(delta):
+        st.session_state[key] = int(np.clip(st.session_state[key] + delta, min_val, max_val))
+    
+    col1, col2, col3 = st.columns([1, 4, 1])
+    with col1: st.button("➖", key=f"btn_min_{key}", on_click=on_btn, args=(-step,))
+    with col2: st.slider(label, min_val, max_val, step=step, key=key, label_visibility="collapsed")
+    with col3: st.button("➕", key=f"btn_pls_{key}", on_click=on_btn, args=(step,))
+    return st.session_state[key]
+
+# --- ERROR TRANSLATOR ---
+def translate_error(err_msg, status_code=None):
+    err_msg = str(err_msg).lower()
+    if "api_key_invalid" in err_msg or "invalid api key" in err_msg or status_code == 403:
+        return "API Key မမှန်ကန်ပါ။ (Key ကို သေချာပြန်စစ်ပြီး ကူးထည့်ပေးပါ)"
+    if "quota" in err_msg or "429" in err_msg or status_code == 429:
+        return "API Key အသုံးပြုမှု ပမာဏ ပြည့်သွားပါပြီ။ (ခဏစောင့်ပါ သို့မဟုတ် Key အသစ်ပြောင်းသုံးပါ)"
+    if "location" in err_msg or "not supported" in err_msg:
+        return "သင်၏ ဒေသ (Region) တွင် ဤ API ကို ပိတ်ထားပါသည်။ (VPN သုံးရန် လိုအပ်ပါသည်)"
+    if "404" in err_msg or status_code == 404:
+        return "API URL သို့မဟုတ် Model အမည်ကို ရှာမတွေ့ပါ။ (URL လွဲချော်နေပါသည်)"
+    if "safety" in err_msg or "blocked" in err_msg:
+        return "မူပိုင်ခွင့် သို့မဟုတ် လုံခြုံရေး စည်းကမ်းချက်များကြောင့် Google မှ ဘာသာပြန်ရန် ငြင်းဆိုလိုက်ပါသည်။"
+    return f"အမှားအယွင်းတစ်ခု ဖြစ်ပေါ်နေပါသည်။ ({err_msg})"
+
+# --- SIDEBAR ---
+with st.sidebar:
+    st.header("⚙️ စနစ် ဆက်တင်များ")
+    
+    # RAM Monitor
+    st.subheader("🖥️ RAM စောင့်ကြည့်ရန်")
+    def get_ram_usage():
+        process = psutil.Process(os.getpid())
+        mem_info = process.memory_info()
+        return mem_info.rss / (1024 * 1024)  # MB
+
+    ram_used = get_ram_usage()
+    # Streamlit Cloud free tier limit is usually 1GB (1024MB)
+    ram_limit = 1024 
+    ram_pct = min(ram_used / ram_limit, 1.0)
+    
+    col_r1, col_r2 = st.columns([2, 1])
+    with col_r1: st.progress(ram_pct)
+    with col_r2: st.write(f"{ram_used:.0f}/{ram_limit}MB")
+    
+    if ram_used > 800:
+        st.warning("⚠️ RAM သုံးစွဲမှု များနေပါသည်။ (Limit: 1024MB)")
+    if ram_used > 950:
+        st.error("🚨 RAM ပြည့်ခါနီးနေပါပြီ! App Crash ဖြစ်နိုင်ပါသည်။")
+    
+    if st.button("🧹 RAM ရှင်းထုတ်ရန်", key="clear_ram_sidebar"):
+        st.cache_data.clear()
+        gc.collect()
+        st.success("RAM ရှင်းလင်းပြီးပါပြီ")
+    
+    # Data Clear Button
+    if st.button("🗑️ Data အားလုံးဖျက်ရန် (Keys မပါ)", key="clear_data_sidebar"):
+        preserve = [f'key_{i}' for i in range(1, 6)] + ['valid_keys_info', 'active_key', 'target_min', 'target_sec', 'blur_y_pos', 'blur_h_size', 'sub_y_pos', 'font_size', 'v_speed', 'v_pitch']
+        for k in list(st.session_state.keys()):
+            if k not in preserve:
+                del st.session_state[k]
+        st.cache_data.clear()
+        gc.collect()
+        st.rerun()
+    
+    st.markdown("---")
+    st.subheader("🔑 Gemini API Keys (၅ ခုအထိ)")
+
+    if st.session_state.active_key:
+        st.success("🟢 API Key အလုပ်လုပ်နေပါသည်")
+    
+    k1 = st.text_input("API Key 1", type="password", key="key_1")
+    k2 = st.text_input("API Key 2", type="password", key="key_2")
+    k3 = st.text_input("API Key 3", type="password", key="key_3")
+    k4 = st.text_input("API Key 4", type="password", key="key_4")
+    k5 = st.text_input("API Key 5", type="password", key="key_5")
+    api_keys = [k for k in [k1, k2, k3, k4, k5] if k]
+
+    if st.button("🔌 Keys အားလုံး စမ်းသပ်ရန်"):
+        if not api_keys:
+            st.error("API Key အရင်ထည့်ပေးပါ။")
+        else:
+            st.session_state.valid_keys_info = {}
+            with st.spinner("Keys များကို စစ်ဆေးနေသည်..."):
+                for i, k in enumerate(api_keys):
+                    for ver in API_VERSIONS:
+                        try:
+                            url = f"https://generativelanguage.googleapis.com/{ver}/models?key={k}"
+                            r = requests.get(url, timeout=15)
+                            if r.status_code == 200:
+                                data = r.json()
+                                models = [m['name'].split('/')[-1] for m in data.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
+                                st.session_state.valid_keys_info[k] = {"version": ver, "models": models}
+                                if not st.session_state.active_key: st.session_state.active_key = k
+                                st.success(f"✅ Key {i+1} အောင်မြင်ပါသည်။")
+                                break
+                        except: continue
+            st.rerun()
+
+
 
 # --- UTILITIES ---
 def create_subtitle_image(text, font_size):
@@ -553,7 +629,7 @@ if up:
                 # Clear previous results
                 for k in ['video_path', 'audio_path', 'srt_data']: st.session_state[k] = None
                 
-                stt.text("📊 အဆင့် ၁: အသံဖိုင်ကို အမြန်ဆုံးဖြစ်အောင် ချုံ့နေပါသည်...")
+                stt.info("📊 အဆင့် ၁: အသံဖိုင်ကို အမြန်ဆုံးဖြစ်အောင် ချုံ့နေပါသည်... (This may take a moment)")
                 prg.progress(10)
                 tp = os.path.join(tempfile.gettempdir(), f"input_{fid}." + up.name.split(".")[-1])
                 ag = tempfile.mktemp(suffix=".mp3")
@@ -563,25 +639,25 @@ if up:
                 else:
                     subprocess.run(["ffmpeg", "-y", "-i", tp, "-ar", "16000", "-ac", "1", "-b:a", "32k", ag], capture_output=True)
 
-                stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည် (Gemini API)...")
+                stt.info("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည် (Gemini API)... (Generating high-energy recap script)")
                 prg.progress(30)
                 target_words = int(target_sec * 3.8)
-                prm = f"""Listen to this audio and translate it into a HIGH-ENERGY Myanmar Movie Recap style narration.
-TARGET DURATION: {target_sec} seconds.
-REQUIRED SCRIPT LENGTH: You MUST write exactly around {target_words} Myanmar words to fill the {target_sec} seconds timeframe perfectly.
+                prm = f"""Analyze the provided audio and generate a highly engaging, dramatic, and fast-paced movie recap narration in natural, conversational Myanmar language.
 
-MOVIE RECAP STYLE RULES:
-1. The tone must be dramatic, fast-paced, and extremely engaging.
-2. Use natural, conversational Myanmar language.
-3. Keep the narration DENSE and CONTINUOUS. Describe every scene, action, and character emotion in detail to fill the time.
-4. There should be ALMOST NO SILENCE. If the source audio is shorter than {target_sec} seconds, you MUST EXPAND the story with more descriptive details to reach the required length.
-5. Use Standard Myanmar Unicode.
+TARGET DURATION: {target_sec} seconds.
+REQUIRED SCRIPT LENGTH: Your narration MUST be precisely around {target_words} Myanmar words to perfectly fill the {target_sec} seconds timeframe. Adjust verbosity and detail to meet this length.
+
+MOVIE RECAP STYLE GUIDELINES:
+1.  **Tone:** Maintain a dramatic, thrilling, and extremely engaging tone throughout. Evoke strong emotions.
+2.  **Language:** Use fluent, natural, and conversational Myanmar language. Avoid overly formal or robotic phrasing.
+3.  **Pacing:** The narration must be DENSE and CONTINUOUS. Describe every significant scene, action, character emotion, and plot twist in vivid detail to fill the allocated time.
+4.  **Silence Management:** There should be ALMOST NO SILENCE. If the source audio is shorter than the target duration, you MUST creatively EXPAND the story with more descriptive details, foreshadowing, character insights, or thematic elaborations to reach the required length without sounding repetitive.
+5.  **Content Focus:** Highlight key plot points, character developments, and climactic moments. Build suspense and excitement.
+6.  **Unicode:** Ensure all output uses Standard Myanmar Unicode.
 
 FORMATTING RULES:
-1. Output ONLY valid SRT subtitle format.
-2. Each subtitle block should be a natural phrase (approx 15 words).
-3. The timestamps in your SRT output MUST span the entire range from 00:00:00,000 to {fmt_srt(target_sec)}.
-4. DO NOT include any preamble or conclusion. Just the SRT blocks."""
+1.  Output ONLY the raw narration text. DO NOT include any SRT formatting, timestamps, or numbering.
+2.  DO NOT include any preamble (e.g., "Here is the recap:") or conclusion. Just the narration text."""
                 
                 with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
                 cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mpeg","data":b64}}]}]
@@ -629,7 +705,7 @@ FORMATTING RULES:
                     for e in errors: st.info(e)
                     raise Exception("ဘာသာပြန်ခြင်း မလုပ်ဆောင်နိုင်ပါ။")
 
-                stt.text("🔊 အဆင့် ၃: အသံဖိုင်နှင့် Timing ညှိနေပါသည်...")
+                stt.info("🔊 အဆင့် ၃: အသံဖိုင်နှင့် Timing ညှိနေပါသည်... (Creating voiceover and synchronizing)")
                 prg.progress(60)
                 ao_name = f"audio_{fid}_{int(time.time())}.mp3"
                 ao = os.path.join(tempfile.gettempdir(), ao_name)
@@ -641,9 +717,9 @@ FORMATTING RULES:
                 st.session_state.audio_path = ao
 
                 if up.name.lower().endswith((".mp4", ".mov", ".avi")):
-                    stt.text("🎬 အဆင့် ၄: ဗီဒီယိုကို တည်းဖြတ်နေပါသည် (Rendering)...")
+                    stt.info("🎬 အဆင့် ၄: ဗီဒီယိုကို တည်းဖြတ်နေပါသည် (Rendering)... (Adding subtitles and effects)")
                     prg.progress(80)
-                    stt.text("🎬 အဆင့် ၄: စာတန်းထိုးများကို ပုံဖော်နေပါသည်...")
+                    stt.info("🎬 အဆင့် ၄: စာတန်းထိုးများကို ပုံဖော်နေပါသည်... (Burning subtitles into video)")
                     sub_dir = tempfile.mkdtemp()
                     cmd_dim = ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", tp]
                     v_dim = subprocess.run(cmd_dim, capture_output=True, text=True).stdout.strip().split('x')
@@ -726,7 +802,7 @@ FORMATTING RULES:
                     else:
                         raise Exception(f"Render Error: {res.stderr}")
 
-                prg.progress(100); stt.text("✅ အောင်မြင်စွာ ပြီးဆုံးပါပြီ!"); st.balloons()
+                prg.progress(100); stt.success("✅ အောင်မြင်စွာ ပြီးဆုံးပါပြီ!"); st.balloons()
                 st.session_state.processing_done = True
                 if os.path.exists(ag): os.remove(ag)
             except Exception as e:
