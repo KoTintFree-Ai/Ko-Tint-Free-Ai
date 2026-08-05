@@ -42,13 +42,14 @@ st.markdown("""
 
 # Session State Initialization
 def init_state():
-    keys = ['myanmar_text', 'audio_path', 'srt_data', 'video_path', 'base_frame', 'last_uploaded', 'processing_done', 'valid_keys_info', 'active_key']
+    keys = ['myanmar_text', 'audio_path', 'srt_data', 'video_path', 'base_frame', 'last_uploaded', 'processing_done', 'valid_keys_info', 'active_key', 'grok_key', 'valid_grok_info']
     for k in keys:
         if k not in st.session_state: st.session_state[k] = None
     for i in range(1, 6):
         if f'key_{i}' not in st.session_state: st.session_state[f'key_{i}'] = ""
     if st.session_state.processing_done is None: st.session_state.processing_done = False
     if st.session_state.valid_keys_info is None: st.session_state.valid_keys_info = {}
+    if st.session_state.valid_grok_info is None: st.session_state.valid_grok_info = {}
     if 'do_test_keys' not in st.session_state: st.session_state.do_test_keys = False
     if 'blur_y_pos' not in st.session_state: st.session_state.blur_y_pos = 85
     if 'blur_h_size' not in st.session_state: st.session_state.blur_h_size = 10
@@ -95,7 +96,47 @@ def translate_error(err_msg, status_code=None):
 def auto_detect_subtitle_area(frame_bytes, api_keys=None):
     """Use Gemini AI Vision to accurately detect subtitle text area in video frame.
     Falls back to NumPy-based detection if no API keys available."""
-    # Try Gemini Vision first if API keys are provided
+    # Try Grok Vision first if key is provided (Grok-2-vision is very accurate)
+    if st.session_state.grok_key:
+        try:
+            grok_models = st.session_state.valid_grok_info.get("models", ["grok-2-vision-1212", "grok-vision-beta"])
+            v_models = [m for m in grok_models if "vision" in m.lower()]
+            if not v_models: v_models = ["grok-2-vision-1212"]
+            
+            b64 = base64.b64encode(frame_bytes).decode()
+            prompt = """Look at this video frame carefully.
+Find the EXACT location of the subtitle/caption text overlay area.
+Reply ONLY with two numbers in this exact format: Y_PERCENTAGE HEIGHT_PERCENTAGE
+Where Y is the top edge (0-100) and HEIGHT is the area height (1-30).
+Example: 78 6"""
+
+            for m in v_models:
+                try:
+                    url = "https://api.xai.ai/v1/chat/completions"
+                    headers = {"Authorization": f"Bearer {st.session_state.grok_key}", "Content-Type": "application/json"}
+                    payload = {
+                        "model": m,
+                        "messages": [{"role": "user", "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+                        ]}],
+                        "temperature": 0.1
+                    }
+                    r = requests.post(url, json=payload, headers=headers, timeout=30)
+                    if r.status_code == 200:
+                        res = r.json()['choices'][0]['message']['content'].strip()
+                        parts = res.split()
+                        if len(parts) >= 2:
+                            by, bh = float(parts[0]), float(parts[1])
+                            # Shrink Logic
+                            sk = bh * 0.30
+                            by = by + (sk / 2)
+                            bh = bh - sk
+                            return np.clip(by, 50, 98), np.clip(bh, 1.2, 8.0)
+                except: continue
+        except: pass
+
+    # Try Gemini Vision if API keys are provided
     if api_keys:
         try:
             for k in api_keys:
@@ -249,7 +290,7 @@ with st.sidebar:
         st.success("RAM ရှင်းလင်းပြီးပါပြီ (Keys များကို ထိန်းသိမ်းထားပါသည်)")
     
     if st.button("🗑️ Data အားလုံးဖျက်ရန် (Keys မပါ)"):
-        preserve = [f'key_{i}' for i in range(1, 6)] + ['valid_keys_info', 'active_key', 'target_min', 'target_sec', 'blur_y_pos', 'blur_h_size', 'sub_y_pos', 'font_size', 'v_speed', 'v_pitch']
+        preserve = [f'key_{i}' for i in range(1, 6)] + ['valid_keys_info', 'active_key', 'grok_key', 'valid_grok_info', 'target_min', 'target_sec', 'blur_y_pos', 'blur_h_size', 'sub_y_pos', 'font_size', 'v_speed', 'v_pitch']
         for k in list(st.session_state.keys()):
             if k not in preserve:
                 del st.session_state[k]
@@ -276,7 +317,12 @@ with st.sidebar:
         k4 = st.session_state.get("key_4", "")
         k5 = st.session_state.get("key_5", "")
     api_keys = [k for k in [k1, k2, k3, k4, k5] if k]
-
+    
+    st.markdown("---")
+    st.subheader("🔑 Grok API Key (xAI)")
+    gx = st.text_input("Grok API Key", type="password", key="grok_key_input")
+    if gx: st.session_state.grok_key = gx
+    
     if st.button("🔌 Keys အားလုံး စမ်းသပ်ရန်"):
         if not api_keys:
             st.error("API Key အရင်ထည့်ပေးပါ။")
@@ -296,6 +342,22 @@ with st.sidebar:
                                 st.success(f"✅ Key {i+1} အောင်မြင်ပါသည်။")
                                 break
                         except: continue
+                
+                # Test Grok Key
+                if st.session_state.grok_key:
+                    try:
+                        url = "https://api.xai.ai/v1/models"
+                        headers = {"Authorization": f"Bearer {st.session_state.grok_key}"}
+                        r = requests.get(url, headers=headers, timeout=15)
+                        if r.status_code == 200:
+                            data = r.json()
+                            models = [m['id'] for m in data.get('data', [])]
+                            st.session_state.valid_grok_info = {"models": models}
+                            st.success("✅ Grok Key အောင်မြင်ပါသည်။")
+                        else:
+                            st.error("❌ Grok Key မမှန်ကန်ပါ။")
+                    except:
+                        st.error("❌ Grok API ဆက်သွယ်မှု မအောင်မြင်ပါ။")
             st.rerun()
 
     st.markdown("---")
@@ -725,38 +787,76 @@ FORMATTING RULES:
                 srt_res = None
                 errors = []
                 
-                with st.status("🌐 Gemini API နှင့် ဆက်သွယ်ပြီး ဘာသာပြန်နေပါသည်...", expanded=True) as status:
-                    for k_idx, k in enumerate(api_keys):
-                        status.write(f"🔑 Key {k_idx+1} ကို အသုံးပြုနေပါသည်...")
-                        info = st.session_state.valid_keys_info.get(k)
-                        versions = [info['version']] if info else API_VERSIONS
-                        models = info['models'] if info else DEFAULT_MODELS
-                        models = sorted(models, key=lambda x: 0 if 'flash' in x.lower() else 1)
+                with st.status("🌐 AI API နှင့် ဆက်သွယ်ပြီး ဘာသာပြန်နေပါသည်...", expanded=True) as status:
+                    # Try Grok First if available
+                    if st.session_state.grok_key:
+                        status.write("🔑 Grok API (xAI) ကို အသုံးပြုနေပါသည်...")
+                        g_models = st.session_state.valid_grok_info.get("models", ["grok-2-1212", "grok-beta"])
+                        t_models = [m for m in g_models if "vision" not in m.lower()]
+                        if not t_models: t_models = ["grok-2-1212"]
                         
-                        for ver in versions:
-                            for m in models:
-                                try:
-                                    status.write(f"🤖 Model: {m} ဖြင့် ဘာသာပြန်နေပါသည်...")
-                                    url = f"https://generativelanguage.googleapis.com/{ver}/models/{m}:generateContent?key={k}"
-                                    r = requests.post(url, json={"contents":cont}, timeout=180)
-                                    if r.status_code == 200:
-                                        data = r.json()
-                                        if 'candidates' in data and data['candidates'][0]['content']['parts']:
-                                            srt_res = data['candidates'][0]['content']['parts'][0]['text']
-                                            if srt_res:
-                                                st.session_state.active_key = k
-                                                status.update(label="✅ ဘာသာပြန်ခြင်း ပြီးမြောက်ပါပြီ!", state="complete")
-                                                with st.expander("📝 Narration Preview (AI က ရေးပေးထားသော စာသားများ)", expanded=True):
-                                                    st.text_area("Narration Content", srt_res, height=200)
-                                                break
-                                    else:
-                                        try: msg = r.json().get('error', {}).get('message', r.text)
-                                        except: msg = r.text
-                                        errors.append(f"{m}: {translate_error(msg, r.status_code)}")
-                                except Exception as e:
-                                    errors.append(f"{m}: {translate_error(str(e))}")
+                        for gm in t_models:
+                            try:
+                                status.write(f"🤖 Grok Model: {gm} ဖြင့် ဘာသာပြန်နေပါသည်...")
+                                url = "https://api.xai.ai/v1/chat/completions"
+                                headers = {"Authorization": f"Bearer {st.session_state.grok_key}", "Content-Type": "application/json"}
+                                # Grok-2 supports audio input in some versions, but standard is text + context.
+                                # For recap, we'll use the same prompt.
+                                payload = {
+                                    "model": gm,
+                                    "messages": [{"role": "user", "content": [
+                                        {"type": "text", "text": prm},
+                                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}} if st.session_state.base_frame else None
+                                    ]}],
+                                    "temperature": 0.7
+                                }
+                                # Filter out None from content
+                                payload["messages"][0]["content"] = [c for c in payload["messages"][0]["content"] if c is not None]
+                                
+                                r = requests.post(url, json=payload, headers=headers, timeout=180)
+                                if r.status_code == 200:
+                                    srt_res = r.json()['choices'][0]['message']['content'].strip()
+                                    if srt_res:
+                                        status.update(label="✅ Grok ဖြင့် ဘာသာပြန်ခြင်း ပြီးမြောက်ပါပြီ!", state="complete")
+                                        with st.expander("📝 Narration Preview (Grok)", expanded=True):
+                                            st.text_area("Narration Content", srt_res, height=200)
+                                        break
+                            except: continue
+                        if srt_res: pass
+
+                    # Fallback to Gemini
+                    if not srt_res:
+                        for k_idx, k in enumerate(api_keys):
+                            status.write(f"🔑 Gemini Key {k_idx+1} ကို အသုံးပြုနေပါသည်...")
+                            info = st.session_state.valid_keys_info.get(k)
+                            versions = [info['version']] if info else API_VERSIONS
+                            models = info['models'] if info else DEFAULT_MODELS
+                            models = sorted(models, key=lambda x: 0 if 'flash' in x.lower() else 1)
+                            
+                            for ver in versions:
+                                for m in models:
+                                    try:
+                                        status.write(f"🤖 Gemini Model: {m} ဖြင့် ဘာသာပြန်နေပါသည်...")
+                                        url = f"https://generativelanguage.googleapis.com/{ver}/models/{m}:generateContent?key={k}"
+                                        r = requests.post(url, json={"contents":cont}, timeout=180)
+                                        if r.status_code == 200:
+                                            data = r.json()
+                                            if 'candidates' in data and data['candidates'][0]['content']['parts']:
+                                                srt_res = data['candidates'][0]['content']['parts'][0]['text']
+                                                if srt_res:
+                                                    st.session_state.active_key = k
+                                                    status.update(label="✅ Gemini ဖြင့် ဘာသာပြန်ခြင်း ပြီးမြောက်ပါပြီ!", state="complete")
+                                                    with st.expander("📝 Narration Preview (Gemini)", expanded=True):
+                                                        st.text_area("Narration Content", srt_res, height=200)
+                                                    break
+                                        else:
+                                            try: msg = r.json().get('error', {}).get('message', r.text)
+                                            except: msg = r.text
+                                            errors.append(f"{m}: {translate_error(msg, r.status_code)}")
+                                    except Exception as e:
+                                        errors.append(f"{m}: {translate_error(str(e))}")
+                                if srt_res: break
                             if srt_res: break
-                        if srt_res: break
 
                 if not srt_res:
                     st.error("❌ Gemini ဘာသာပြန်ခြင်း မအောင်မြင်ပါ")
