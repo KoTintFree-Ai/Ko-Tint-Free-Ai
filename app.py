@@ -851,7 +851,6 @@ FORMATTING RULES:
                                             break
                                 except: continue
                             if srt_res: break
-                        if srt_res: break
 
                     # Fallback to Gemini
                     if not srt_res:
