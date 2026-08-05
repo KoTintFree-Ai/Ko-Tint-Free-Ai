@@ -112,8 +112,57 @@ def auto_fill_callback():
             st.session_state.bulk_msg = "⚠️ API Key ရှာမတွေ့ပါ။ (AIza..., AQ... သို့မဟုတ် gsk_...)"
         
         st.session_state.bulk_key_input = ""
+        # Save keys immediately after auto-fill
+        save_keys_to_file()
+
+# --- PERSISTENT KEY STORAGE ---
+KEYS_FILE = os.path.join(SCRIPT_DIR, "saved_keys.json")
+
+def save_keys_to_file():
+    """Save API keys to a JSON file for persistence across page refreshes."""
+    keys_data = {}
+    for i in range(1, 6):
+        k = st.session_state.get(f'key_{i}', "")
+        gk = st.session_state.get(f'grok_key_{i}', "")
+        if k: keys_data[f'key_{i}'] = k
+        if gk: keys_data[f'grok_key_{i}'] = gk
+    if keys_data:
+        try:
+            with open(KEYS_FILE, 'w') as f:
+                json.dump(keys_data, f)
+        except Exception:
+            pass
+
+def load_keys_from_file():
+    """Load API keys from file if session state is empty."""
+    if os.path.exists(KEYS_FILE):
+        try:
+            with open(KEYS_FILE, 'r') as f:
+                keys_data = json.load(f)
+            for k, v in keys_data.items():
+                if k in st.session_state and not st.session_state.get(k):
+                    st.session_state[k] = v
+                # Also set the widget keys so text inputs show the values
+                if k == 'key_1': st.session_state['w_key_1'] = v
+                if k == 'key_2': st.session_state['w_key_2'] = v
+                if k == 'key_3': st.session_state['w_key_3'] = v
+                if k == 'key_4': st.session_state['w_key_4'] = v
+                if k == 'key_5': st.session_state['w_key_5'] = v
+                if k == 'grok_key_1': st.session_state['w_grok_key_1'] = v
+                if k == 'grok_key_2': st.session_state['w_grok_key_2'] = v
+                if k == 'grok_key_3': st.session_state['w_grok_key_3'] = v
+                if k == 'grok_key_4': st.session_state['w_grok_key_4'] = v
+                if k == 'grok_key_5': st.session_state['w_grok_key_5'] = v
+        except Exception:
+            pass
+
+# Need json import for key persistence
+import json
 
 init_state()
+
+# Load saved keys from file if not already in session state
+load_keys_from_file()
 
 st.title("🎬 Movie Recap AI Pro V8.2")
 st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Auto Blur & Sync)")
@@ -402,8 +451,11 @@ with st.sidebar:
     sync_keys_to_state()
     api_keys = [st.session_state.get(f'key_{i}', "").strip() for i in range(1, 6) if st.session_state.get(f'key_{i}', "").strip()]
     
+    # Auto-save keys to file whenever they change
+    save_keys_to_file()
+    
     st.markdown("---")
-    st.subheader("🔑 Grok API Keys (၅ ခုအထိ)")
+    st.subheader("🔑 Groq API Keys (၅ ခုအထိ)")
     if st.session_state.active_grok_key:
         st.success("🟢 Grok API အလုပ်လုပ်နေပါသည်")
     
