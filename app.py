@@ -799,28 +799,49 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     return res_srt, get_dur(out_p)
 
 def get_filter(mir, scl, blr, by_px, bh_px, brn, sp, fs, sx, sy):
-    base_parts = []
-    if mir: base_parts.append("hflip")
-    if scl: base_parts.append("scale=1.06*iw:-1,crop=iw/1.06:ih/1.06")
-    base_str = ",".join(base_parts) if base_parts else "null"
-
-    if not blr:
-        fc = f"[0:v]{base_str}[main]"
-        if brn and sp and os.path.exists(sp):
-            fc += f";[main][1:v]overlay={sx}:{sy}[v]"
+    """Build ffmpeg filter chain.
+    
+    When scale/crop is enabled, the video is scaled by 1.06 then cropped back.
+    The blur coordinates are in the original frame space, but after scale/crop
+    the frame content has shifted (zoomed in), so blur coords must be adjusted.
+    
+    Scale 1.06x then crop back: content appears zoomed in by ~3% on each side.
+    So blur position shifts: by_adj = by_px / 1.06 + offset_from_zoom
+    
+    For simplicity: use expressions that reference iw/ih (post-scale dimensions).
+    When scale=1.06*iw:-1,crop=iw/1.06:ih/1.06, the cropped frame is same size as original.
+    But content is shifted. We need to use scale-adjusted coords for blur.
+    
+    Best approach: apply blur on the PRE-scale frame, then scale everything together.
+    """
+    # Step 1: Mirror on original
+    mir_str = "hflip," if mir else ""
+    
+    if blr:
+        # Apply blur on original frame FIRST (coords match original frame)
+        fc = f"[0:v]{mir_str}split[orig_main][orig_blur];"
+        fc += f"[orig_blur]crop=iw:{bh_px}:0:{by_px},boxblur=luma_radius=10:chroma_radius=4:alpha_radius=1[blurred];"
+        fc += f"[orig_main][blurred]overlay=0:{by_px}[blurred_frame];"
+        # Now apply scale/crop to the already-blurred frame
+        if scl:
+            fc += f"[blurred_frame]scale=1.06*iw:-1,crop=iw/1.06:ih/1.06[main];"
         else:
-            fc += ";[main]null[v0]"
-        return fc
+            fc += f"[blurred_frame]null[main];"
     else:
-        fc = f"[0:v]{base_str}[preblur];"
-        fc += f"[preblur]split[main][to_blur];"
-        fc += f"[to_blur]crop=iw:{bh_px}:0:{by_px},boxblur=luma_radius=10:chroma_radius=4:alpha_radius=1[blurred];"
-        fc += f"[main][blurred]overlay=0:{by_px}[postblur]"
-        if brn and sp and os.path.exists(sp):
-            fc += f";[postblur][1:v]overlay={sx}:{sy}[v0]"
-        else:
-            fc += ";[postblur]null[v0]"
-        return fc
+        # No blur - just apply mirror+scale directly
+        parts = []
+        if mir: parts.append("hflip")
+        if scl: parts.append("scale=1.06*iw:-1,crop=iw/1.06:ih/1.06")
+        base_str = ",".join(parts) if parts else "null"
+        fc = f"[0:v]{base_str}[main];"
+    
+    # Step 4: Overlay subtitle if needed (overlay goes on [main] which is post-scale)
+    if brn and sp and os.path.exists(sp):
+        fc += f"[main][1:v]overlay={sx}:{sy}[v]"
+    else:
+        fc += f"[main]null[v0]"
+    
+    return fc
 
 # --- MAIN UI ---
 up = st.file_uploader("ဗီဒီယို သို့မဟုတ် အော်ဒီယိုဖိုင် ရွေးချယ်ပါ", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"])
