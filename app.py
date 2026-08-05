@@ -23,7 +23,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FONT_PATH = os.path.join(SCRIPT_DIR, "Pyidaungsu.ttf")
 
 st.set_page_config(
-    page_title="Movie Recap AI Pro V8.1",
+    page_title="Movie Recap AI Pro V8.2",
     page_icon="🎬",
     layout="centered",
     initial_sidebar_state="expanded"
@@ -59,8 +59,8 @@ def init_state():
 
 init_state()
 
-st.title("🎬 Movie Recap AI Pro V8.1")
-st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Unicode & Wrap Fix)")
+st.title("🎬 Movie Recap AI Pro V8.2")
+st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Auto Blur & Sync)")
 
 # --- HELPER: SLIDER WITH PLUS/MINUS (V7.4) ---
 def plus_minus_slider(label, key, min_val, max_val, step=1):
@@ -91,6 +91,31 @@ def translate_error(err_msg, status_code=None):
         return "မူပိုင်ခွင့် သို့မဟုတ် လုံခြုံရေး စည်းကမ်းချက်များကြောင့် Google မှ ဘာသာပြန်ရန် ငြင်းဆိုလိုက်ပါသည်။"
     return f"အမှားအယွင်းတစ်ခု ဖြစ်ပေါ်နေပါသည်။ ({err_msg})"
 
+# --- AUTO DETECT SUBTITLE AREA ---
+def auto_detect_subtitle_area(frame_bytes):
+    """Detect subtitle area in video frame using pixel variance analysis"""
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as bf:
+            bf.write(frame_bytes); tf = bf.name
+        img = Image.open(tf).convert('L')
+        w, h = img.size
+        # Scan bottom 40% of frame for text area
+        arr = np.array(img.crop((0, int(h*0.6), w, h)))
+        var = np.var(arr, axis=1)
+        rows = np.where(var > np.mean(var)*2)[0]
+        os.remove(tf)
+        if len(rows) > 0:
+            blur_y = float(((int(h*0.6) + rows[0] - 5) / h) * 100)
+            blur_h = float(((rows[-1] - rows[0] + 10) / h) * 100)
+            # Safety bounds
+            blur_y = np.clip(blur_y, 60, 98)
+            blur_h = np.clip(blur_h, 2, 25)
+            return blur_y, blur_h
+    except Exception as e:
+        st.warning(f"Auto detect warning: {str(e)}")
+    # Fallback defaults
+    return 85.0, 10.0
+
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ ဆက်တင်များ")
@@ -103,7 +128,6 @@ with st.sidebar:
         return mem_info.rss / (1024 * 1024)  # MB
 
     ram_used = get_ram_usage()
-    # Streamlit Cloud free tier limit is usually 1GB (1024MB)
     ram_limit = 1024 
     ram_pct = min(ram_used / ram_limit, 1.0)
     
@@ -120,10 +144,8 @@ with st.sidebar:
         st.cache_data.clear()
         gc.collect()
         st.success("RAM ရှင်းလင်းပြီးပါပြီ")
-        # No rerun here to avoid potential input loss
     
     if st.button("🗑️ Data အားလုံးဖျက်ရန် (Keys မပါ)"):
-        # List of keys to preserve
         preserve = [f'key_{i}' for i in range(1, 6)] + ['valid_keys_info', 'active_key', 'target_min', 'target_sec', 'blur_y_pos', 'blur_h_size', 'sub_y_pos', 'font_size', 'v_speed', 'v_pitch']
         for k in list(st.session_state.keys()):
             if k not in preserve:
@@ -167,34 +189,56 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("🎬 ဗီဒီယို ပုံစံညှိရန်")
-    mirror_v = st.checkbox("ဗီဒီယို Mirror လှန်ရန်", value=True)
-    scale_v = st.checkbox("ဗီဒီယို Scale 106% ချဲ့ရန်", value=True)
+    mirror_v = st.checkbox("ဗီဒီယို Mirror လှန်ရန်", value=True, key="mirror_check")
+    scale_v = st.checkbox("ဗီဒီယို Scale 106% ချဲ့ရန်", value=True, key="scale_check")
 
     st.markdown("---")
-    blur_s = st.checkbox("မူရင်းစာတန်းထိုး ဝါးရန် (Blur)", value=True)
+    st.subheader("🤖 မူရင်းစာတန်းထိုး ဝါးရန် (Blur)")
+    
+    # Auto Detect vs Manual toggle
+    use_auto = st.toggle("🤖 AI အလိုအလျောက် ရှာဖွေရန်", value=True, key="blur_auto_toggle", help="AI က ဗီဒီယိုတွင် မူရင်းစာတန်းထိုးပါသော နေရာကို အလိုအလျောက် ရှာဖွေပြီး ဝါးပေးပါမည်")
+    use_manual = st.toggle("✏️ Manual ညှိရန်", value=False, key="blur_manual_toggle")
+    
+    blur_s = st.checkbox("မူရင်းစာတန်းထိုး ဝါးရန် (Blur Enable)", value=True, key="blur_enable_check")
+    
     if blur_s:
-        b_y = plus_minus_slider("ဝါးမည့်နေရာ (Y %)", "blur_y_pos", 0, 100, 1)
-        b_h = plus_minus_slider("ဝါးမည့်အကျယ် (H %)", "blur_h_size", 1, 30, 1)
+        if use_auto and not use_manual:
+            st.info("🤖 **AI Auto Detect Mode**\nဗီဒီယိုတင်ပြီး \"စတင်လုပ်ဆောင်ရန်\" နှိပ်ပါက AI က မူရင်းစာတန်းထိုး နေရာကို အလိုအလျောက် ရှာဖွေပြီး ဝါးပေးပါမည်။")
+        elif use_manual:
+            st.info("✏️ **Manual Mode** — အောက်ပါ slider များဖြင့် ညှိပါ")
+            b_y = plus_minus_slider("ဝါးမည့်နေရာ (Y %)", "blur_y_pos", 0, 100, 1)
+            b_h = plus_minus_slider("ဝါးမည့်အကျယ် (H %)", "blur_h_size", 1, 30, 1)
+        else:
+            st.info("⚙️ **Default Mode** — Y: 85%, H: 10%")
+            st.session_state.blur_y_pos = 85
+            st.session_state.blur_h_size = 10
     else:
         st.session_state.blur_y_pos = 85
         st.session_state.blur_h_size = 10
 
     st.markdown("---")
-    burn_s = st.checkbox("မြန်မာစာတန်းထိုး ထည့်ရန်", value=True)
+    st.subheader("📝 မြန်မာစာတန်းထိုး")
+    
+    burn_s = st.checkbox("မြန်မာစာတန်းထိုး ထည့်ရန်", value=True, key="burn_enable_check")
+    
     if burn_s:
-        f_s = plus_minus_slider("စာလုံးအရွယ်အစား", "font_size", 5, 100, 1)
-        s_y = plus_minus_slider("စာတန်းထိုးနေရာ (Y %)", "sub_y_pos", 0, 100, 1)
+        burn_manual = st.toggle("✏️ Manual ညှိရန်", value=False, key="subtitle_manual_toggle")
+        if burn_manual:
+            f_s = plus_minus_slider("စာလုံးအရွယ်အစား", "font_size", 5, 100, 1)
+            s_y = plus_minus_slider("စာတန်းထိုးနေရာ (Y %)", "sub_y_pos", 0, 100, 1)
+        else:
+            st.info("📍 Default: ဗီဒီယိုအောက်ခြေ အလယ်တည့်တည့် (Y: 85%, Font: 22)")
+            st.session_state.font_size = 22
+            st.session_state.sub_y_pos = 85
     else:
         st.session_state.sub_y_pos = 85
 
     st.markdown("---")
-    if st.button("✨ နေရာ အလိုအလျောက် ရှာရန်"):
-        st.session_state.do_detect = True
-    show_prev = st.checkbox("👀 ပုံစံ ကြိုတင်ကြည့်ရန်", value=True)
+    show_prev = st.checkbox("👀 ပုံစံ ကြိုတင်ကြည့်ရန်", value=True, key="preview_check")
 
     st.markdown("---")
     st.subheader("⏱️ အချိန် ထိန်းချုပ်ရန်")
-    fit_dur = st.toggle("သတ်မှတ်အချိန်အတွင်း အပြီးပြောရန်", value=True)
+    fit_dur = st.toggle("သတ်မှတ်အချိန်အတွင်း အပြီးပြောရန်", value=True, key="fit_duration_toggle")
     target_sec = 0
     if fit_dur:
         tm = plus_minus_slider("မိနစ်", "target_min", 0, 60, 1)
@@ -219,7 +263,6 @@ with st.sidebar:
 # --- UTILITIES ---
 def create_subtitle_image(text, font_size):
     """Render Myanmar text onto a small transparent image (Optimized for Memory)"""
-    # Load font
     font = None
     try:
         font = ImageFont.truetype(FONT_PATH, font_size, layout_engine=ImageFont.Layout.RAQM)
@@ -232,7 +275,6 @@ def create_subtitle_image(text, font_size):
             except Exception:
                 font = ImageFont.load_default()
 
-    # Calculate dimensions
     temp_draw = ImageDraw.Draw(Image.new('RGBA', (1, 1)))
     lines = text.split('\n')
     line_bboxes = [temp_draw.textbbox((0, 0), line, font=font) for line in lines]
@@ -249,10 +291,8 @@ def create_subtitle_image(text, font_size):
         bbox = line_bboxes[i]
         w = bbox[2] - bbox[0]
         x = (max_w - w) // 2
-        # Outline for readability
         for offset in [(-2,-2), (2,-2), (-2,2), (2,2)]:
             draw.text((x+offset[0], current_y+offset[1]), line, font=font, fill=(0,0,0,255))
-        # Main text (Yellow)
         draw.text((x, current_y), line, font=font, fill=(255, 255, 0, 255))
         current_y += line_h
 
@@ -308,13 +348,8 @@ def fmt_srt(s):
     return f"{time.strftime('%H:%M:%S', time.gmtime(s))},{m:03d}"
 
 def parse_srt_text(text):
-    # Remove markdown code blocks
     text = re.sub(r'```srt?', '', text, flags=re.IGNORECASE)
     text = re.sub(r'```', '', text).strip()
-    
-    # Aggressive SRT cleaning
-    # Remove timestamps like 00:00:00,000 --> 00:00:05,000
-    # Aggressively remove any timestamp-like patterns and SRT index numbers
     text = re.sub(r'\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}', '', text)
     text = re.sub(r'^\s*\d+\s*$', '', text, flags=re.MULTILINE)
     text = re.sub(r'\[\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\]', '', text)
@@ -325,26 +360,19 @@ def parse_srt_text(text):
     for line in lines:
         line = line.strip()
         if not line: continue
-        # Skip lines that are just numbers (SRT indices) or common timestamp patterns
         if re.match(r'^\d+$', line): continue
         if re.match(r'^\(?\d+[\.\)]\s*$', line): continue
         if re.match(r'^\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}$', line): continue
         if re.match(r'^\[\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\]$', line): continue
         if re.match(r'^\(\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}\.\d{1,3}\)$', line): continue
-        # Skip common headers
         if re.match(r'(?i)^(here is|narration|recap|script|translation):', line): continue
-        
         clean_lines.append(line)
     
     full_content = ' '.join(clean_lines)
-    # Remove any remaining multiple spaces
     full_content = re.sub(r'\s+', ' ', full_content).strip()
     
-    # Split into segments for TTS (by sentence)
     segments = []
-    # Split by Burmese full stop (။), comma (၊), and English equivalents
     parts = re.split(r'([။၊.!?;])', full_content)
-    
     for i in range(0, len(parts)-1, 2):
         seg = (parts[i] + parts[i+1]).strip()
         if seg: segments.append(seg)
@@ -363,7 +391,6 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     cur_t = 0.0
     srt_blocks = []
     
-    # Step 1: Generate individual audio segments
     for idx, txt in enumerate(segments):
         clean_txt = txt.strip()
         if not clean_txt: continue
@@ -380,7 +407,6 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
         
     if not temp_files: raise Exception("အသံဖိုင် ထုတ်လုပ်ခြင်း မအောင်မြင်ပါ။")
     
-    # Step 2: Concat raw segments
     raw = tempfile.mktemp(suffix=".mp3")
     l_p = tempfile.mktemp(suffix=".txt")
     with open(l_p, "w", encoding='utf-8') as f:
@@ -389,33 +415,27 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     
     total = get_dur(raw)
     
-    # Step 3: Final speed adjustment to hit target duration exactly
     if target > 0 and total > 0:
         factor = total / target
-        # Recap style speed range
         factor = np.clip(factor, 0.7, 2.0)
         
-        # FFmpeg atempo supports 0.5 to 2.0.
         if abs(factor - 1.0) > 0.01:
             subprocess.run(["ffmpeg", "-y", "-i", raw, "-filter:a", f"atempo={factor}", out_p], capture_output=True)
         else:
             shutil.copy(raw, out_p)
             
-        # Recalculate SRT timestamps based on final factor
         final_srt = []
         for line in "".join(srt_blocks).splitlines(keepends=True):
             if "-->" in line:
                 try:
                     s, e = line.split(" --> ")
-                    # Robust cleaning of timestamp strings (remove brackets, etc.)
                     s = re.sub(r'[\[\]\(\)]', '', s).strip()
                     e = re.sub(r'[\[\]\(\)]', '', e).strip()
-                    
                     s_s = sum(float(x)*60**i for i,x in enumerate(reversed(s.replace(",",".").split(":")))) / factor
                     e_s = sum(float(x)*60**i for i,x in enumerate(reversed(e.replace(",",".").split(":")))) / factor
                     final_srt.append(f"{fmt_srt(s_s)} --> {fmt_srt(e_s)}\n")
                 except:
-                    final_srt.append(line) # Fallback to original if parsing fails
+                    final_srt.append(line)
             else:
                 final_srt.append(line)
         res_srt = "".join(final_srt)
@@ -423,7 +443,6 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
         shutil.copy(raw, out_p)
         res_srt = "".join(srt_blocks)
         
-    # Cleanup
     for p in temp_files: 
         if os.path.exists(p): os.remove(p)
     if os.path.exists(l_p): os.remove(l_p)
@@ -432,15 +451,8 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     return res_srt, get_dur(out_p)
 
 def get_filter(mir, scl, blr, by_px, bh_px, brn, sp, fs, sx, sy):
-    """
-    Construct FFmpeg filter string using absolute pixel coordinates.
-    by_px: Blur Y start in pixels
-    bh_px: Blur height in pixels
-    sx, sy: Subtitle overlay coordinates in pixels
-    """
     base_parts = []
     if mir: base_parts.append("hflip")
-    # If scaled, we still need to calculate coordinates based on the output size of this base_str
     if scl: base_parts.append("scale=1.06*iw:-1,crop=iw/1.06:ih/1.06")
     base_str = ",".join(base_parts) if base_parts else "null"
 
@@ -452,8 +464,6 @@ def get_filter(mir, scl, blr, by_px, bh_px, brn, sp, fs, sx, sy):
             fc += ";[main]null[v]"
         return fc
     else:
-        # Important: Since we scaled/cropped in base_str, we must use pixel coordinates
-        # because 'H' and 'ih' inside the filter now refer to the new (cropped) dimensions.
         fc = f"[0:v]{base_str}[preblur];"
         fc += f"[preblur]split[main][to_blur];"
         fc += f"[to_blur]crop=iw:{bh_px}:0:{by_px},boxblur=15[blurred];"
@@ -483,20 +493,11 @@ if up:
                 with open(bi, "rb") as f: st.session_state.base_frame = f.read()
                 os.remove(bi)
 
-    if st.session_state.get("do_detect"):
-        tp = os.path.join(tempfile.gettempdir(), f"input_{fid}." + up.name.split(".")[-1])
-        try:
-            d = get_dur(tp); tf = tempfile.mktemp(suffix=".jpg")
-            subprocess.run(["ffmpeg", "-y", "-ss", str(d*0.1), "-i", tp, "-frames:v", "1", tf], capture_output=True)
-            img = Image.open(tf).convert('L'); w, h = img.size
-            arr = np.array(img.crop((0, int(h*0.6), w, h)))
-            var = np.var(arr, axis=1); rows = np.where(var > np.mean(var)*2)[0]
-            if len(rows) > 0:
-                st.session_state.blur_y_pos = float(((int(h*0.6) + rows[0] - 5) / h) * 100)
-                st.session_state.blur_h_size = float(((rows[-1] - rows[0] + 10) / h) * 100)
-            os.remove(tf)
-        except: pass
-        st.session_state.do_detect = False; st.rerun()
+    # Auto-detect subtitle area when auto mode is enabled and manual is off
+    if use_auto and not use_manual and st.session_state.base_frame and blur_s:
+        detected_y, detected_h = auto_detect_subtitle_area(st.session_state.base_frame)
+        st.session_state.blur_y_pos = detected_y
+        st.session_state.blur_h_size = detected_h
 
     if show_prev and st.session_state.base_frame:
         st.subheader("🖼️ Layout Preview")
@@ -509,15 +510,11 @@ if up:
             sub_img.save(sub_p)
         po = tempfile.mktemp(suffix=".jpg")
         
-        # Calculate preview overlay position
         x_p = (w - sw) // 2
         y_p = int(h * (st.session_state.sub_y_pos / 100)) - (sh // 2)
-        
-        # Calculate absolute pixel coordinates for blur
         by_px = int(h * (st.session_state.blur_y_pos / 100))
         bh_px = int(h * (st.session_state.blur_h_size / 100))
         
-        # Pass calculated pixel coordinates directly to get_filter
         fc = get_filter(mirror_v, scale_v, blur_s, by_px, bh_px, burn_s, sub_p, st.session_state.font_size, x_p, y_p)
         
         filter_script_p = tempfile.mktemp(suffix=".txt")
@@ -531,7 +528,6 @@ if up:
         subprocess.run(cmd, capture_output=True)
         if os.path.exists(filter_script_p): os.remove(filter_script_p)
         if os.path.exists(po):
-            # Read image into memory before deleting to ensure it shows correctly in Streamlit
             with Image.open(po) as img_prev:
                 st.image(img_prev)
             os.remove(po)
@@ -540,26 +536,25 @@ if up:
 
     if not api_keys: st.warning("⚠️ Sidebar တွင် Gemini API Key ထည့်ပေးပါ")
     elif st.button("🚀 စတင်လုပ်ဆောင်ရန်"):
-        # Check if ffmpeg is available
         ffmpeg_path = shutil.which("ffmpeg")
         if not ffmpeg_path:
             st.error("❌ FFmpeg မရရှိပါ။ packages.txt ဖိုင်တွင် ffmpeg ပါရှိကြောင်း သေချာပါစေ။")
         else:
             prg = st.progress(0); stt = st.empty()
             try:
-                # Clear previous results
                 for k in ['video_path', 'audio_path', 'srt_data']: st.session_state[k] = None
                 
+                # === STEP 1: Audio Compression ===
                 stt.text("📊 အဆင့် ၁: အသံဖိုင်ကို အမြန်ဆုံးဖြစ်အောင် ချုံ့နေပါသည်...")
                 prg.progress(10)
                 tp = os.path.join(tempfile.gettempdir(), f"input_{fid}." + up.name.split(".")[-1])
                 ag = tempfile.mktemp(suffix=".mp3")
-                # Optimization: Compress audio to 16kHz mono 32kbps for faster upload to Gemini
                 if up.name.lower().endswith((".mp4", ".mov", ".avi")):
                     subprocess.run(["ffmpeg", "-y", "-i", tp, "-vn", "-ar", "16000", "-ac", "1", "-b:a", "32k", ag], capture_output=True)
                 else:
                     subprocess.run(["ffmpeg", "-y", "-i", tp, "-ar", "16000", "-ac", "1", "-b:a", "32k", ag], capture_output=True)
 
+                # === STEP 2: AI Translation ===
                 stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည် (Gemini API)...")
                 prg.progress(30)
                 target_words = int(target_sec * 3.8)
@@ -591,7 +586,6 @@ FORMATTING RULES:
                         status.write(f"🔑 Key {k_idx+1} ကို အသုံးပြုနေပါသည်...")
                         info = st.session_state.valid_keys_info.get(k)
                         versions = [info['version']] if info else API_VERSIONS
-                        # Prioritize flash models for speed
                         models = info['models'] if info else DEFAULT_MODELS
                         models = sorted(models, key=lambda x: 0 if 'flash' in x.lower() else 1)
                         
@@ -600,7 +594,6 @@ FORMATTING RULES:
                                 try:
                                     status.write(f"🤖 Model: {m} ဖြင့် ဘာသာပြန်နေပါသည်...")
                                     url = f"https://generativelanguage.googleapis.com/{ver}/models/{m}:generateContent?key={k}"
-                                    # Optimized timeout: 180s is enough for flash models
                                     r = requests.post(url, json={"contents":cont}, timeout=180)
                                     if r.status_code == 200:
                                         data = r.json()
@@ -626,28 +619,35 @@ FORMATTING RULES:
                     for e in errors: st.info(e)
                     raise Exception("ဘာသာပြန်ခြင်း မလုပ်ဆောင်နိုင်ပါ။")
 
+                # === STEP 3: TTS Audio Generation ===
                 stt.text("🔊 အဆင့် ၃: အသံဖိုင်နှင့် Timing ညှိနေပါသည်...")
                 prg.progress(60)
                 ao_name = f"audio_{fid}_{int(time.time())}.mp3"
                 ao = os.path.join(tempfile.gettempdir(), ao_name)
                 
-                # Use a small status update during generation
                 with st.status("🔊 အသံဖိုင်များကို တစ်ခုချင်းစီ ထုတ်လုပ်နေပါသည်...", expanded=False) as status:
                     st.session_state.srt_data, audio_final_dur = asyncio.run(gen_audio_srt(srt_res, ao, v_id, v_speed, v_pitch, target_sec if fit_dur else 0))
                     status.update(label="✅ အသံဖိုင်အားလုံး ပေါင်းစပ်ပြီးပါပြီ!", state="complete")
                 st.session_state.audio_path = ao
-                
-                # Store the actual final audio duration for sync calculations
                 audio_final_dur = get_dur(ao)
 
+                # === STEP 4: Video Rendering ===
                 if up.name.lower().endswith((".mp4", ".mov", ".avi")):
                     stt.text("🎬 အဆင့် ၄: ဗီဒီယိုကို တည်းဖြတ်နေပါသည် (Rendering)...")
                     prg.progress(80)
-                    stt.text("🎬 အဆင့် ၄: စာတန်းထိုးများကို ပုံဖော်နေပါသည်...")
+                    
+                    # Run auto-detect AGAIN during processing (in case frame changed)
+                    if use_auto and not use_manual and st.session_state.base_frame and blur_s:
+                        stt.text("🤖 AI Auto Detect: မူရင်းစာတန်းထိုး နေရာ ရှာဖွေနေပါသည်...")
+                        detected_y, detected_h = auto_detect_subtitle_area(st.session_state.base_frame)
+                        st.session_state.blur_y_pos = detected_y
+                        st.session_state.blur_h_size = detected_h
+                        stt.text(f"🤖 AI Auto Detect: Y={detected_y:.1f}%, H={detected_h:.1f}%")
+                    
+                    stt.text("🎬 စာတန်းထိုးများကို ပုံဖော်နေပါသည်...")
                     sub_dir = tempfile.mkdtemp()
                     cmd_dim = ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", tp]
                     v_dim = subprocess.run(cmd_dim, capture_output=True, text=True).stdout.strip().split('x')
-                    vw, vh = int(v_dim[0]), int(vh[1])
                     vw, vh = int(v_dim[0]), int(v_dim[1])
 
                     segments = []
@@ -669,33 +669,26 @@ FORMATTING RULES:
                         simg.save(spath)
                         temp_imgs.append(spath)
                         
-                        # Calculate center position
                         x_pos = (vw - sw) // 2
                         y_pos = int(vh * (st.session_state.sub_y_pos / 100)) - (sh // 2)
                         
-                        # More robust path escaping for FFmpeg movie filter on Linux
                         safe_spath = spath.replace("'", "'\\''").replace(":", "\\:")
                         overlay_filters.append(f"movie=filename='{safe_spath}'[s{i}];[v][s{i}]overlay={x_pos}:{y_pos}:enable='between(t,{seg['start']},{seg['end']})'[v]")
 
-                    # Calculate absolute pixel coordinates for blur during rendering
                     by_px_r = int(vh * (st.session_state.blur_y_pos / 100))
                     bh_px_r = int(vh * (st.session_state.blur_h_size / 100))
                     
                     # Get video duration for speed calculation
                     video_duration = get_dur(tp)
                     
-                    # === FIX: Video-Audio Speed Sync ===
-                    # When target duration is set, we need to speed up the VIDEO too
-                    # so both video and audio end at exactly the target time
+                    # === VIDEO-AUDIO SPEED SYNC ===
                     video_speed_factor = 1.0
                     if fit_dur and target_sec > 0 and video_duration > 0:
                         video_speed_factor = video_duration / target_sec
-                        # Clip to safe range (0.5x to 2.0x speed)
                         video_speed_factor = np.clip(video_speed_factor, 0.5, 2.0)
                         stt.text(f"🎬 Video Speed Factor: {video_speed_factor:.2f}x (Video: {video_duration:.1f}s → Target: {target_sec}s)")
                     
-                    # For rendering, the base filter (mirror, scale, blur) comes first
-                    # Add video speed adjustment BEFORE the base filters
+                    # Build filter with optional speed adjustment
                     if abs(video_speed_factor - 1.0) > 0.01:
                         speed_filter = f"setpts=1/{video_speed_factor}*PTS"
                         base_filter_with_speed = f"[0:v]{speed_filter}[speedup]"
@@ -703,7 +696,6 @@ FORMATTING RULES:
                         base_filter_with_speed = "[0:v]"
                     
                     fcf = get_filter(mirror_v, scale_v, blur_s, by_px_r, bh_px_r, False, None, 0, 0, 0)
-                    # Insert speed filter before the main processing
                     if abs(video_speed_factor - 1.0) > 0.01:
                         full_filter = base_filter_with_speed + ";" + fcf.replace("[0:v]", "[speedup]")
                     else:
@@ -722,32 +714,24 @@ FORMATTING RULES:
                     fv_name = f"final_{fid}_{int(time.time())}.mp4"
                     fv = os.path.join(tempfile.gettempdir(), fv_name)
 
-                    # Determine final duration based on actual generated audio
                     final_audio_dur = audio_final_dur
                     
                     # Build FFmpeg command with proper audio-video sync
                     if abs(video_speed_factor - 1.0) > 0.01:
-                        # Video speed is already adjusted via setpts filter
-                        # Now we need to match audio to the same duration
-                        # The video will be: video_duration / video_speed_factor seconds
                         adjusted_video_dur = video_duration / video_speed_factor
                         
                         if final_audio_dur > adjusted_video_dur + 0.5:
-                            # Audio is longer than adjusted video - need to speed up audio more
                             audio_speed_factor = final_audio_dur / adjusted_video_dur
                             audio_speed_factor = np.clip(audio_speed_factor, 0.5, 2.0)
                             
-                            # Create sped-up audio version
                             ao_sped = tempfile.mktemp(suffix=".mp3")
                             subprocess.run(["ffmpeg", "-y", "-i", ao, "-filter:a", f"atempo={audio_speed_factor}", ao_sped], capture_output=True)
                             cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", tp, "-i", ao_sped, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
                             if os.path.exists(ao_sped):
                                 st.session_state.audio_path = ao_sped
                         else:
-                            # Cut at the adjusted video duration
                             cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-t", str(adjusted_video_dur), fv]
                     else:
-                        # No speed adjustment needed - original behavior
                         if video_duration < final_audio_dur - 0.5:
                             cmd = ["ffmpeg", "-y", "-stream_loop", "-1", "-i", tp, "-i", ao, "-filter_complex_script", filter_script, "-map", "[v]", "-map", "1:a", "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-c:a", "aac", "-b:a", "192k", "-shortest", fv]
                         else:
