@@ -4,4 +4,3 @@ requests
 numpy
 Pillow>=10.0.0,<12.0.0
 psutil
-python-dotenv
