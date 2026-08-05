@@ -9,6 +9,8 @@ import edge_tts
 import subprocess
 import re
 import json
+import shutil
+import numpy as np
 
 # --- CONFIGURATION ---
 API_VERSIONS = ["v1beta", "v1"]
@@ -102,7 +104,6 @@ load_keys_from_file()
 
 # --- HELPER: SLIDER WITH PLUS/MINUS ---
 def plus_minus_slider(label, key, min_val, max_val, step=1):
-    import numpy as np
     st.write(f"**{label}**")
     if key not in st.session_state: st.session_state[key] = min_val
     def on_btn(delta):
@@ -212,7 +213,6 @@ def parse_srt_text(text):
     return [s for s in segments if s]
 
 async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
-    import numpy as np
     rate = f"+{int((spd-55)*2)}%" if spd>=55 else f"{int((spd-55)*2)}%"
     pitch = f"+{int((ptc-50)*2)}Hz" if ptc>=50 else f"{int((ptc-50)*2)}Hz"
     segments = parse_srt_text(text)
@@ -253,7 +253,6 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
         if abs(factor - 1.0) > 0.01:
             subprocess.run(["ffmpeg", "-y", "-i", raw, "-filter:a", f"atempo={factor}", out_p], capture_output=True)
         else:
-            import shutil
             shutil.copy(raw, out_p)
 
         final_srt = []
@@ -272,7 +271,6 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
                 final_srt.append(line)
         res_srt = "".join(final_srt)
     else:
-        import shutil
         shutil.copy(raw, out_p)
         res_srt = "".join(srt_blocks)
 
@@ -324,7 +322,7 @@ with st.sidebar:
                 for i in range(min(5, len(gemini_found))):
                     st.session_state[f'key_{i+1}'] = gemini_found[i]
                     st.session_state[f'w_key_{i+1}'] = gemini_found[i]
-                msg.append(f"✅ Gemini Keys {len(found[:5])} ခု")
+                msg.append(f"✅ Gemini Keys {len(gemini_found[:5])} ခု")
 
             st.session_state.bulk_msg = " ဖြည့်ပြီးပါပြီ: " + ", ".join(msg) if msg else "⚠️ API Key ရှာမတွေ့ပါ။"
             st.session_state.bulk_key_input = ""
