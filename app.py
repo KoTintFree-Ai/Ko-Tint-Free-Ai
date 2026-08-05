@@ -97,11 +97,13 @@ def auto_fill_callback():
         if gemini_found:
             for i in range(min(5, len(gemini_found))):
                 st.session_state[f'key_{i+1}'] = gemini_found[i]
+                st.session_state[f'w_key_{i+1}'] = gemini_found[i]
             msg.append(f"✅ Gemini Keys {len(gemini_found[:5])} ခု")
         
         if grok_found:
             for i in range(min(5, len(grok_found))):
                 st.session_state[f'grok_key_{i+1}'] = grok_found[i]
+                st.session_state[f'w_grok_key_{i+1}'] = grok_found[i]
             msg.append(f"✅ Grok Keys {len(grok_found[:5])} ခု")
         
         if msg:
@@ -167,7 +169,7 @@ Example: 78 6"""
 
                 for m in v_models:
                     try:
-                        url = "https://api.xai.ai/v1/chat/completions"
+                        url = "https://api.x.ai/v1/chat/completions"
                         headers = {"Authorization": f"Bearer {gk}", "Content-Type": "application/json"}
                         payload = {
                             "model": m,
@@ -460,7 +462,7 @@ with st.sidebar:
                     # Retry logic (2 attempts)
                     for attempt in range(2):
                         try:
-                            url = "https://api.xai.ai/v1/models"
+                            url = "https://api.x.ai/v1/models"
                             headers = {**HTTP_HEADERS, "Authorization": f"Bearer {gk}"}
                             r = requests.get(url, headers=headers, timeout=30)
                             if r.status_code == 200:
@@ -945,7 +947,7 @@ FORMATTING RULES:
                             for gm in t_models:
                                 try:
                                     status.write(f"🤖 Grok Model: {gm} ဖြင့် ဘာသာပြန်နေပါသည်...")
-                                    url = "https://api.xai.ai/v1/chat/completions"
+                                    url = "https://api.x.ai/v1/chat/completions"
                                     headers = {"Authorization": f"Bearer {gk}", "Content-Type": "application/json"}
                                     # Grok-2 supports audio input in some versions, but standard is text + context.
                                     # For recap, we'll use the same prompt.
