@@ -91,11 +91,76 @@ def translate_error(err_msg, status_code=None):
         return "မူပိုင်ခွင့် သို့မဟုတ် လုံခြုံရေး စည်းကမ်းချက်များကြောင့် Google မှ ဘာသာပြန်ရန် ငြင်းဆိုလိုက်ပါသည်။"
     return f"အမှားအယွင်းတစ်ခု ဖြစ်ပေါ်နေပါသည်။ ({err_msg})"
 
-# --- AUTO DETECT SUBTITLE AREA ---
-def auto_detect_subtitle_area(frame_bytes):
-    """Detect subtitle area in video frame using improved multi-method analysis.
-    Method: Find text-like areas by detecting high-frequency rows (edges/text)
-    while ignoring pure black bars and uniform regions."""
+# --- GEMINI VISION AUTO DETECT SUBTITLE AREA ---
+def auto_detect_subtitle_area(frame_bytes, api_keys=None):
+    """Use Gemini AI Vision to accurately detect subtitle text area in video frame.
+    Falls back to NumPy-based detection if no API keys available."""
+    # Try Gemini Vision first if API keys are provided
+    if api_keys:
+        try:
+            for k in api_keys:
+                info = st.session_state.valid_keys_info.get(k)
+                versions = [info['version']] if info else API_VERSIONS
+                models = info['models'] if info else DEFAULT_MODELS
+                models = sorted(models, key=lambda x: 0 if 'flash' in x.lower() else 1)
+                
+                for ver in versions:
+                    for m in models:
+                        if 'flash' not in m.lower() and 'pro' not in m.lower():
+                            continue
+                        try:
+                            b64 = base64.b64encode(frame_bytes).decode()
+                            prompt = """Look at this video frame carefully.
+
+Find the EXACT location of the subtitle/caption text overlay area.
+This is the text that appears ON TOP of the video (not part of the video content itself).
+
+Reply ONLY with two numbers in this exact format:
+Y_PERCENTAGE HEIGHT_PERCENTAGE
+
+Where:
+- Y_PERCENTAGE = the top edge of the subtitle area as percentage from top (0-100)
+- HEIGHT_PERCENTAGE = the height of the subtitle area as percentage of total height (1-30)
+
+Example reply: 78 6
+
+If no subtitle text is visible, reply: 85 10"""
+                            
+                            cont = [{"role":"user","parts":[
+                                {"text": prompt},
+                                {"inline_data":{"mime_type":"image/jpeg","data":b64}}
+                            ]}]
+                            
+                            url = f"https://generativelanguage.googleapis.com/{ver}/models/{m}:generateContent?key={k}"
+                            r = requests.post(url, json={"contents": cont, "generationConfig": {"temperature": 0.1}}, timeout=30)
+                            
+                            if r.status_code == 200:
+                                data = r.json()
+                                if 'candidates' in data and data['candidates'][0]['content']['parts']:
+                                    result = data['candidates'][0]['content']['parts'][0]['text'].strip()
+                                    parts = result.split()
+                                    if len(parts) >= 2:
+                                        blur_y = float(parts[0])
+                                        blur_h = float(parts[1])
+                                        blur_y = np.clip(blur_y, 50, 98)
+                                        blur_h = np.clip(blur_h, 2, 30)
+                                        st.session_state.active_key = k
+                                        return blur_y, blur_h
+                            elif r.status_code == 404:
+                                continue  # try next model
+                            else:
+                                continue
+                        except Exception:
+                            continue
+                    # If flash model succeeded, break
+                    break
+                # If any key succeeded, break
+                if st.session_state.active_key:
+                    break
+        except Exception as e:
+            st.warning(f"Gemini Vision error: {str(e)}")
+    
+    # Fallback: NumPy-based detection (simplified)
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as bf:
             bf.write(frame_bytes); tf = bf.name
@@ -103,71 +168,35 @@ def auto_detect_subtitle_area(frame_bytes):
         w, h = img.size
         arr = np.array(img)
         
-        # Method 1: Edge detection - find rows with text-like horizontal edges
-        # Calculate horizontal gradient (text has many vertical edges)
-        diff = np.abs(arr[:, 1:] - arr[:, :-1])
-        row_edge_strength = np.sum(diff, axis=1)  # sum of horizontal differences per row
+        # Edge detection on bottom 60% (more generous)
+        bottom_start = int(h * 0.40)
+        bottom_arr = arr[bottom_start:, :]
         
-        # Method 2: Find rows that are NOT pure black (exclude letterbox bars)
-        row_brightness = np.mean(arr, axis=1)
-        is_not_black = row_brightness > 20  # rows with some light
+        # Use horizontal gradient for edge detection
+        diff = np.abs(bottom_arr[:, 1:] - bottom_arr[:, :-1])
+        row_edge = np.sum(diff, axis=1)
         
-        # Combine: rows that have edges AND are not pure black
-        # Focus on bottom 50% of frame where subtitles typically are
-        bottom_start = int(h * 0.50)
-        bottom_mask = np.zeros(h, dtype=bool)
-        bottom_mask[bottom_start:] = True
+        # Filter out pure black rows
+        row_brightness = np.mean(bottom_arr, axis=1)
+        is_active = row_brightness > 15
         
-        # Score each row: high edge + not black = likely subtitle area
-        text_score = row_edge_strength * is_not_black.astype(float)
-        text_score[~bottom_mask] = 0  # only look at bottom half
+        # Score = edges * active
+        score = row_edge * is_active.astype(float)
         
-        # Threshold: rows with significant text activity
-        threshold = np.percentile(text_score[bottom_start:], 70)  # top 30% of bottom half
-        text_rows = np.where(text_score > max(threshold, 1.0))[0]
-        
-        if len(text_rows) > 0:
-            # Find the densest cluster of text rows
-            # Group consecutive rows (with gaps up to 15 pixels)
-            groups = []
-            current_group = [text_rows[0]]
-            for i in range(1, len(text_rows)):
-                if text_rows[i] - text_rows[i-1] <= 15:
-                    current_group.append(text_rows[i])
-                else:
-                    if len(current_group) >= 3:  # at least 3 rows to be valid
-                        groups.append(current_group)
-                    current_group = [text_rows[i]]
-            if len(current_group) >= 3:
-                groups.append(current_group)
-            
-            if groups:
-                # Pick the group with the highest average text score
-                best_group = max(groups, key=lambda g: np.mean(text_score[g]))
-                blur_y = float((best_group[0] - 5) / h * 100)
-                blur_h = float((best_group[-1] - best_group[0] + 15) / h * 100)
-                blur_y = np.clip(blur_y, 55, 98)
-                blur_h = np.clip(blur_h, 3, 30)
+        if np.max(score) > 5:
+            text_rows = np.where(score > np.percentile(score[score > 0], 50) if np.any(score > 0) else 10)[0]
+            if len(text_rows) >= 2:
+                blur_y = float((bottom_start + text_rows[0] - 3) / h * 100)
+                blur_h = float((text_rows[-1] - text_rows[0] + 8) / h * 100)
+                blur_y = np.clip(blur_y, 50, 98)
+                blur_h = np.clip(blur_h, 3, 25)
                 os.remove(tf)
                 return blur_y, blur_h
         
-        # Fallback Method: Try simpler variance-based detection on bottom 50%
-        bottom_arr = arr[int(h*0.5):, :]
-        var = np.var(bottom_arr, axis=1)
-        rows = np.where(var > 15.0)[0]  # absolute threshold for text variance
-        
-        if len(rows) >= 3:
-            blur_y = float(((int(h*0.5) + rows[0] - 5) / h) * 100)
-            blur_h = float(((rows[-1] - rows[0] + 10) / h) * 100)
-            blur_y = np.clip(blur_y, 55, 98)
-            blur_h = np.clip(blur_h, 3, 30)
-            os.remove(tf)
-            return blur_y, blur_h
-        
         os.remove(tf)
     except Exception as e:
-        st.warning(f"Auto detect warning: {str(e)}")
-    # Fallback defaults - slightly adjusted for typical vertical video
+        st.warning(f"Fallback detect error: {str(e)}")
+    
     return 78.0, 8.0
 
 # --- SIDEBAR ---
@@ -562,7 +591,7 @@ if up:
 
     # Auto-detect subtitle area when auto mode is enabled and manual is off
     if use_auto and not use_manual and st.session_state.base_frame and blur_s:
-        detected_y, detected_h = auto_detect_subtitle_area(st.session_state.base_frame)
+        detected_y, detected_h = auto_detect_subtitle_area(st.session_state.base_frame, api_keys if api_keys else None)
         st.session_state.blur_y_pos = detected_y
         st.session_state.blur_h_size = detected_h
 
@@ -706,7 +735,7 @@ FORMATTING RULES:
                     # Run auto-detect AGAIN during processing (in case frame changed)
                     if use_auto and not use_manual and st.session_state.base_frame and blur_s:
                         stt.text("🤖 AI Auto Detect: မူရင်းစာတန်းထိုး နေရာ ရှာဖွေနေပါသည်...")
-                        detected_y, detected_h = auto_detect_subtitle_area(st.session_state.base_frame)
+                        detected_y, detected_h = auto_detect_subtitle_area(st.session_state.base_frame, api_keys if api_keys else None)
                         st.session_state.blur_y_pos = detected_y
                         st.session_state.blur_h_size = detected_h
                         stt.text(f"🤖 AI Auto Detect: Y={detected_y:.1f}%, H={detected_h:.1f}%")
