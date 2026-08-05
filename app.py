@@ -466,7 +466,7 @@ def get_filter(mir, scl, blr, by_px, bh_px, brn, sp, fs, sx, sy):
     else:
         fc = f"[0:v]{base_str}[preblur];"
         fc += f"[preblur]split[main][to_blur];"
-        fc += f"[to_blur]crop=iw:{bh_px}:0:{by_px},boxblur=15[blurred];"
+        fc += f"[to_blur]crop=iw:{bh_px}:0:{by_px},boxblur=10[blurred];"
         fc += f"[main][blurred]overlay=0:{by_px}[postblur]"
         if brn and sp and os.path.exists(sp):
             fc += f";[postblur][1:v]overlay={sx}:{sy}[v]"
