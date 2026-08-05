@@ -63,39 +63,37 @@ def init_state():
 def auto_fill_callback():
     if 'bulk_key_input' in st.session_state and st.session_state.bulk_key_input:
         text = st.session_state.bulk_key_input
-        # Enhanced extraction: split by any whitespace, common separators, and Burmese punctuation
-        parts = re.split(r'[\s,၊။၊၊\t\n\r]+', text)
         
-        gemini_found = []
-        grok_found = []
+        # Global Regex Search: find all patterns anywhere in the text
+        # Gemini: AIza... or AQ.Ab8RN6...
+        gemini_found = re.findall(r'(AIza[0-9A-Za-z-_]{35,}|AQ\.[0-9A-Za-z-_]{30,})', text)
+        # Grok: gsk_...
+        grok_found = re.findall(r'(gsk_[0-9A-Za-z]{40,})', text)
         
-        for p in parts:
-            # Clean common wrappers and punctuation
-            clean_p = p.strip().strip('။၊.()[]{}<>:;*')
-            if not clean_p: continue
-            
-            # Match Gemini Keys (AIza... or AQ.Ab8RN6...)
-            if (clean_p.startswith('AIza') and len(clean_p) >= 35) or (clean_p.startswith('AQ.') and len(clean_p) >= 30):
-                if clean_p not in gemini_found: gemini_found.append(clean_p)
-            # Match Grok Keys (gsk_...)
-            elif clean_p.startswith('gsk_') and len(clean_p) >= 30:
-                if clean_p not in grok_found: grok_found.append(clean_p)
+        # Remove duplicates while preserving order
+        gemini_found = list(dict.fromkeys(gemini_found))
+        grok_found = list(dict.fromkeys(grok_found))
         
         msg = []
         if gemini_found:
-            # Fill Gemini slots
+            # Explicitly update all 5 slots
             for i in range(5):
                 slot = f'key_{i+1}'
                 if i < len(gemini_found):
                     st.session_state[slot] = gemini_found[i]
+                else:
+                    # Optional: Keep existing or clear? Let's keep existing if not enough new ones
+                    pass
             msg.append(f"✅ Gemini Keys {len(gemini_found[:5])} ခု")
         
         if grok_found:
-            # Fill Grok slots
+            # Explicitly update all 5 slots
             for i in range(5):
                 slot = f'grok_key_{i+1}'
                 if i < len(grok_found):
                     st.session_state[slot] = grok_found[i]
+                else:
+                    pass
             msg.append(f"✅ Grok Keys {len(grok_found[:5])} ခု")
         
         if msg:
@@ -369,6 +367,7 @@ with st.sidebar:
         st.success("🟢 API Key အလုပ်လုပ်နေပါသည်")
     
     # API Key inputs directly tied to session state
+    # We use st.session_state keys directly to maintain values even when toggle is off
     st.text_input("API Key 1", type="password", key="key_1")
     show_more_keys = st.toggle("🔽 ကျန် API Keys များ ဖော်ပြရန်", value=False, key="show_more_keys_toggle")
     if show_more_keys:
@@ -377,6 +376,7 @@ with st.sidebar:
         st.text_input("API Key 4", type="password", key="key_4")
         st.text_input("API Key 5", type="password", key="key_5")
     
+    # Ensure all 5 keys are retrieved from session state regardless of toggle
     api_keys = [st.session_state.get(f'key_{i}', "") for i in range(1, 6) if st.session_state.get(f'key_{i}', "")]
     
     st.markdown("---")
