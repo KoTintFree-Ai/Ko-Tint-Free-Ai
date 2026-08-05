@@ -66,44 +66,30 @@ def auto_fill_callback():
     if 'bulk_key_input' in st.session_state and st.session_state.bulk_key_input:
         text = st.session_state.bulk_key_input
         
-        # Global Regex Search: find all patterns anywhere in the text
-        # Gemini: AIza... or AQ.Ab8RN6...
-        gemini_found = re.findall(r'(AIza[0-9A-Za-z-_]{35,}|AQ\.[0-9A-Za-z-_]{30,})', text)
-        # Grok: gsk_...
-        grok_found = re.findall(r'(gsk_[0-9A-Za-z]{40,})', text)
+        # Enhanced Regex: Capture Gemini (AIza... or AQ...) and Grok (gsk_...)
+        # We look for alphanumeric strings starting with these prefixes
+        gemini_found = re.findall(r'(AIza[0-9A-Za-z-_]{30,}|AQ\.[0-9A-Za-z-_]{30,})', text)
+        grok_found = re.findall(r'(gsk_[0-9A-Za-z]{30,})', text)
         
-        # Remove duplicates while preserving order
         gemini_found = list(dict.fromkeys(gemini_found))
         grok_found = list(dict.fromkeys(grok_found))
         
         msg = []
         if gemini_found:
-            # Explicitly update all 5 slots
-            for i in range(5):
-                slot = f'key_{i+1}'
-                if i < len(gemini_found):
-                    st.session_state[slot] = gemini_found[i]
-                else:
-                    # Optional: Keep existing or clear? Let's keep existing if not enough new ones
-                    pass
+            for i in range(min(5, len(gemini_found))):
+                st.session_state[f'key_{i+1}'] = gemini_found[i]
             msg.append(f"✅ Gemini Keys {len(gemini_found[:5])} ခု")
         
         if grok_found:
-            # Explicitly update all 5 slots
-            for i in range(5):
-                slot = f'grok_key_{i+1}'
-                if i < len(grok_found):
-                    st.session_state[slot] = grok_found[i]
-                else:
-                    pass
+            for i in range(min(5, len(grok_found))):
+                st.session_state[f'grok_key_{i+1}'] = grok_found[i]
             msg.append(f"✅ Grok Keys {len(grok_found[:5])} ခု")
         
         if msg:
             st.session_state.bulk_msg = " ဖြည့်ပြီးပါပြီ: " + ", ".join(msg)
         else:
-            st.session_state.bulk_msg = "⚠️ စာသားထဲတွင် API Key တစ်ခုမှ ရှာမတွေ့ပါ။ (AIza..., AQ... သို့မဟုတ် gsk_... ဖြင့် စရပါမည်)"
+            st.session_state.bulk_msg = "⚠️ API Key ရှာမတွေ့ပါ။ (AIza..., AQ... သို့မဟုတ် gsk_...)"
         
-        # Clear the input box safely
         st.session_state.bulk_key_input = ""
 
 init_state()
@@ -368,14 +354,14 @@ with st.sidebar:
     if st.session_state.active_key:
         st.success("🟢 API Key အလုပ်လုပ်နေပါသည်")
     
-    # API Key inputs with persistence logic
-    st.text_input("API Key 1", type="password", value=st.session_state.get("key_1", ""), key="key_1_input", on_change=lambda: st.session_state.update({"key_1": st.session_state.key_1_input}))
+    # API Key inputs directly tied to session state for persistence
+    st.text_input("API Key 1", type="password", key="key_1")
     show_more_keys = st.toggle("🔽 ကျန် API Keys များ ဖော်ပြရန်", value=False, key="show_more_keys_toggle")
     if show_more_keys:
-        st.text_input("API Key 2", type="password", value=st.session_state.get("key_2", ""), key="key_2_input", on_change=lambda: st.session_state.update({"key_2": st.session_state.key_2_input}))
-        st.text_input("API Key 3", type="password", value=st.session_state.get("key_3", ""), key="key_3_input", on_change=lambda: st.session_state.update({"key_3": st.session_state.key_3_input}))
-        st.text_input("API Key 4", type="password", value=st.session_state.get("key_4", ""), key="key_4_input", on_change=lambda: st.session_state.update({"key_4": st.session_state.key_4_input}))
-        st.text_input("API Key 5", type="password", value=st.session_state.get("key_5", ""), key="key_5_input", on_change=lambda: st.session_state.update({"key_5": st.session_state.key_5_input}))
+        st.text_input("API Key 2", type="password", key="key_2")
+        st.text_input("API Key 3", type="password", key="key_3")
+        st.text_input("API Key 4", type="password", key="key_4")
+        st.text_input("API Key 5", type="password", key="key_5")
     
     api_keys = [st.session_state.get(f'key_{i}', "") for i in range(1, 6) if st.session_state.get(f'key_{i}', "")]
     
@@ -384,13 +370,13 @@ with st.sidebar:
     if st.session_state.active_grok_key:
         st.success("🟢 Grok API အလုပ်လုပ်နေပါသည်")
     
-    st.text_input("Grok Key 1", type="password", value=st.session_state.get("grok_key_1", ""), key="grok_key_1_input", on_change=lambda: st.session_state.update({"grok_key_1": st.session_state.grok_key_1_input}))
+    st.text_input("Grok Key 1", type="password", key="grok_key_1")
     show_more_grok = st.toggle("🔽 ကျန် Grok Keys များ ဖော်ပြရန်", value=False, key="show_more_grok_toggle")
     if show_more_grok:
-        st.text_input("Grok Key 2", type="password", value=st.session_state.get("grok_key_2", ""), key="grok_key_input_2", on_change=lambda: st.session_state.update({"grok_key_2": st.session_state.grok_key_input_2}))
-        st.text_input("Grok Key 3", type="password", value=st.session_state.get("grok_key_3", ""), key="grok_key_input_3", on_change=lambda: st.session_state.update({"grok_key_3": st.session_state.grok_key_input_3}))
-        st.text_input("Grok Key 4", type="password", value=st.session_state.get("grok_key_4", ""), key="grok_key_input_4", on_change=lambda: st.session_state.update({"grok_key_4": st.session_state.grok_key_input_4}))
-        st.text_input("Grok Key 5", type="password", value=st.session_state.get("grok_key_5", ""), key="grok_key_input_5", on_change=lambda: st.session_state.update({"grok_key_5": st.session_state.grok_key_input_5}))
+        st.text_input("Grok Key 2", type="password", key="grok_key_2")
+        st.text_input("Grok Key 3", type="password", key="grok_key_3")
+        st.text_input("Grok Key 4", type="password", key="grok_key_4")
+        st.text_input("Grok Key 5", type="password", key="grok_key_5")
     
     grok_keys = [st.session_state.get(f'grok_key_{i}', "") for i in range(1, 6) if st.session_state.get(f'grok_key_{i}', "")]
     
