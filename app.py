@@ -11,15 +11,17 @@ import re
 import shutil
 import psutil
 import gc
+import numpy as np
 
 # --- CONFIGURATION ---
 API_VERSIONS = ["v1beta", "v1"]
 DEFAULT_MODELS = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", "gemini-pro"]
 
 st.set_page_config(
-    page_title="Myanmar AI Audio & SRT Generator",
+    page_title="Myanmar AI Audio & SRT Pro",
     page_icon="🎙️",
-    layout="centered"
+    layout="centered",
+    initial_sidebar_state="expanded"
 )
 
 # --- CSS: CUSTOM STYLING ---
@@ -37,36 +39,51 @@ def init_state():
     keys = ['audio_path', 'srt_data', 'last_uploaded', 'processing_done', 'valid_keys_info', 'active_key']
     for k in keys:
         if k not in st.session_state: st.session_state[k] = None
+    
+    # Initialize API keys
     for i in range(1, 6):
         if f'key_{i}' not in st.session_state: st.session_state[f'key_{i}'] = ""
+        
     if st.session_state.processing_done is None: st.session_state.processing_done = False
     if st.session_state.valid_keys_info is None: st.session_state.valid_keys_info = {}
+    
+    # Settings persistence
+    if 'v_speed' not in st.session_state: st.session_state.v_speed = 50
+    if 'v_pitch' not in st.session_state: st.session_state.v_pitch = 50
     if 'target_sec' not in st.session_state: st.session_state.target_sec = 150
+    if 'voice_choice' not in st.session_state: st.session_state.voice_choice = "နီလာ (Female)"
 
 init_state()
 
-st.title("🎙️ Myanmar AI Audio & SRT Generator")
+st.title("🎙️ Myanmar AI Audio & SRT Pro")
 st.markdown("ဗီဒီယို သို့မဟုတ် အော်ဒီယိုမှ မြန်မာဘာသာပြန် အသံဖိုင်နှင့် စာတန်း (SRT) ထုတ်ပေးသောစနစ်")
 
-# --- ERROR TRANSLATOR ---
-def translate_error(err_msg, status_code=None):
-    err_msg = str(err_msg).lower()
-    if "api_key_invalid" in err_msg or "invalid api key" in err_msg or status_code == 403:
-        return "API Key မမှန်ကန်ပါ။"
-    if "quota" in err_msg or "429" in err_msg or status_code == 429:
-        return "API Key အသုံးပြုမှု ပမာဏ ပြည့်သွားပါပြီ။"
-    if "location" in err_msg or "not supported" in err_msg:
-        return "သင်၏ ဒေသတွင် ဤ API ကို ပိတ်ထားပါသည်။ (VPN လိုအပ်နိုင်ပါသည်)"
-    return f"အမှားအယွင်းတစ်ခု ဖြစ်ပေါ်နေပါသည်။ ({err_msg})"
+# --- HELPER: SLIDER WITH PLUS/MINUS ---
+def plus_minus_slider(label, key, min_val, max_val, step=1):
+    st.write(f"**{label}**")
+    def on_btn(delta):
+        st.session_state[key] = int(np.clip(st.session_state[key] + delta, min_val, max_val))
+    
+    col1, col2, col3 = st.columns([1, 4, 1])
+    with col1: st.button("➖", key=f"btn_min_{key}", on_click=on_btn, args=(-step,))
+    with col2: st.slider(label, min_val, max_val, step=step, key=key, label_visibility="collapsed")
+    with col3: st.button("➕", key=f"btn_pls_{key}", on_click=on_btn, args=(step,))
+    return st.session_state[key]
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ ဆက်တင်များ")
     
     # RAM Monitor
+    st.subheader("🖥️ RAM စောင့်ကြည့်ရန်")
     process = psutil.Process(os.getpid())
     ram_used = process.memory_info().rss / (1024 * 1024)
-    st.write(f"🖥️ RAM: {ram_used:.0f}/1024MB")
+    ram_limit = 1024
+    ram_pct = min(ram_used / ram_limit, 1.0)
+    
+    col_r1, col_r2 = st.columns([2, 1])
+    col_r1.progress(ram_pct)
+    col_r2.write(f"{ram_used:.0f}/{ram_limit}MB")
     
     if st.button("🧹 RAM ရှင်းထုတ်ရန်"):
         st.cache_data.clear()
@@ -75,32 +92,48 @@ with st.sidebar:
     
     st.markdown("---")
     st.subheader("🔑 Gemini API Keys")
-    k1 = st.text_input("API Key 1", type="password", key="key_1")
-    show_more = st.toggle("ကျန် Keys များ ဖော်ပြရန်", value=False)
-    if show_more:
-        for i in range(2, 6):
-            st.text_input(f"API Key {i}", type="password", key=f"key_{i}")
     
-    api_keys = [st.session_state.get(f"key_{i}") for i in range(1, 6) if st.session_state.get(f"key_{i}")]
+    # Ensure keys are stored in session state even when hidden
+    st.text_input("API Key 1", type="password", key="key_1")
+    
+    show_more = st.toggle("🔽 ကျန် Keys များ ဖော်ပြရန်", value=False)
+    if show_more:
+        st.text_input("API Key 2", type="password", key="key_2")
+        st.text_input("API Key 3", type="password", key="key_3")
+        st.text_input("API Key 4", type="password", key="key_4")
+        st.text_input("API Key 5", type="password", key="key_5")
+    
+    api_keys = [st.session_state[f"key_{i}"] for i in range(1, 6) if st.session_state.get(f"key_{i}")]
 
-    if st.button("🔌 Keys စစ်ဆေးရန်"):
+    if st.button("🔌 Keys အားလုံး စမ်းသပ်ရန်"):
         if not api_keys:
-            st.error("API Key အရင်ထည့်ပါ။")
+            st.error("API Key အရင်ထည့်ပေးပါ။")
         else:
             st.session_state.valid_keys_info = {}
-            with st.spinner("စစ်ဆေးနေသည်..."):
-                for k in api_keys:
+            with st.spinner("Keys များကို စစ်ဆေးနေသည်..."):
+                for i, k in enumerate(api_keys):
+                    success = False
                     for ver in API_VERSIONS:
                         try:
                             url = f"https://generativelanguage.googleapis.com/{ver}/models?key={k}"
-                            r = requests.get(url, timeout=10)
+                            r = requests.get(url, timeout=15)
                             if r.status_code == 200:
                                 data = r.json()
                                 models = [m['name'].split('/')[-1] for m in data.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
                                 st.session_state.valid_keys_info[k] = {"version": ver, "models": models}
+                                if not st.session_state.active_key: st.session_state.active_key = k
+                                st.success(f"✅ Key {i+1} အောင်မြင်ပါသည်။")
+                                success = True
                                 break
                         except: continue
-            st.success("Keys စစ်ဆေးပြီးပါပြီ")
+                    if not success:
+                        st.error(f"❌ Key {i+1} မအောင်မြင်ပါ။")
+            st.rerun()
+
+    st.markdown("---")
+    st.subheader("🔊 အသံဆက်တင်များ")
+    plus_minus_slider("အသံအမြန်နှုန်း (Speed)", "v_speed", 0, 100, 1)
+    plus_minus_slider("အသံတုန်ခါမှု (Pitch)", "v_pitch", 0, 100, 1)
 
 # --- UTILS ---
 def get_dur(p):
@@ -124,11 +157,15 @@ def wrap_text(text, max_w=40):
     return "\n".join(lines)
 
 def parse_srt_text(text):
+    # Remove any existing SRT formatting if AI returned it but we want to re-process
     text = re.sub(r'\d+\n\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}\n', '', text)
     parts = re.split(r'\n\s*\n', text)
     return [p.strip() for p in parts if p.strip()]
 
-async def gen_audio_srt(text, out_p, voice, target_sec):
+async def gen_audio_srt(text, out_p, voice, spd, ptc, target_sec):
+    rate = f"+{int((spd-50)*2)}%" if spd>=50 else f"{int((spd-50)*2)}%"
+    pitch = f"+{int((ptc-50)*2)}Hz" if ptc>=50 else f"{int((ptc-50)*2)}Hz"
+    
     segments = parse_srt_text(text)
     if not segments: segments = [text]
     
@@ -141,7 +178,7 @@ async def gen_audio_srt(text, out_p, voice, target_sec):
         if not clean_txt: continue
         p = tempfile.mktemp(suffix=".mp3")
         try:
-            communicate = edge_tts.Communicate(clean_txt, voice)
+            communicate = edge_tts.Communicate(clean_txt, voice, rate=rate, pitch=pitch)
             await communicate.save(p)
             d = get_dur(p)
             if d > 0:
@@ -160,7 +197,7 @@ async def gen_audio_srt(text, out_p, voice, target_sec):
     
     total = get_dur(raw)
     factor = total / target_sec if target_sec > 0 else 1.0
-    factor = max(0.7, min(2.0, factor))
+    factor = np.clip(factor, 0.7, 2.0)
     
     if abs(factor - 1.0) > 0.01:
         subprocess.run(["ffmpeg", "-y", "-i", raw, "-filter:a", f"atempo={factor}", out_p], capture_output=True)
@@ -191,10 +228,10 @@ up = st.file_uploader("ဗီဒီယို သို့မဟုတ် အေ�
 if up:
     col1, col2 = st.columns(2)
     with col1:
-        voice_opt = st.selectbox("အသံရွေးချယ်ပါ", ["နီလာ (Female)", "သီဟ (Male)"])
-        v_id = "my-MM-NilarNeural" if "နီလာ" in voice_opt else "my-MM-ThihaNeural"
+        st.selectbox("အသံရွေးချယ်ပါ", ["နီလာ (Female)", "သီဟ (Male)"], key="voice_choice")
+        v_id = "my-MM-NilarNeural" if "နီလာ" in st.session_state.voice_choice else "my-MM-ThihaNeural"
     with col2:
-        target_sec = st.number_input("အသံဖိုင် ကြာချိန် (စက္ကန့်)", min_value=10, max_value=600, value=150)
+        st.number_input("အသံဖိုင် ကြာချိန် (စက္ကန့်)", min_value=10, max_value=600, key="target_sec")
 
     if not api_keys:
         st.warning("⚠️ Sidebar တွင် Gemini API Key ထည့်ပေးပါ")
@@ -217,29 +254,37 @@ if up:
             prg.progress(40)
             
             with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
-            prm = f"Listen to this audio and translate it into a Myanmar Movie Recap style narration script in SRT format. Target duration: {target_sec} seconds. Output ONLY the SRT content."
+            prm = f"Listen to this audio and translate it into a HIGH-ENERGY Myanmar Movie Recap style narration script in SRT format. Target duration: {st.session_state.target_sec} seconds. Output ONLY the SRT content."
             cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mpeg","data":b64}}]}]
             
             srt_res = None
-            for k, info in st.session_state.valid_keys_info.items():
-                ver = info['version']
-                for m in info['models']:
-                    if 'flash' in m or 'pro' in m:
-                        url = f"https://generativelanguage.googleapis.com/{ver}/models/{m}:generateContent?key={k}"
+            # Use valid keys info if available
+            if st.session_state.valid_keys_info:
+                for k, info in st.session_state.valid_keys_info.items():
+                    ver = info['version']
+                    for m in info['models']:
+                        if 'flash' in m or 'pro' in m:
+                            try:
+                                url = f"https://generativelanguage.googleapis.com/{ver}/models/{m}:generateContent?key={k}"
+                                r = requests.post(url, json={"contents":cont}, timeout=120)
+                                if r.status_code == 200:
+                                    srt_res = r.json()['candidates'][0]['content']['parts'][0]['text']
+                                    st.session_state.active_key = k
+                                    break
+                            except: continue
+                    if srt_res: break
+            
+            # Fallback to all provided keys if not yet found
+            if not srt_res:
+                for k in api_keys:
+                    try:
+                        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={k}"
                         r = requests.post(url, json={"contents":cont}, timeout=120)
                         if r.status_code == 200:
                             srt_res = r.json()['candidates'][0]['content']['parts'][0]['text']
+                            st.session_state.active_key = k
                             break
-                if srt_res: break
-            
-            if not srt_res:
-                # Try with all keys if check didn't run or failed
-                for k in api_keys:
-                    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={k}"
-                    r = requests.post(url, json={"contents":cont}, timeout=120)
-                    if r.status_code == 200:
-                        srt_res = r.json()['candidates'][0]['content']['parts'][0]['text']
-                        break
+                    except: continue
 
             if not srt_res: raise Exception("ဘာသာပြန်ခြင်း မအောင်မြင်ပါ။ API Key သို့မဟုတ် Internet ကို စစ်ဆေးပါ။")
 
@@ -247,7 +292,7 @@ if up:
             stt.text("🔊 အသံဖိုင် ထုတ်လုပ်နေပါသည်...")
             prg.progress(70)
             ao = os.path.join(tempfile.gettempdir(), f"output_{int(time.time())}.mp3")
-            st.session_state.srt_data = asyncio.run(gen_audio_srt(srt_res, ao, v_id, target_sec))
+            st.session_state.srt_data = asyncio.run(gen_audio_srt(srt_res, ao, v_id, st.session_state.v_speed, st.session_state.v_pitch, st.session_state.target_sec))
             
             with open(ao, "rb") as f: st.session_state.audio_path = f.read()
             st.session_state.processing_done = True
