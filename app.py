@@ -112,19 +112,21 @@ def auto_detect_subtitle_area(frame_bytes, api_keys=None):
                             b64 = base64.b64encode(frame_bytes).decode()
                             prompt = """Look at this video frame carefully.
 
-Find the EXACT location of the subtitle/caption text overlay area.
-This is the text that appears ON TOP of the video (not part of the video content itself).
-
-Reply ONLY with two numbers in this exact format:
-Y_PERCENTAGE HEIGHT_PERCENTAGE
-
-Where:
-- Y_PERCENTAGE = the top edge of the subtitle area as percentage from top (0-100)
-- HEIGHT_PERCENTAGE = the height of the subtitle area as percentage of total height (1-30)
-
-Example reply: 78 6
-
-If no subtitle text is visible, reply: 85 10"""
+	Find the EXACT location of the subtitle/caption text overlay area.
+	This is the text that appears ON TOP of the video (not part of the video content itself).
+	
+	Reply ONLY with two numbers in this exact format:
+	Y_PERCENTAGE HEIGHT_PERCENTAGE
+	
+	Where:
+	- Y_PERCENTAGE = the top edge of the subtitle area as percentage from top (0-100)
+	- HEIGHT_PERCENTAGE = the height of the subtitle area as percentage of total height (1-30)
+	
+	IMPORTANT: Provide TIGHT bounds around the text. Do not include excessive empty space.
+	
+	Example reply: 78 6
+	
+	If no subtitle text is visible, reply: 85 10"""
                             
                             cont = [{"role":"user","parts":[
                                 {"text": prompt},
@@ -186,10 +188,10 @@ If no subtitle text is visible, reply: 85 10"""
         if np.max(score) > 5:
             text_rows = np.where(score > np.percentile(score[score > 0], 50) if np.any(score > 0) else 10)[0]
             if len(text_rows) >= 2:
-                blur_y = float((bottom_start + text_rows[0] - 3) / h * 100)
-                blur_h = float((text_rows[-1] - text_rows[0] + 8) / h * 100)
+                blur_y = float((bottom_start + text_rows[0] - 1) / h * 100)
+                blur_h = float((text_rows[-1] - text_rows[0] + 3) / h * 100)
                 blur_y = np.clip(blur_y, 50, 98)
-                blur_h = np.clip(blur_h, 3, 25)
+                blur_h = np.clip(blur_h, 2, 20)
                 os.remove(tf)
                 return blur_y, blur_h
         
@@ -287,15 +289,15 @@ with st.sidebar:
     st.subheader("🤖 မူရင်းစာတန်းထိုး ဝါးရန် (Blur)")
     
     # Auto Detect toggle
-    use_auto = st.toggle("🤖 AI အလိုအလျောက် ရှာဖွေရန်", value=True, key="blur_auto_toggle", help="AI က ဗီဒီယိုတွင် မူရင်းစာတန်းထိုးပါသော နေရာကို အလိုအလျောက် ရှာဖွေပြီး ဝါးပေးပါမည်")
+    use_auto = st.toggle("🤖 AI အလိုအလျောက် ရှာဖွေရန်", value=True, key="blur_auto_toggle")
     
-    blur_s = st.checkbox("မူရင်းစာတန်းထိုး ဝါးရန် (Blur Enable)", value=True, key="blur_enable_check")
+    blur_s = st.checkbox("မူရင်းစာတန်းထိုး ဝါးရန် (Blur Enable)", value=True, key="blur_enable_check", 
+                         help="AI Auto Detect Mode ဗီဒီယိုတင်ပြီး \"စတင်လုပ်ဆောင်ရန်\" နှိပ်ပါက AI က မူရင်းစာတန်းထိုး နေရာကို အလိုအလျောက် ရှာဖွေပြီး ဝါးပေးပါမည်။\n\n🔒 Manual ညှိရန် လိုချင်ပါက AI Auto Detect ကို OFF ဖွင့်ပါ")
     
     if blur_s:
         if use_auto:
-            # AUTO MODE — lock manual toggles and sliders
-            st.info("🤖 **AI Auto Detect Mode**\nဗီဒီယိုတင်ပြီး \"စတင်လုပ်ဆောင်ရန်\" နှိပ်ပါက AI က မူရင်းစာတန်းထိုး နေရာကို အလိုအလျောက် ရှာဖွေပြီး ဝါးပေးပါမည်။\n\n🔒 Manual ညှိရန် လိုချင်ပါက AI Auto Detect ကို OFF ဖွင့်ပါ။")
-            # Force manual off
+            # AUTO MODE — hide manual settings
+            st.info("🤖 **AI Auto Detect Mode**\nAI က မူရင်းစာတန်းထိုး နေရာကို အလိုအလျောက် ရှာဖွေပြီး ဝါးပေးပါမည်။")
             use_manual = False
         else:
             # AUTO OFF — show manual toggle and sliders
@@ -319,11 +321,11 @@ with st.sidebar:
     
     if burn_s:
         if use_auto:
-            # AUTO MODE — lock subtitle manual toggles too
+            # AUTO MODE — hide manual settings
             burn_manual = False
-            st.info("📍 **Auto Mode** — Default ဖြင့် ဗီဒီယိုအောက်ခြေ အလယ်တည့်တည့် (Y: 85%, Font: 22)\n\n🔒 Manual ညှိရန် လိုချင်ပါက AI Auto Detect ကို OFF ဖွင့်ပါ။")
+            st.info("📍 **Auto Mode** — စာတန်းထိုးကို Blur နေရာပေါ်တွင် အလိုအလျောက် တင်ပေးပါမည်။")
             st.session_state.font_size = 22
-            st.session_state.sub_y_pos = 85
+            # sub_y_pos will be calculated relative to blur area in auto mode
         else:
             # AUTO OFF — show manual toggle
             burn_manual = st.toggle("✏️ Manual ညှိရန်", value=False, key="subtitle_manual_toggle")
@@ -615,21 +617,35 @@ if up:
         po = tempfile.mktemp(suffix=".jpg")
         
         x_p = (w - sw) // 2
-        y_p = int(h * (st.session_state.sub_y_pos / 100)) - (sh // 2)
         by_px = int(h * (st.session_state.blur_y_pos / 100))
         bh_px = int(h * (st.session_state.blur_h_size / 100))
         
+        if use_auto and blur_s:
+            # Center subtitle inside blur area
+            y_p = by_px + (bh_px - sh) // 2
+        else:
+            y_p = int(h * (st.session_state.sub_y_pos / 100)) - (sh // 2)
+        
         fc = get_filter(mirror_v, scale_v, blur_s, by_px, bh_px, burn_s, sub_p, st.session_state.font_size, x_p, y_p)
         
+        # Preview uses simpler filter: append null to ensure [v] output
+        if fc.endswith('[v]'):
+            filter_str = fc
+        elif fc.endswith('[v0]'):
+            filter_str = fc + ";[v0]null[v]"
+        else:
+            filter_str = fc + ";null[v]"
+        
         filter_script_p = tempfile.mktemp(suffix=".txt")
-        filter_str = fc
         with open(filter_script_p, "w", encoding="utf-8") as f: f.write(filter_str)
         inputs = ["-i", bp, "-i", sub_p] if burn_s else ["-i", bp]
         if len(filter_str) < 2000:
             cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_str, "-map", "[v]", po]
         else:
             cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex_script", filter_script_p, "-map", "[v]", po]
-        subprocess.run(cmd, capture_output=True)
+        res = subprocess.run(cmd, capture_output=True, text=True)
+        if res.returncode != 0:
+            st.warning(f"Preview render error: {res.stderr[-200:]}")
         if os.path.exists(filter_script_p): os.remove(filter_script_p)
         if os.path.exists(po):
             with Image.open(po) as img_prev:
@@ -780,8 +796,10 @@ FORMATTING RULES:
                         temp_imgs.append(spath)
                         
                         x_pos = (vw - sw) // 2
-                        # Place subtitle above blur area
-                        if blur_s:
+                        # Place subtitle on blur area if auto mode
+                        if use_auto and blur_s:
+                            y_pos = by_px_r + (bh_px_r - sh) // 2
+                        elif blur_s:
                             y_pos = sub_y_px - sh
                         else:
                             y_pos = int(vh * (st.session_state.sub_y_pos / 100)) - (sh // 2)
