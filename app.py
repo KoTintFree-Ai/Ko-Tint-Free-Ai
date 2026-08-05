@@ -122,7 +122,9 @@ def auto_detect_subtitle_area(frame_bytes, api_keys=None):
 	- Y_PERCENTAGE = the top edge of the subtitle area as percentage from top (0-100)
 	- HEIGHT_PERCENTAGE = the height of the subtitle area as percentage of total height (1-30)
 	
-	IMPORTANT: Provide the MINIMUM possible height that covers ONLY the text. No padding. Tightest bounds possible.
+	IMPORTANT: Provide the ABSOLUTE MINIMUM height that covers ONLY the text pixels. 
+	Do NOT include any background space. The bounding box must be as thin as possible.
+	Reply with the TIGHTEST coordinates.
 	
 	Example reply: 78 6
 	
@@ -144,13 +146,13 @@ def auto_detect_subtitle_area(frame_bytes, api_keys=None):
                                     if len(parts) >= 2:
                                         blur_y = float(parts[0])
                                         blur_h = float(parts[1])
-                                        # Shrink Logic: Reduce detected height by 15% to ensure tightness
-                                        shrink = blur_h * 0.15
+                                        # Aggressive Shrink Logic: Reduce detected height by 30% to ensure ultra-tightness
+                                        shrink = blur_h * 0.30
                                         blur_y = blur_y + (shrink / 2)
                                         blur_h = blur_h - shrink
                                         
                                         blur_y = np.clip(blur_y, 50, 98)
-                                        blur_h = np.clip(blur_h, 1.5, 20)
+                                        blur_h = np.clip(blur_h, 1.2, 8.0)
                                         st.session_state.active_key = k
                                         return blur_y, blur_h
                             elif r.status_code == 404:
@@ -193,11 +195,11 @@ def auto_detect_subtitle_area(frame_bytes, api_keys=None):
         if np.max(score) > 5:
             text_rows = np.where(score > np.percentile(score[score > 0], 50) if np.any(score > 0) else 10)[0]
             if len(text_rows) >= 2:
-                # Ultra-tight padding for fallback
-                blur_y = float((bottom_start + text_rows[0] + 1) / h * 100)
-                blur_h = float((text_rows[-1] - text_rows[0]) / h * 100)
+                # Extreme-tight padding for fallback
+                blur_y = float((bottom_start + text_rows[0] + 1.5) / h * 100)
+                blur_h = float((text_rows[-1] - text_rows[0] - 1) / h * 100)
                 blur_y = np.clip(blur_y, 50, 98)
-                blur_h = np.clip(blur_h, 1.0, 12)
+                blur_h = np.clip(blur_h, 1.0, 7.0)
                 os.remove(tf)
                 return blur_y, blur_h
         
@@ -323,12 +325,12 @@ with st.sidebar:
                 b_y = plus_minus_slider("ဝါးမည့်နေရာ (Y %)", "blur_y_pos", 0, 100, 1)
                 b_h = plus_minus_slider("ဝါးမည့်အကျယ် (H %)", "blur_h_size", 1, 30, 1)
             else:
-                st.info("⚙️ **Default Mode** — Y: 85%, H: 10%")
+                st.info("⚙️ **Default Mode** — Y: 85%, H: 6%")
                 st.session_state.blur_y_pos = 85
-                st.session_state.blur_h_size = 10
+                st.session_state.blur_h_size = 6
     else:
         st.session_state.blur_y_pos = 85
-        st.session_state.blur_h_size = 10
+        st.session_state.blur_h_size = 6
 
     st.markdown("---")
     st.subheader("📝 မြန်မာစာတန်းထိုး")
