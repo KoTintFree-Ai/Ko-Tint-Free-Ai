@@ -188,10 +188,11 @@ def auto_detect_subtitle_area(frame_bytes, api_keys=None):
         if np.max(score) > 5:
             text_rows = np.where(score > np.percentile(score[score > 0], 50) if np.any(score > 0) else 10)[0]
             if len(text_rows) >= 2:
-                blur_y = float((bottom_start + text_rows[0] - 1) / h * 100)
-                blur_h = float((text_rows[-1] - text_rows[0] + 3) / h * 100)
+                # Reduced padding for tighter blur
+                blur_y = float((bottom_start + text_rows[0]) / h * 100)
+                blur_h = float((text_rows[-1] - text_rows[0] + 2) / h * 100)
                 blur_y = np.clip(blur_y, 50, 98)
-                blur_h = np.clip(blur_h, 2, 20)
+                blur_h = np.clip(blur_h, 1.5, 15)
                 os.remove(tf)
                 return blur_y, blur_h
         
@@ -681,6 +682,12 @@ if up:
                 prm = f"""Listen to this audio and translate it into a HIGH-ENERGY Myanmar Movie Recap style narration.
 TARGET DURATION: {target_sec} seconds.
 REQUIRED SCRIPT LENGTH: You MUST write exactly around {target_words} Myanmar words to fill the {target_sec} seconds timeframe perfectly.
+
+STRICT CONTENT RULES:
+1. NO FILLER PHRASES: Do NOT use phrases like "Hello audience" (ပရိတ်သတ်ကြီးရေ), "Welcome back", or generic greetings.
+2. FOCUS ON SCENES: Describe ONLY what is happening in the movie. Focus on character actions, emotions, and plot points.
+3. TIMING SYNC: Ensure the narration follows the exact sequence of events in the source audio. Do not jump ahead or lag behind.
+4. NO HALLUCINATION: Do not add external information not present in the movie context.
 
 MOVIE RECAP STYLE RULES:
 1. The tone must be dramatic, fast-paced, and extremely engaging.
