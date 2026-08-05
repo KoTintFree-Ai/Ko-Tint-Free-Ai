@@ -359,24 +359,22 @@ with st.sidebar:
         st.success("🟢 API Key အလုပ်လုပ်နေပါသည်")
     
     # API Key inputs with absolute persistence logic
-    # Sync widget values to session state immediately using a loop to avoid widget deletion issues
-    def sync_keys():
+    # We use a robust sync function to ensure values are NEVER lost during toggle
+    def sync_all_keys():
         for i in range(1, 6):
             if f"w_key_{i}" in st.session_state:
                 st.session_state[f"key_{i}"] = st.session_state[f"w_key_{i}"]
             if f"w_grok_key_{i}" in st.session_state:
                 st.session_state[f"grok_key_{i}"] = st.session_state[f"w_grok_key_{i}"]
 
-    st.text_input("API Key 1", type="password", value=st.session_state.key_1, key="w_key_1", on_change=sync_keys)
+    # Gemini Section
+    st.text_input("API Key 1", type="password", value=st.session_state.key_1, key="w_key_1", on_change=sync_all_keys)
     show_more_keys = st.toggle("🔽 ကျန် API Keys များ ဖော်ပြရန်", value=False, key="show_more_keys_toggle")
     if show_more_keys:
-        st.text_input("API Key 2", type="password", value=st.session_state.key_2, key="w_key_2", on_change=sync_keys)
-        st.text_input("API Key 3", type="password", value=st.session_state.key_3, key="w_key_3", on_change=sync_keys)
-        st.text_input("API Key 4", type="password", value=st.session_state.key_4, key="w_key_4", on_change=sync_keys)
-        st.text_input("API Key 5", type="password", value=st.session_state.key_5, key="w_key_5", on_change=sync_keys)
+        for i in range(2, 6):
+            st.text_input(f"API Key {i}", type="password", value=st.session_state.get(f"key_{i}", ""), key=f"w_key_{i}", on_change=sync_all_keys)
     
-    # Run sync to ensure values are captured
-    sync_keys()
+    sync_all_keys()
     api_keys = [st.session_state.get(f'key_{i}', "").strip() for i in range(1, 6) if st.session_state.get(f'key_{i}', "").strip()]
     
     st.markdown("---")
@@ -384,15 +382,14 @@ with st.sidebar:
     if st.session_state.active_grok_key:
         st.success("🟢 Grok API အလုပ်လုပ်နေပါသည်")
     
-    st.text_input("Grok Key 1", type="password", value=st.session_state.grok_key_1, key="w_grok_key_1", on_change=sync_keys)
+    # Grok Section
+    st.text_input("Grok Key 1", type="password", value=st.session_state.grok_key_1, key="w_grok_key_1", on_change=sync_all_keys)
     show_more_grok = st.toggle("🔽 ကျန် Grok Keys များ ဖော်ပြရန်", value=False, key="show_more_grok_toggle")
     if show_more_grok:
-        st.text_input("Grok Key 2", type="password", value=st.session_state.grok_key_2, key="w_grok_key_2", on_change=sync_keys)
-        st.text_input("Grok Key 3", type="password", value=st.session_state.grok_key_3, key="w_grok_key_3", on_change=sync_keys)
-        st.text_input("Grok Key 4", type="password", value=st.session_state.grok_key_4, key="w_grok_key_4", on_change=sync_keys)
-        st.text_input("Grok Key 5", type="password", value=st.session_state.grok_key_5, key="w_grok_key_5", on_change=sync_keys)
+        for i in range(2, 6):
+            st.text_input(f"Grok Key {i}", type="password", value=st.session_state.get(f"grok_key_{i}", ""), key=f"w_grok_key_{i}", on_change=sync_all_keys)
     
-    sync_keys()
+    sync_all_keys()
     grok_keys = [st.session_state.get(f'grok_key_{i}', "").strip() for i in range(1, 6) if st.session_state.get(f'grok_key_{i}', "").strip()]
     
     if st.button("🔌 Keys အားလုံး စမ်းသပ်ရန်"):
@@ -407,10 +404,11 @@ with st.sidebar:
                 # Test Gemini Keys
                 for i, k in enumerate(api_keys):
                     success = False
+                    error_detail = "မမှန်ကန်ပါ။"
                     for ver in API_VERSIONS:
                         try:
                             url = f"https://generativelanguage.googleapis.com/{ver}/models?key={k}"
-                            r = requests.get(url, timeout=15)
+                            r = requests.get(url, timeout=20)
                             if r.status_code == 200:
                                 data = r.json()
                                 models = [m['name'].split('/')[-1] for m in data.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
@@ -419,34 +417,63 @@ with st.sidebar:
                                 st.session_state.test_results.append(f"✅ Gemini Key {i+1} အောင်မြင်ပါသည်။")
                                 success = True
                                 break
-                        except: continue
+                            elif r.status_code == 403:
+                                error_detail = "မမှန်ကန်ပါ။ (Forbidden/Invalid Key)"
+                                break
+                            elif r.status_code == 429:
+                                error_detail = "အသုံးပြုမှု များနေပါသည်။ (Rate Limit)"
+                                break
+                            else:
+                                error_detail = f"အမှားရှိနေပါသည်။ (Status: {r.status_code})"
+                        except requests.exceptions.ConnectionError:
+                            error_detail = "ဆက်သွယ်မှု မအောင်မြင်ပါ။ (အင်တာနက် သို့မဟုတ် VPN စစ်ဆေးပါ)"
+                        except Exception as e:
+                            error_detail = f"ဆက်သွယ်မှု မအောင်မြင်ပါ။ ({str(e)[:40]})"
                     if not success:
-                        st.session_state.test_results.append(f"❌ Gemini Key {i+1} မမှန်ကန်ပါ။")
+                        st.session_state.test_results.append(f"❌ Gemini Key {i+1} {error_detail}")
                 
                 # Test Grok Keys
                 for i, gk in enumerate(grok_keys):
                     gk = gk.strip()
                     if not gk: continue
-                    try:
-                        url = "https://api.xai.ai/v1/models"
-                        headers = {"Authorization": f"Bearer {gk}"}
-                        r = requests.get(url, headers=headers, timeout=20)
-                        if r.status_code == 200:
-                            data = r.json()
-                            models = [m['id'] for m in data.get('data', [])]
-                            st.session_state.valid_grok_info[gk] = {"models": models}
-                            if not st.session_state.active_grok_key: st.session_state.active_grok_key = gk
-                            st.session_state.test_results.append(f"✅ Grok Key {i+1} အောင်မြင်ပါသည်။")
-                        elif r.status_code == 401:
-                            st.session_state.test_results.append(f"❌ Grok Key {i+1} မမှန်ကန်ပါ။ (Unauthorized)")
-                        elif r.status_code == 429:
-                            st.session_state.test_results.append(f"❌ Grok Key {i+1} အသုံးပြုမှု များနေပါသည်။ (Rate Limit)")
-                        else:
-                            st.session_state.test_results.append(f"❌ Grok Key {i+1} အမှားရှိနေပါသည်။ (Status: {r.status_code})")
-                    except requests.exceptions.Timeout:
-                        st.session_state.test_results.append(f"❌ Grok Key {i+1} ဆက်သွယ်မှု အချိန်ကျော်လွန်သွားပါသည်။ (Timeout)")
-                    except Exception as e:
-                        st.session_state.test_results.append(f"❌ Grok Key {i+1} ဆက်သွယ်မှု မအောင်မြင်ပါ။ ({str(e)[:50]})")
+                    
+                    success = False
+                    error_detail = ""
+                    # Retry logic (2 attempts)
+                    for attempt in range(2):
+                        try:
+                            url = "https://api.xai.ai/v1/models"
+                            headers = {"Authorization": f"Bearer {gk}"}
+                            r = requests.get(url, headers=headers, timeout=25)
+                            if r.status_code == 200:
+                                data = r.json()
+                                models = [m['id'] for m in data.get('data', [])]
+                                st.session_state.valid_grok_info[gk] = {"models": models}
+                                if not st.session_state.active_grok_key: st.session_state.active_grok_key = gk
+                                st.session_state.test_results.append(f"✅ Grok Key {i+1} အောင်မြင်ပါသည်။")
+                                success = True
+                                break
+                            elif r.status_code == 401:
+                                error_detail = "မမှန်ကန်ပါ။ (Unauthorized)"
+                                break
+                            elif r.status_code == 429:
+                                error_detail = "အသုံးပြုမှု များနေပါသည်။ (Rate Limit)"
+                                break
+                            else:
+                                error_detail = f"အမှားရှိနေပါသည်။ (Status: {r.status_code})"
+                                break
+                        except requests.exceptions.ConnectionError:
+                            error_detail = "ဆက်သွယ်မှု မအောင်မြင်ပါ။ (VPN အသုံးပြုရန် လိုအပ်နိုင်ပါသည်)"
+                            time.sleep(1)
+                        except requests.exceptions.Timeout:
+                            error_detail = "ဆက်သွယ်မှု အချိန်ကျော်လွန်သွားပါသည်။ (Timeout)"
+                            time.sleep(1)
+                        except Exception as e:
+                            error_detail = f"ဆက်သွယ်မှု မအောင်မြင်ပါ။ ({str(e)[:40]})"
+                            break
+                    
+                    if not success:
+                        st.session_state.test_results.append(f"❌ Grok Key {i+1} {error_detail}")
             st.rerun()
 
     # Persistent display of test results
