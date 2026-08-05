@@ -53,7 +53,7 @@ st.markdown("""
 
 # --- Session State ---
 def init_state():
-    keys = ['audio_path', 'srt_data', 'last_uploaded', 'processing_done',
+    keys = ['audio_path', 'srt_data', 'plain_text', 'word_count', 'last_uploaded', 'processing_done',
             'valid_keys_info', 'active_key', 'bulk_msg', 'test_results']
     for k in keys:
         if k not in st.session_state: st.session_state[k] = None
@@ -177,6 +177,20 @@ def wrap_text(text, max_len=25):
     if cur_line:
         lines.append(cur_line.strip())
     return "\n".join(lines[:3])
+
+def get_plain_text(srt_text):
+    # Remove SRT indexes and timestamps
+    text = re.sub(r'\d+\n\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}\n', '', srt_text)
+    # Remove any extra formatting or empty lines
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    return ' '.join(lines)
+
+def count_myanmar_words(text):
+    if not text: return 0
+    # Myanmar cluster regex
+    cluster_pattern = r'[\u1000-\u102A\u103F\u1040-\u1049][\u102B-\u103E\u1037\u1038\u1039\u103A]*'
+    clusters = re.findall(cluster_pattern, text)
+    return len(clusters)
 
 def parse_srt_text(text):
     text = re.sub(r'```srt?', '', text, flags=re.IGNORECASE)
@@ -424,7 +438,7 @@ if up:
             prg = st.progress(0)
             stt = st.empty()
             try:
-                for k in ['audio_path', 'srt_data']:
+                for k in ['audio_path', 'srt_data', 'plain_text', 'word_count']:
                     st.session_state[k] = None
 
                 # === STEP 1: Audio Compression ===
@@ -520,6 +534,9 @@ FORMATTING RULES:
                     st.session_state.srt_data, audio_final_dur = asyncio.run(
                         gen_audio_srt(srt_res, ao, v_id, st.session_state.v_speed, st.session_state.v_pitch, target_sec if fit_dur else 0)
                     )
+                    # Extract plain text and word count
+                    st.session_state.plain_text = get_plain_text(st.session_state.srt_data)
+                    st.session_state.word_count = count_myanmar_words(st.session_state.plain_text)
                     status.update(label="✅ အသံဖိုင်အားလုံး ပေါင်းစပ်ပြီးပါပြီ!", state="complete")
                 st.session_state.audio_path = ao
                 prg.progress(100)
@@ -536,18 +553,30 @@ FORMATTING RULES:
 # --- DOWNLOAD SECTION ---
 if st.session_state.processing_done:
     st.markdown("---")
-    st.subheader("📥 Download")
+    st.subheader("📥 Download & Results")
 
-    if st.session_state.audio_path and os.path.exists(st.session_state.audio_path):
-        st.audio(st.session_state.audio_path)
-        with open(st.session_state.audio_path, "rb") as f:
-            st.download_button("📥 အသံဖိုင်ကို သိမ်းဆည်းရန် (MP3)", f, "recap_audio.mp3", "audio/mp3")
+    col_res1, col_res2 = st.columns([2, 1])
+    with col_res1:
+        if st.session_state.audio_path and os.path.exists(st.session_state.audio_path):
+            st.audio(st.session_state.audio_path)
+            with open(st.session_state.audio_path, "rb") as f:
+                st.download_button("📥 အသံဖိုင်ကို သိမ်းဆည်းရန် (MP3)", f, "recap_audio.mp3", "audio/mp3")
+    with col_res2:
+        if st.session_state.word_count is not None:
+            st.metric("မြန်မာစာလုံးရေ", f"{st.session_state.word_count}")
 
     if st.session_state.srt_data:
         st.download_button("📥 စာတန်းထိုး (SRT) ကို သိမ်းဆည်းရန်", st.session_state.srt_data, "recap.srt", "text/plain")
+
+    if st.session_state.plain_text:
+        with st.expander("📝 စာသားသက်သက် ကြည့်ရန် (Plain Text)", expanded=True):
+            st.text_area("Plain Text Content", st.session_state.plain_text, height=250)
+            st.download_button("📥 စာသားသက်သက်ကို သိမ်းဆည်းရန် (TXT)", st.session_state.plain_text, "recap_text.txt", "text/plain")
 
     if st.button("🔄 ပြန်လုပ်ရန်"):
         st.session_state.processing_done = False
         st.session_state.audio_path = None
         st.session_state.srt_data = None
+        st.session_state.plain_text = None
+        st.session_state.word_count = None
         st.rerun()
