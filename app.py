@@ -242,11 +242,19 @@ with st.sidebar:
     if st.session_state.active_key:
         st.success("🟢 API Key အလုပ်လုပ်နေပါသည်")
     
+    # Collapsible API Keys section
     k1 = st.text_input("API Key 1", type="password", key="key_1")
-    k2 = st.text_input("API Key 2", type="password", key="key_2")
-    k3 = st.text_input("API Key 3", type="password", key="key_3")
-    k4 = st.text_input("API Key 4", type="password", key="key_4")
-    k5 = st.text_input("API Key 5", type="password", key="key_5")
+    show_more_keys = st.toggle("🔽 ကျန် API Keys များ ဖော်ပြရန်", value=False, key="show_more_keys_toggle")
+    if show_more_keys:
+        k2 = st.text_input("API Key 2", type="password", key="key_2")
+        k3 = st.text_input("API Key 3", type="password", key="key_3")
+        k4 = st.text_input("API Key 4", type="password", key="key_4")
+        k5 = st.text_input("API Key 5", type="password", key="key_5")
+    else:
+        k2 = st.session_state.get("key_2", "")
+        k3 = st.session_state.get("key_3", "")
+        k4 = st.session_state.get("key_4", "")
+        k5 = st.session_state.get("key_5", "")
     api_keys = [k for k in [k1, k2, k3, k4, k5] if k]
 
     if st.button("🔌 Keys အားလုံး စမ်းသပ်ရန်"):
@@ -557,7 +565,7 @@ def get_filter(mir, scl, blr, by_px, bh_px, brn, sp, fs, sx, sy):
         if brn and sp and os.path.exists(sp):
             fc += f";[main][1:v]overlay={sx}:{sy}[v]"
         else:
-            fc += ";[main]null[v]"
+            fc += ";[main]null[v0]"
         return fc
     else:
         fc = f"[0:v]{base_str}[preblur];"
@@ -565,9 +573,9 @@ def get_filter(mir, scl, blr, by_px, bh_px, brn, sp, fs, sx, sy):
         fc += f"[to_blur]crop=iw:{bh_px}:0:{by_px},boxblur=luma_radius=10:chroma_radius=4:alpha_radius=1[blurred];"
         fc += f"[main][blurred]overlay=0:{by_px}[postblur]"
         if brn and sp and os.path.exists(sp):
-            fc += f";[postblur][1:v]overlay={sx}:{sy}[v]"
+            fc += f";[postblur][1:v]overlay={sx}:{sy}[v0]"
         else:
-            fc += ";[postblur]null[v]"
+            fc += ";[postblur]null[v0]"
         return fc
 
 # --- MAIN UI ---
@@ -766,7 +774,11 @@ FORMATTING RULES:
                         temp_imgs.append(spath)
                         
                         x_pos = (vw - sw) // 2
-                        y_pos = int(vh * (st.session_state.sub_y_pos / 100)) - (sh // 2)
+                        # Place subtitle above blur area
+                        if blur_s:
+                            y_pos = sub_y_px - sh
+                        else:
+                            y_pos = int(vh * (st.session_state.sub_y_pos / 100)) - (sh // 2)
                         
                         safe_spath = spath.replace("'", "'\\''").replace(":", "\\:")
                         # Use unique label names to avoid chaining issues
@@ -776,6 +788,11 @@ FORMATTING RULES:
 
                     by_px_r = int(vh * (st.session_state.blur_y_pos / 100))
                     bh_px_r = int(vh * (st.session_state.blur_h_size / 100))
+                    
+                    # Subtitle position: place subtitle ABOVE the blur area
+                    # Calculate subtitle Y position so it sits right above the blur
+                    sub_gap = 5  # small gap between subtitle and blur area
+                    sub_y_px = by_px_r - sub_gap
                     
                     # Get video duration for speed calculation
                     video_duration = get_dur(tp)
@@ -814,7 +831,7 @@ FORMATTING RULES:
                         full_filter = full_filter.replace(f"vout{last_idx}", "v")
                     else:
                         # No overlays, ensure we have [v] output
-                        full_filter += f";[v0]null[v]"
+                        full_filter += ";[v0]null[v]"
 
                     filter_script = tempfile.mktemp(suffix=".txt")
                     with open(filter_script, "w", encoding="utf-8") as f:
