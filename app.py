@@ -93,28 +93,82 @@ def translate_error(err_msg, status_code=None):
 
 # --- AUTO DETECT SUBTITLE AREA ---
 def auto_detect_subtitle_area(frame_bytes):
-    """Detect subtitle area in video frame using pixel variance analysis"""
+    """Detect subtitle area in video frame using improved multi-method analysis.
+    Method: Find text-like areas by detecting high-frequency rows (edges/text)
+    while ignoring pure black bars and uniform regions."""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as bf:
             bf.write(frame_bytes); tf = bf.name
         img = Image.open(tf).convert('L')
         w, h = img.size
-        # Scan bottom 40% of frame for text area
-        arr = np.array(img.crop((0, int(h*0.6), w, h)))
-        var = np.var(arr, axis=1)
-        rows = np.where(var > np.mean(var)*2)[0]
-        os.remove(tf)
-        if len(rows) > 0:
-            blur_y = float(((int(h*0.6) + rows[0] - 5) / h) * 100)
+        arr = np.array(img)
+        
+        # Method 1: Edge detection - find rows with text-like horizontal edges
+        # Calculate horizontal gradient (text has many vertical edges)
+        diff = np.abs(arr[:, 1:] - arr[:, :-1])
+        row_edge_strength = np.sum(diff, axis=1)  # sum of horizontal differences per row
+        
+        # Method 2: Find rows that are NOT pure black (exclude letterbox bars)
+        row_brightness = np.mean(arr, axis=1)
+        is_not_black = row_brightness > 20  # rows with some light
+        
+        # Combine: rows that have edges AND are not pure black
+        # Focus on bottom 50% of frame where subtitles typically are
+        bottom_start = int(h * 0.50)
+        bottom_mask = np.zeros(h, dtype=bool)
+        bottom_mask[bottom_start:] = True
+        
+        # Score each row: high edge + not black = likely subtitle area
+        text_score = row_edge_strength * is_not_black.astype(float)
+        text_score[~bottom_mask] = 0  # only look at bottom half
+        
+        # Threshold: rows with significant text activity
+        threshold = np.percentile(text_score[bottom_start:], 70)  # top 30% of bottom half
+        text_rows = np.where(text_score > max(threshold, 1.0))[0]
+        
+        if len(text_rows) > 0:
+            # Find the densest cluster of text rows
+            # Group consecutive rows (with gaps up to 15 pixels)
+            groups = []
+            current_group = [text_rows[0]]
+            for i in range(1, len(text_rows)):
+                if text_rows[i] - text_rows[i-1] <= 15:
+                    current_group.append(text_rows[i])
+                else:
+                    if len(current_group) >= 3:  # at least 3 rows to be valid
+                        groups.append(current_group)
+                    current_group = [text_rows[i]]
+            if len(current_group) >= 3:
+                groups.append(current_group)
+            
+            if groups:
+                # Pick the group with the highest average text score
+                best_group = max(groups, key=lambda g: np.mean(text_score[g]))
+                blur_y = float((best_group[0] - 5) / h * 100)
+                blur_h = float((best_group[-1] - best_group[0] + 15) / h * 100)
+                blur_y = np.clip(blur_y, 55, 98)
+                blur_h = np.clip(blur_h, 3, 30)
+                os.remove(tf)
+                return blur_y, blur_h
+        
+        # Fallback Method: Try simpler variance-based detection on bottom 50%
+        bottom_arr = arr[int(h*0.5):, :]
+        var = np.var(bottom_arr, axis=1)
+        rows = np.where(var > 15.0)[0]  # absolute threshold for text variance
+        
+        if len(rows) >= 3:
+            blur_y = float(((int(h*0.5) + rows[0] - 5) / h) * 100)
             blur_h = float(((rows[-1] - rows[0] + 10) / h) * 100)
-            # Safety bounds
-            blur_y = np.clip(blur_y, 60, 98)
-            blur_h = np.clip(blur_h, 2, 25)
+            blur_y = np.clip(blur_y, 55, 98)
+            blur_h = np.clip(blur_h, 3, 30)
+            os.remove(tf)
             return blur_y, blur_h
+        
+        os.remove(tf)
     except Exception as e:
         st.warning(f"Auto detect warning: {str(e)}")
-    # Fallback defaults
-    return 85.0, 10.0
+    # Fallback defaults - slightly adjusted for typical vertical video
+    return 78.0, 8.0
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -686,7 +740,10 @@ FORMATTING RULES:
                         y_pos = int(vh * (st.session_state.sub_y_pos / 100)) - (sh // 2)
                         
                         safe_spath = spath.replace("'", "'\\''").replace(":", "\\:")
-                        overlay_filters.append(f"movie=filename='{safe_spath}'[s{i}];[v][s{i}]overlay={x_pos}:{y_pos}:enable='between(t,{seg['start']},{seg['end']})'[v]")
+                        # Use unique label names to avoid chaining issues
+                        in_label = f"vin{i}"
+                        out_label = f"vout{i}"
+                        overlay_filters.append(f"movie=filename='{safe_spath}'[s{i}];[{in_label}][s{i}]overlay={x_pos}:{y_pos}:enable='between(t,{seg['start']},{seg['end']})'[{out_label}]")
 
                     by_px_r = int(vh * (st.session_state.blur_y_pos / 100))
                     bh_px_r = int(vh * (st.session_state.blur_h_size / 100))
@@ -714,11 +771,21 @@ FORMATTING RULES:
                     else:
                         full_filter = fcf
                     
-                    full_filter = full_filter.replace("[v]", "[v0]")
-                    for i, filt in enumerate(overlay_filters):
-                        current_filt = filt.replace("[v]", f"[v{i}]", 1).replace("[v]", f"[v{i+1}]")
-                        full_filter += ";" + current_filt
-                    full_filter += f";[v{len(overlay_filters)}]null[v]"
+                    # Chain overlay filters properly using unique labels
+                    if overlay_filters:
+                        # First overlay input is [v0] (output from get_filter)
+                        first_overlay = overlay_filters[0].replace("vin0", "v0")
+                        full_filter += ";" + first_overlay
+                        # Subsequent overlays chain from previous output
+                        for i in range(1, len(overlay_filters)):
+                            current_filt = overlay_filters[i].replace(f"vin{i}", f"vout{i-1}")
+                            full_filter += ";" + current_filt
+                        # Final label: rename last output to [v]
+                        last_idx = len(overlay_filters) - 1
+                        full_filter = full_filter.replace(f"vout{last_idx}", "v")
+                    else:
+                        # No overlays, ensure we have [v] output
+                        full_filter += f";[v0]null[v]"
 
                     filter_script = tempfile.mktemp(suffix=".txt")
                     with open(filter_script, "w", encoding="utf-8") as f:
