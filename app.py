@@ -531,6 +531,7 @@ if up:
             cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex", filter_str, "-map", "[v]", po]
         else:
             cmd = ["ffmpeg", "-y"] + inputs + ["-filter_complex_script", filter_script_p, "-map", "[v]", po]
+        
         subprocess.run(cmd, capture_output=True)
         if os.path.exists(filter_script_p): os.remove(filter_script_p)
         if os.path.exists(po):
