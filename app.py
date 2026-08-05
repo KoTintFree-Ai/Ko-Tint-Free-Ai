@@ -799,41 +799,28 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     return res_srt, get_dur(out_p)
 
 def get_filter(mir, scl, blr, by_px, bh_px, brn, sp, fs, sx, sy):
-    """Build ffmpeg filter chain.
-    
-    Key fix: Apply blur on the ORIGINAL frame FIRST, then apply scale/crop.
-    This ensures blur coordinates match the original frame exactly, and the
-    scale/crop zooms everything together correctly.
-    """
-    # Step 1: Mirror (if enabled) on original
-    mir_str = "hflip," if mir else ""
-    
-    # Step 2: If blur enabled, do it on the original (pre-scale) frame
-    if blr:
-        # Blur on original frame with original coordinates
-        fc = f"[0:v]{mir_str}split[main_src][blur_src];"
-        fc += f"[blur_src]crop=iw:{bh_px}:0:{by_px},boxblur=luma_radius=10:chroma_radius=4:alpha_radius=1[blurred];"
-        fc += f"[main_src][blurred]overlay=0:{by_px}[pre_scale];"
-        # Step 3: Then apply scale/crop to the already-blurred frame
-        if scl:
-            fc += f"[pre_scale]scale=1.06*iw:-1,crop=iw/1.06:ih/1.06[main];"
+    base_parts = []
+    if mir: base_parts.append("hflip")
+    if scl: base_parts.append("scale=1.06*iw:-1,crop=iw/1.06:ih/1.06")
+    base_str = ",".join(base_parts) if base_parts else "null"
+
+    if not blr:
+        fc = f"[0:v]{base_str}[main]"
+        if brn and sp and os.path.exists(sp):
+            fc += f";[main][1:v]overlay={sx}:{sy}[v]"
         else:
-            fc += f"[pre_scale]null[main];"
+            fc += ";[main]null[v0]"
+        return fc
     else:
-        # No blur - just apply mirror+scale on original
-        parts = []
-        if mir: parts.append("hflip")
-        if scl: parts.append("scale=1.06*iw:-1,crop=iw/1.06:ih/1.06")
-        base_str = ",".join(parts) if parts else "null"
-        fc = f"[0:v]{base_str}[main];"
-    
-    # Step 4: Overlay subtitle if needed
-    if brn and sp and os.path.exists(sp):
-        fc += f"[main][1:v]overlay={sx}:{sy}[v]"
-    else:
-        fc += f"[main]null[v0]"
-    
-    return fc
+        fc = f"[0:v]{base_str}[preblur];"
+        fc += f"[preblur]split[main][to_blur];"
+        fc += f"[to_blur]crop=iw:{bh_px}:0:{by_px},boxblur=luma_radius=10:chroma_radius=4:alpha_radius=1[blurred];"
+        fc += f"[main][blurred]overlay=0:{by_px}[postblur]"
+        if brn and sp and os.path.exists(sp):
+            fc += f";[postblur][1:v]overlay={sx}:{sy}[v0]"
+        else:
+            fc += ";[postblur]null[v0]"
+        return fc
 
 # --- MAIN UI ---
 up = st.file_uploader("ဗီဒီယို သို့မဟုတ် အော်ဒီယိုဖိုင် ရွေးချယ်ပါ", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"])
@@ -856,7 +843,7 @@ if up:
 
     # Auto-detect subtitle area when auto mode is enabled and manual is off
     if use_auto and not use_manual and st.session_state.base_frame and blur_s:
-        detected_y, detected_h = auto_detect_subtitle_area(st.session_state.base_frame, api_keys if api_keys else None, grok_keys if grok_keys else None)
+        detected_y, detected_h = auto_detect_subtitle_area(st.session_state.base_frame, api_keys if api_keys else None)
         st.session_state.blur_y_pos = detected_y
         st.session_state.blur_h_size = detected_h
 
@@ -1061,7 +1048,7 @@ FORMATTING RULES:
                     # Run auto-detect AGAIN during processing (in case frame changed)
                     if use_auto and not use_manual and st.session_state.base_frame and blur_s:
                         stt.text("🤖 AI Auto Detect: မူရင်းစာတန်းထိုး နေရာ ရှာဖွေနေပါသည်...")
-                        detected_y, detected_h = auto_detect_subtitle_area(st.session_state.base_frame, api_keys if api_keys else None, grok_keys if grok_keys else None)
+                        detected_y, detected_h = auto_detect_subtitle_area(st.session_state.base_frame, api_keys if api_keys else None)
                         st.session_state.blur_y_pos = detected_y
                         st.session_state.blur_h_size = detected_h
                         stt.text(f"🤖 AI Auto Detect: Y={detected_y:.1f}%, H={detected_h:.1f}%")
