@@ -37,7 +37,7 @@ st.markdown("""
 
 # Session State Initialization
 def init_state():
-    keys = ['myanmar_text', 'audio_path', 'srt_data', 'last_uploaded', 'processing_done', 'valid_keys_info', 'active_key']
+    keys = ['audio_path', 'srt_data', 'last_uploaded', 'processing_done', 'valid_keys_info', 'active_key']
     for k in keys:
         if k not in st.session_state: st.session_state[k] = None
     for i in range(1, 6):
@@ -48,6 +48,7 @@ def init_state():
     if 'v_pitch' not in st.session_state: st.session_state.v_pitch = 50
     if 'target_min' not in st.session_state: st.session_state.target_min = 2
     if 'target_sec' not in st.session_state: st.session_state.target_sec = 30
+    if 'bulk_keys' not in st.session_state: st.session_state.bulk_keys = ""
 
 init_state()
 
@@ -109,33 +110,31 @@ with st.sidebar:
         st.cache_data.clear()
         for k, v in keys_to_keep.items(): st.session_state[k] = v
         gc.collect()
-        st.success("RAM ရှင်းလင်းပြီးပါပြီ (Keys များကို ထိန်းသိမ်းထားပါသည်)")
+        st.success("RAM ရှင်းလင်းပြီးပါပြီ")
     
     st.markdown("---")
-    st.subheader("🔑 Gemini API Keys (၅ ခုအထိ)")
+    st.subheader("🔑 Gemini API Keys")
     
-    # Auto Key Extractor Logic
-    def auto_parse_keys():
-        val = st.session_state.key_1
-        found = re.findall(r'AIzaSy[a-zA-Z0-9_-]{33}', val)
-        if len(found) > 1:
+    # BULK PASTE AREA
+    def parse_bulk_keys():
+        found = re.findall(r'AIzaSy[a-zA-Z0-9_-]{33}', st.session_state.bulk_keys)
+        if found:
             for i, k in enumerate(found[:5]):
                 st.session_state[f'key_{i+1}'] = k
-            st.success(f"✅ Keys {len(found[:5])} ခုကို အလိုအလျောက် ခွဲထုတ်ပြီးပါပြီ။")
+            st.success(f"✅ Keys {len(found[:5])} ခုကို ခွဲထုတ်ပြီးပါပြီ။")
 
-    st.text_input("API Key 1", type="password", key="key_1", on_change=auto_parse_keys)
+    st.text_area("Key များအားလုံး စုပြုံထည့်ရန် (Bulk Paste)", key="bulk_keys", on_change=parse_bulk_keys, height=100)
     
-    show_more_keys = st.toggle("🔽 ကျန် API Keys များ ဖော်ပြရန်", value=False, key="show_more_keys_toggle")
+    st.markdown("---")
+    st.subheader("Individual Keys")
+    k1 = st.text_input("API Key 1", type="password", key="key_1")
+    show_more_keys = st.toggle("🔽 ကျန် API Keys များ ဖော်ပြရန်", value=False)
     if show_more_keys:
         st.text_input("API Key 2", type="password", key="key_2")
         st.text_input("API Key 3", type="password", key="key_3")
         st.text_input("API Key 4", type="password", key="key_4")
         st.text_input("API Key 5", type="password", key="key_5")
-    else:
-        # Important: maintain state when hidden
-        pass
     
-    # Collect keys for testing
     api_keys = [st.session_state[f'key_{i}'] for i in range(1, 6) if st.session_state[f'key_{i}']]
 
     if st.button("🔌 Keys အားလုံး စမ်းသပ်ရန်"):
@@ -201,7 +200,7 @@ def parse_srt_text(text):
     return [p.strip() for p in parts if p.strip()]
 
 async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
-    rate = f"+{int((spd-50)*2)}%" if spd>=50 else f"{int((spd-50)*2)}%"
+    rate = f"+{int((spd-55)*2)}%" if spd>=55 else f"{int((spd-55)*2)}%"
     pitch = f"+{int((ptc-50)*2)}Hz" if ptc>=50 else f"{int((ptc-50)*2)}Hz"
     segments = parse_srt_text(text)
     if not segments: segments = [text]
