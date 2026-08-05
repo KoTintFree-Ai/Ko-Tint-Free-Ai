@@ -90,11 +90,10 @@ def load_keys_from_file():
             for k, v in keys_data.items():
                 if k in st.session_state and not st.session_state.get(k):
                     st.session_state[k] = v
-                if k == 'key_1': st.session_state['w_key_1'] = v
-                if k == 'key_2': st.session_state['w_key_2'] = v
-                if k == 'key_3': st.session_state['w_key_3'] = v
-                if k == 'key_4': st.session_state['w_key_4'] = v
-                if k == 'key_5': st.session_state['w_key_5'] = v
+                # Also set the widget values if they are in session state
+                wk = f"w_{k}"
+                if wk not in st.session_state:
+                    st.session_state[wk] = v
         except Exception:
             pass
 
@@ -214,7 +213,7 @@ def parse_srt_text(text):
 
 async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
     import numpy as np
-    rate = f"+{int((spd-50)*2)}%" if spd>=50 else f"{int((spd-50)*2)}%"
+    rate = f"+{int((spd-55)*2)}%" if spd>=55 else f"{int((spd-55)*2)}%"
     pitch = f"+{int((ptc-50)*2)}Hz" if ptc>=50 else f"{int((ptc-50)*2)}Hz"
     segments = parse_srt_text(text)
     if not segments: segments = [text]
@@ -311,7 +310,7 @@ with st.sidebar:
 
     # Bulk paste
     st.markdown("---")
-    st.text_area("Key များအားလုံးကို ဤနေရာတွင် Paste ချပါ", placeholder="ဥပမာ- ၁။ AIza... ၂။ AQ... စသည်ဖြင့်", height=80, key="bulk_key_input", on_change=lambda: None)
+    st.text_area("Key များအားလုံးကို ဤနေရာတွင် Paste ချပါ", placeholder="ဥပမာ- ၁။ AIza... ၂။ AQ... စသည်ဖြင့်", height=80, key="bulk_key_input")
 
     def auto_fill():
         if st.session_state.bulk_key_input:
@@ -325,7 +324,7 @@ with st.sidebar:
                 for i in range(min(5, len(gemini_found))):
                     st.session_state[f'key_{i+1}'] = gemini_found[i]
                     st.session_state[f'w_key_{i+1}'] = gemini_found[i]
-                msg.append(f"✅ Gemini Keys {len(gemini_found[:5])} ခု")
+                msg.append(f"✅ Gemini Keys {len(found[:5])} ခု")
 
             st.session_state.bulk_msg = " ဖြည့်ပြီးပါပြီ: " + ", ".join(msg) if msg else "⚠️ API Key ရှာမတွေ့ပါ။"
             st.session_state.bulk_key_input = ""
@@ -343,8 +342,6 @@ with st.sidebar:
             st.error("API Key အရင်ထည့်ပေးပါ။")
         else:
             st.session_state.test_results = []
-            st.session_state.valid_keys_info = {}
-
             with st.spinner("Keys များကို စစ်ဆေးနေသည်..."):
                 for i, k in enumerate(api_keys):
                     success = False
@@ -523,7 +520,7 @@ FORMATTING RULES:
 
                 with st.status("🔊 အသံဖိုင်များကို တစ်ခုချင်းစီ ထုတ်လုပ်နေပါသည်...", expanded=False) as status:
                     st.session_state.srt_data, audio_final_dur = asyncio.run(
-                        gen_audio_srt(srt_res, ao, v_id, v_speed, v_pitch, target_sec if fit_dur else 0)
+                        gen_audio_srt(srt_res, ao, v_id, st.session_state.v_speed, st.session_state.v_pitch, target_sec if fit_dur else 0)
                     )
                     status.update(label="✅ အသံဖိုင်အားလုံး ပေါင်းစပ်ပြီးပါပြီ!", state="complete")
                 st.session_state.audio_path = ao
