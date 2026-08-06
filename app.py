@@ -968,11 +968,13 @@
     "    print(\"=\" * 50)\n",
     "\n",
     "    # Configure bot with retry and longer timeouts\n",
-    "    bot.enable_save_next_step_handlers(delay=5)\n",
+    "    # Note: callback_query updates must be in allowed_updates for buttons to work\n",
+    "    print(f\"📋 Callback handlers registered: {len(bot.callback_query_handlers)}\")\n",
+    "    print(f\"📋 Message handlers registered: {len(bot.message_handlers)}\")\n",
     "    bot.infinity_polling(\n",
     "        timeout=60,\n",
     "        long_polling_timeout=60,\n",
-    "        allowed_updates=[\"message\", \"edited_message\"]\n",
+    "        allowed_updates=[\"message\", \"edited_message\", \"callback_query\"]\n",
     "    )\n"
    ],
    "outputs": []
