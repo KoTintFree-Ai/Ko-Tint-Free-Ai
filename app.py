@@ -27,7 +27,7 @@ MYANMAR_VOICES = {
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 st.set_page_config(
-    page_title="Movie Recap AI V16 - Optimized",
+    page_title="Movie Recap AI V17 - Authenticated",
     page_icon="🎬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -62,7 +62,7 @@ def init_state():
 
 init_state()
 
-st.title("🎬 Movie Recap AI V16 - Optimized")
+st.title("🎬 Movie Recap AI V17 - Authenticated")
 st.markdown("ရိုးရှင်းတဲ့ အင်္ဂလိပ် ဗီဒီယို → မြန်မာစာ → အသံ → SRT → ဗီဒီယို")
 
 # --- HELPER FUNCTIONS ---
@@ -103,25 +103,32 @@ def wrap_text(text, max_width=50):
     return '\n'.join(lines)
 
 def test_api_key_detailed(key):
-    """Test a single API key with detailed error reporting"""
+    """Test a single API key with header-based authentication"""
+    key = key.strip()  # Remove any whitespace
+    
     try:
-        # Try v1beta first
-        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
-        r = requests.get(url, timeout=15)
+        # Try with header-based authentication first
+        headers = {
+            "x-goog-api-key": key,
+            "Content-Type": "application/json"
+        }
+        
+        url = "https://generativelanguage.googleapis.com/v1beta/models"
+        r = requests.get(url, headers=headers, timeout=15)
         
         if r.status_code == 200:
             data = r.json()
             models = [m['name'].split('/')[-1] for m in data.get('models', []) 
                      if 'generateContent' in m.get('supportedGenerationMethods', [])]
             return {"valid": True, "version": "v1beta", "models": models, "error": None}
+        elif r.status_code == 401:
+            return {"valid": False, "error": "401 Unauthorized - API Key မမှန်ကန်သည်"}
         elif r.status_code == 403:
-            return {"valid": False, "error": "Forbidden (403) - API Key မမှန်ကန်သည့်နည်းလည်း ရှိနိုင်သည်"}
+            return {"valid": False, "error": "403 Forbidden - API Key အခွင့်အရေး မရှိ"}
         elif r.status_code == 429:
-            return {"valid": False, "error": "Rate Limited (429) - အသုံးပြုမှု ပမာဏ ကျော်လွန်သည်"}
-        elif r.status_code == 404:
-            return {"valid": False, "error": "Not Found (404) - API URL မမှန်"}
+            return {"valid": False, "error": "429 Rate Limited - အသုံးပြုမှု ပမာဏ ကျော်လွန်သည်"}
         else:
-            return {"valid": False, "error": f"HTTP {r.status_code}: {r.text[:100]}"}
+            return {"valid": False, "error": f"HTTP {r.status_code}"}
     except requests.exceptions.Timeout:
         return {"valid": False, "error": "Timeout - ကွန်ယက်ချိတ်ဆက်မှု နှေးနေသည်"}
     except requests.exceptions.ConnectionError:
@@ -224,7 +231,7 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("🔑 API Keys")
     
-    k1 = st.text_input("API Key 1", type="password", key="key_1", placeholder="sk-... သို့မဟုတ် AIza...")
+    k1 = st.text_input("API Key 1", type="password", key="key_1", placeholder="AIza... သို့မဟုတ် sk-...")
     show_more = st.toggle("ကျန် Keys", value=False)
     if show_more:
         k2 = st.text_input("API Key 2", type="password", key="key_2")
@@ -321,8 +328,13 @@ with tab1:
                 for ver in API_VERSIONS:
                     for m in DEFAULT_MODELS:
                         try:
-                            url = f"https://generativelanguage.googleapis.com/{ver}/models/{m}:generateContent?key={k}"
-                            r = requests.post(url, json={"contents":cont}, timeout=180)
+                            headers = {
+                                "x-goog-api-key": k.strip(),
+                                "Content-Type": "application/json"
+                            }
+                            url = f"https://generativelanguage.googleapis.com/{ver}/models/{m}:generateContent"
+                            r = requests.post(url, json={"contents":cont}, headers=headers, timeout=180)
+                            
                             if r.status_code == 200:
                                 data = r.json()
                                 if 'candidates' in data and len(data['candidates']) > 0:
@@ -490,4 +502,4 @@ with tab4:
             st.error(f"❌ အမှား: {str(e)}")
 
 st.markdown("---")
-st.markdown("🎬 **Movie Recap AI V16** - Optimized | သီဟ/နီလာ | Powered by Gemini")
+st.markdown("🎬 **Movie Recap AI V17** - Authenticated | သီဟ/နီလာ | Powered by Gemini")
