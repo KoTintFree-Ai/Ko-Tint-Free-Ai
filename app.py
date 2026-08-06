@@ -13,14 +13,13 @@ import shutil
 import numpy as np
 
 # --- CONFIGURATION ---
-# Optimized Model-Version Mapping to ensure compatibility and stability
+# Updated Gemini Model List - Using only current and stable models to avoid 404
 GEMINI_CONFIGS = [
     {"model": "gemini-1.5-flash", "ver": "v1beta"},
     {"model": "gemini-1.5-flash", "ver": "v1"},
     {"model": "gemini-1.5-flash-8b", "ver": "v1beta"},
-    {"model": "gemini-2.0-flash-exp", "ver": "v1beta"},
     {"model": "gemini-1.5-pro", "ver": "v1beta"},
-    {"model": "gemini-pro", "ver": "v1beta"}
+    {"model": "gemini-2.0-flash-exp", "ver": "v1beta"}
 ]
 
 # Safety Settings to prevent content blocking for movie recaps
