@@ -27,7 +27,7 @@ MYANMAR_VOICES = {
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 st.set_page_config(
-    page_title="Movie Recap AI V14 - Simple & Stable",
+    page_title="Movie Recap AI V15 - Final",
     page_icon="🎬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -51,8 +51,8 @@ def init_state():
         st.session_state.step2_audio_path = None
     if 'step2_srt' not in st.session_state:
         st.session_state.step2_srt = None
-    if 'valid_keys_info' not in st.session_state:
-        st.session_state.valid_keys_info = {}
+    if 'valid_keys' not in st.session_state:
+        st.session_state.valid_keys = []
     
     for i in range(1, 6):
         if f'key_{i}' not in st.session_state:
@@ -60,7 +60,7 @@ def init_state():
 
 init_state()
 
-st.title("🎬 Movie Recap AI V14 - Simple & Stable")
+st.title("🎬 Movie Recap AI V15 - Final Edition")
 st.markdown("ရိုးရှင်းတဲ့ အင်္ဂလိပ် ဗီဒီယို → မြန်မာစာ → အသံ → SRT → ဗီဒီယို")
 
 # --- HELPER FUNCTIONS ---
@@ -99,6 +99,21 @@ def wrap_text(text, max_width=50):
     if current_line:
         lines.append(' '.join(current_line))
     return '\n'.join(lines)
+
+def test_api_key(key):
+    """Test a single API key"""
+    for ver in API_VERSIONS:
+        try:
+            url = f"https://generativelanguage.googleapis.com/{ver}/models?key={key}"
+            r = requests.get(url, timeout=15)
+            if r.status_code == 200:
+                data = r.json()
+                models = [m['name'].split('/')[-1] for m in data.get('models', []) 
+                         if 'generateContent' in m.get('supportedGenerationMethods', [])]
+                return {"valid": True, "version": ver, "models": models}
+        except:
+            pass
+    return {"valid": False}
 
 async def gen_audio_from_text(text, out_p, voice_locale, speed, pitch):
     """Generate audio from text with robust error handling"""
@@ -214,23 +229,20 @@ with st.sidebar:
         if not api_keys:
             st.error("API Key ထည့်ပေးပါ")
         else:
-            st.session_state.valid_keys_info = {}
+            st.session_state.valid_keys = []
             with st.spinner("စစ်ဆေးနေ..."):
                 for i, k in enumerate(api_keys):
-                    for ver in API_VERSIONS:
-                        try:
-                            url = f"https://generativelanguage.googleapis.com/{ver}/models?key={k}"
-                            r = requests.get(url, timeout=15)
-                            if r.status_code == 200:
-                                data = r.json()
-                                models = [m['name'].split('/')[-1] for m in data.get('models', []) 
-                                         if 'generateContent' in m.get('supportedGenerationMethods', [])]
-                                st.session_state.valid_keys_info[k] = {"version": ver, "models": models}
-                                st.success(f"✅ Key {i+1}")
-                                break
-                        except:
-                            pass
-            st.rerun()
+                    result = test_api_key(k)
+                    if result["valid"]:
+                        st.session_state.valid_keys.append(k)
+                        st.success(f"✅ Key {i+1} အောင်မြင်")
+                    else:
+                        st.error(f"❌ Key {i+1} မမှန်ကန်")
+            
+            if st.session_state.valid_keys:
+                st.info(f"✅ စုစုပေါင်း {len(st.session_state.valid_keys)} Key အောင်မြင်")
+            else:
+                st.error("❌ အောင်မြင်သော Key မရှိပါ")
 
     st.markdown("---")
     st.subheader("🎙️ အသံ ဆက်တင်")
@@ -252,10 +264,9 @@ with tab1:
     st.header("Step 1️⃣: ဗီဒီယို → မြန်မာစာ (Plain Text)")
     
     up1 = st.file_uploader("ဗီဒီယို/အော်ဒီယို", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"], key="up1")
-    target_sec = st.number_input("အတိုင်းအတာ (စက္ကန့်)", 10, 300, 60, key="target_sec")
     
-    if up1 and not api_keys:
-        st.error("⚠️ API Key ထည့်ပေးပါ")
+    if up1 and not st.session_state.valid_keys:
+        st.error("⚠️ အရင် API Key ကို စမ်းသပ်ပါ")
     elif up1 and st.button("🚀 Step 1 စတင်"):
         fid = up1.name + str(up1.size)
         tp = os.path.join(tempfile.gettempdir(), f"input_{fid}." + up1.name.split(".")[-1])
@@ -281,16 +292,14 @@ with tab1:
             stt.text("⏳ Gemini ဖြင့် ဘာသာပြန်နေ...")
             prg.progress(50)
             
-            target_words = int(target_sec * 3.8)
-            prm = f"""ဒီ အော်ဒီယိုကို နားထောင်ပြီး မြန်မာစာသားအဖြစ် ဘာသာပြန်ပါ။
+            prm = """ဒီ အော်ဒီယိုကို နားထောင်ပြီး မြန်မာစာသားအဖြစ် ဘာသာပြန်ပါ။
 
 လိုအပ်ချက်များ:
 1. ရိုးရှင်းတဲ့ မြန်မာစာသားသီးသန့် ပဲ ရေးပါ
 2. အချိန်/timestamps တွေ မထည့်ပါ
 3. နိဒါန်း၊ နှုတ်ဆက်တာ၊ အပိုစာသားတွေ လုံးဝ မထည့်ပါ
 4. ဇာတ်လမ်းကိုပဲ တိုက်ရိုက် ဘာသာပြန်ပါ
-5. အဆိုပါ အတိုင်းအတာ {target_sec} စက္ကန့်အတွက် {target_words} စကားလုံးခန့် ရေးပါ
-6. စာကြောင်းတွေကို Myanmar sentence marker (။) ဖြင့် ခွဲပါ
+5. စာကြောင်းတွေကို Myanmar sentence marker (။) ဖြင့် ခွဲပါ
 
 ရလာဒ်: မြန်မာစာသားသီးသန့်"""
             
@@ -300,14 +309,9 @@ with tab1:
             
             srt_res = None
             
-            for k_idx, k in enumerate(api_keys):
-                info = st.session_state.valid_keys_info.get(k, {})
-                versions = [info.get('version')] if info.get('version') else API_VERSIONS
-                models = info.get('models', DEFAULT_MODELS) if info else DEFAULT_MODELS
-                models = sorted(models, key=lambda x: 0 if 'flash' in x.lower() else 1)
-                
-                for ver in versions:
-                    for m in models:
+            for k_idx, k in enumerate(st.session_state.valid_keys):
+                for ver in API_VERSIONS:
+                    for m in DEFAULT_MODELS:
                         try:
                             url = f"https://generativelanguage.googleapis.com/{ver}/models/{m}:generateContent?key={k}"
                             r = requests.post(url, json={"contents":cont}, timeout=180)
@@ -345,6 +349,7 @@ with tab2:
     st.header("Step 2️⃣: စာသား → အသံ + SRT")
     
     step2_text = st.text_area("Step 1 စာသားကို ကူးထည့်", height=300, key="step2_text")
+    step2_target = st.number_input("အတိုင်းအတာ (စက္ကန့်)", 10, 300, 60, key="step2_duration")
     
     if step2_text and st.button("🎙️ Step 2 စတင်"):
         prg = st.progress(0)
@@ -477,4 +482,4 @@ with tab4:
             st.error(f"❌ အမှား: {str(e)}")
 
 st.markdown("---")
-st.markdown("🎬 **Movie Recap AI V14** - Simple & Stable | သီဟ/နီလာ | Powered by Gemini")
+st.markdown("🎬 **Movie Recap AI V15** - Final Edition | သီဟ/နီလာ | Powered by Gemini")
