@@ -13,14 +13,22 @@ import shutil
 import numpy as np
 
 # --- CONFIGURATION ---
-# Improved Model-Version Mapping to avoid 404 errors
+# Optimized Model-Version Mapping to ensure compatibility and stability
 GEMINI_CONFIGS = [
     {"model": "gemini-1.5-flash", "ver": "v1beta"},
     {"model": "gemini-1.5-flash", "ver": "v1"},
     {"model": "gemini-1.5-flash-8b", "ver": "v1beta"},
-    {"model": "gemini-1.5-pro", "ver": "v1beta"},
     {"model": "gemini-2.0-flash-exp", "ver": "v1beta"},
-    {"model": "gemini-pro", "ver": "v1"}
+    {"model": "gemini-1.5-pro", "ver": "v1beta"},
+    {"model": "gemini-pro", "ver": "v1beta"}
+]
+
+# Safety Settings to prevent content blocking for movie recaps
+SAFETY_SETTINGS = [
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
 ]
 
 # Advanced Networking: Force IPv4 for better stability on Streamlit Cloud
@@ -248,7 +256,10 @@ if up:
             stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည်..."); prg.progress(30)
             prm = "Provide a dramatic Myanmar Movie Recap. RULES: No fillers, no numbers, no labels. Output SRT format only."
             with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
-            cont = {"contents": [{"parts": [{"text": prm}, {"inline_data": {"mime_type": "audio/mpeg", "data": b64}}]}]}
+            cont = {
+                "contents": [{"parts": [{"text": prm}, {"inline_data": {"mime_type": "audio/mpeg", "data": b64}}]}],
+                "safetySettings": SAFETY_SETTINGS
+            }
             
             srt_res = None
             last_error = "ဘာသာပြန်ခြင်း မအောင်မြင်ပါ။"
