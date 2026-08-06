@@ -295,9 +295,12 @@ with st.sidebar:
                                 data = r.json()
                                 models = [m['name'].split('/')[-1] for m in data.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
                                 st.session_state.valid_keys_info[k] = {"version": ver, "models": models}
-                                st.success(f"✅ Key {i+1} အောင်မြင်")
+                                st.success(f"✅ Key {i+1} အောင်မြင်ပါတယ်")
                                 break
                         except: continue
+            
+            # စာသားသေချာမြင်ရအောင် ၃ စက္ကန့် စောင့်ဆိုင်းခြင်း
+            time.sleep(3)
             st.rerun()
 
     st.markdown("---")
