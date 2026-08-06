@@ -68,13 +68,13 @@ if uploaded_file is not None:
                 "🔄 လုပ်ဆောင်နေပါသည်... ကျေးဇူးပြု၍ ခဏစောင့်ဆိုင်းပေးပါ။"
             )
 
-            # Error ဖြစ်စေသော nonlocal cur_t နေရာအား ပြင်ဆင်ပြီးဖြစ်ပါသည်
-            cur_t = 0  # Initialize variable safely
+            # Session State ကို သုံးပြီး Scope Error ကင်းရှင်းစေခြင်း
+            if "cur_t" not in st.session_state:
+                st.session_state["cur_t"] = 0
 
 
             def process_translation():
-                nonlocal cur_t  # Error မတက်စေရန် အထက်တွင် cur_t ကို ကြေညာထားပြီးပါပြီ
-                cur_t += 1
+                st.session_state["cur_t"] += 1
 
 
             process_translation()
