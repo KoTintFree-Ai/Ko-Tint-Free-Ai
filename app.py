@@ -28,7 +28,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FONT_PATH = os.path.join(SCRIPT_DIR, "Pyidaungsu.ttf")
 
 st.set_page_config(
-    page_title="Movie Recap AI Pro V12 - Stable",
+    page_title="Movie Recap AI Pro V13 - Plain Text",
     page_icon="🎬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -44,7 +44,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# Session State Initialization - WITHOUT direct assignment
+# Session State Initialization
 def init_state():
     if 'step1_translation' not in st.session_state:
         st.session_state.step1_translation = None
@@ -65,8 +65,8 @@ def init_state():
 
 init_state()
 
-st.title("🎬 Movie Recap AI Pro V12 - Stable")
-st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Manual Steps + Auto-Merge + Auto-Blur)")
+st.title("🎬 Movie Recap AI Pro V13 - Plain Text Edition")
+st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Plain Text → Audio → SRT → Video)")
 
 # --- HELPER FUNCTIONS ---
 def get_dur(p):
@@ -117,34 +117,26 @@ def translate_error(err_msg, status_code=None):
         return "မူပိုင်ခွင့်/လုံခြုံရေး စည်းကမ်းချက်များကြောင့် ငြင်းဆိုလိုက်ပါသည်။"
     return f"အမှားအယွင်း: {err_msg}"
 
-def parse_srt_text(text):
-    """Parse SRT-formatted text into segments"""
-    parts = re.split(r'\n\s*\n', text.strip())
-    segments = []
-    for part in parts:
-        lines = part.strip().split('\n')
-        if len(lines) >= 3:
-            text_lines = lines[2:]
-            seg = ' '.join(text_lines).strip()
-        else:
-            seg = part.strip()
-        if seg: segments.append(seg)
-    return [s for s in segments if s]
-
-async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
-    """Generate audio and SRT from text"""
+async def gen_audio_srt_from_text(text, out_p, vid, spd, ptc, target=0):
+    """Generate audio and SRT from plain text (split into sentences)"""
     rate = f"+{int((spd-50)*2)}%" if spd>=50 else f"{int((spd-50)*2)}%"
     pitch = f"+{int((ptc-50)*2)}Hz" if ptc>=50 else f"{int((ptc-50)*2)}Hz"
-    segments = parse_srt_text(text)
-    if not segments: segments = [text]
+    
+    # Split text into sentences (by ။ or ။ or line breaks)
+    sentences = re.split(r'[။\n]+', text.strip())
+    sentences = [s.strip() for s in sentences if s.strip()]
+    
+    if not sentences:
+        sentences = [text]
     
     temp_files = []
     cur_t = 0.0
     srt_blocks = []
     
-    for idx, txt in enumerate(segments):
+    for idx, txt in enumerate(sentences):
         clean_txt = txt.strip()
-        if not clean_txt: continue
+        if not clean_txt: 
+            continue
         p = tempfile.mktemp(suffix=".mp3")
         try:
             communicate = edge_tts.Communicate(clean_txt, vid, rate=rate, pitch=pitch)
@@ -154,9 +146,11 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
                 srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(cur_t)} --> {fmt_srt(cur_t+d)}\n{wrap_text(clean_txt)}\n\n")
                 temp_files.append(p)
                 cur_t += d
-        except: continue
+        except Exception as e:
+            continue
         
-    if not temp_files: raise Exception("အသံဖိုင် ထုတ်လုပ်ခြင်း မအောင်မြင်ပါ။")
+    if not temp_files:
+        raise Exception("အသံဖိုင် ထုတ်လုပ်ခြင်း မအောင်မြင်ပါ။")
     
     raw = tempfile.mktemp(suffix=".mp3")
     l_p = tempfile.mktemp(suffix=".txt")
@@ -318,7 +312,8 @@ tab1, tab2, tab3, tab4 = st.tabs(["📹 Step 1", "🔊 Step 2", "📝 Step 3", "
 
 # ============ STEP 1: VIDEO TO TRANSLATION ============
 with tab1:
-    st.header("Step 1️⃣: ဗီဒီယို → မြန်မာစာ")
+    st.header("Step 1️⃣: ဗီဒီယို → မြန်မာစာ (Plain Text)")
+    st.markdown("ဗီဒီယိုတင်ပြီး Gemini AI ဖြင့် **စာသားသီးသန့်** ဘာသာပြန်ချက်ကို ရယူပါ။ (အချိန်/timestamps မပါ)")
     
     up1 = st.file_uploader("ဗီဒီယို/အော်ဒီယို ရွေးချယ်ပါ", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"], key="step1_upload")
     target_sec = st.number_input("အတိုင်းအတာ (စက္ကန့်)", 10, 300, 60, key="target_duration_input")
@@ -349,20 +344,23 @@ with tab1:
             prg.progress(50)
             
             target_words = int(target_sec * 3.8)
-            prm = f"""Listen to this audio and translate it into a HIGH-ENERGY Myanmar Movie Recap style narration.
+            prm = f"""Listen to this audio and translate it into a Myanmar Movie Recap style narration.
 TARGET DURATION: {target_sec} seconds.
-REQUIRED SCRIPT LENGTH: You MUST write exactly around {target_words} Myanmar words.
+REQUIRED SCRIPT LENGTH: You MUST write exactly around {target_words} Myanmar words to fill the {target_sec} seconds timeframe.
 
 STRICT RULES:
-1. NO FILLER PHRASES
-2. FOCUS ON SCENES: Describe ONLY what is happening
-3. TIMING SYNC: Follow the exact sequence
-4. NO HALLUCINATION
+1. NO FILLER PHRASES - Do NOT use greetings or generic phrases
+2. FOCUS ON SCENES - Describe ONLY what is happening in the movie
+3. TIMING SYNC - Follow the exact sequence of events
+4. NO HALLUCINATION - Do not add external information
 5. Use Standard Myanmar Unicode
+6. DRAMATIC TONE - Make it engaging and fast-paced like a movie recap
 
-OUTPUT FORMAT: SRT subtitle format with timestamps from 00:00:00,000 to {fmt_srt(target_sec)}
-Each subtitle block should be a natural phrase (approx 15 words).
-DO NOT include any preamble or conclusion. Just the SRT blocks."""
+OUTPUT FORMAT: Plain text ONLY (NO timestamps, NO SRT format)
+- Write continuous narrative text separated by Myanmar sentence markers (။)
+- Each sentence should be a natural phrase (approx 15 words)
+- NO numbers, NO timestamps, NO subtitles format
+- Just pure Myanmar narration text"""
             
             with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
             cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mpeg","data":b64}}]}]
@@ -398,16 +396,17 @@ DO NOT include any preamble or conclusion. Just the SRT blocks."""
                 prg.progress(100)
                 stt.text("✅ Step 1 ပြီးမြောက်!")
                 
-                with st.expander("📝 ရလာတဲ့ စာသားများ", expanded=True):
+                with st.expander("📝 ရလာတဲ့ မြန်မာစာသားများ (Plain Text)", expanded=True):
                     st.text_area("Translation Output", srt_res, height=250, disabled=False)
                     st.info("💡 အဲ့ စာသားကို copy ကူးပြီး Step 2 ထဲ ကူးထည့်ပါ။")
         
         except Exception as e:
             st.error(f"❌ အမှားအယွင်း: {str(e)}")
 
-# ============ STEP 2: TEXT TO AUDIO ============
+# ============ STEP 2: TEXT TO AUDIO + SRT ============
 with tab2:
-    st.header("Step 2️⃣: မြန်မာစာ → အသံ")
+    st.header("Step 2️⃣: မြန်မာစာ → အသံ + SRT")
+    st.markdown("Step 1 မှ ရလာတဲ့ စာသားကို အသံထုတ်ပြီး အဲ့ အသံအတိုင်းအတာအရ SRT ကို အလိုအလျောက် ပြန်ထုတ်ပေးပါ။")
     
     step2_text = st.text_area("Step 1 မှ စာသားကို ကူးထည့်ပါ", height=300, key="step2_text_input_widget")
     step2_target = st.number_input("အတိုင်းအတာ (စက္ကန့်)", 10, 300, 60, key="step2_duration_input")
@@ -424,7 +423,7 @@ with tab2:
             ao = os.path.join(tempfile.gettempdir(), ao_name)
             
             voice_locale = MYANMAR_VOICES[voice_choice]
-            srt_data, audio_dur = asyncio.run(gen_audio_srt(step2_text, ao, voice_locale, v_speed, v_pitch, step2_target))
+            srt_data, audio_dur = asyncio.run(gen_audio_srt_from_text(step2_text, ao, voice_locale, v_speed, v_pitch, step2_target))
             
             st.session_state.step2_audio_path = ao
             st.session_state.step2_srt = srt_data
@@ -443,13 +442,14 @@ with tab2:
         except Exception as e:
             st.error(f"❌ အမှားအယွင်း: {str(e)}")
 
-# ============ STEP 3: AUDIO TO SRT ============
+# ============ STEP 3: VERIFY SRT ============
 with tab3:
-    st.header("Step 3️⃣: အသံ → SRT")
+    st.header("Step 3️⃣: SRT စစ်ဆေးခြင်း")
+    st.markdown("Step 2 မှ ထွက်လာတဲ့ SRT ကို ကြည့်ရှုပြီး လိုအပ်ရင် ပြင်ဆင်နိုင်ပါတယ်။")
     
-    step3_srt = st.text_area("Step 2 မှ SRT ကို ကူးထည့်ပါ", height=300, key="step3_srt_input_widget")
+    step3_srt = st.text_area("Step 2 မှ SRT ကို ကြည့်ရှုပြီး လိုအပ်ရင် ပြင်ဆင်ပါ", height=300, key="step3_srt_input_widget")
     
-    if step3_srt and st.button("✏️ Step 3 စတင်"):
+    if step3_srt and st.button("✅ Step 3 အတည်ပြုရန်"):
         try:
             st.session_state.step3_final_srt = step3_srt
             st.success("✅ SRT သိမ်းဆည်းပြီး!")
@@ -571,4 +571,4 @@ with tab4:
             st.error(f"❌ အမှားအယွင်း: {str(e)}")
 
 st.markdown("---")
-st.markdown("🎬 **Movie Recap AI Pro V12** - Manual Steps + Auto-Merge + Auto-Blur | သီဟ/နီလာ အသံ | Powered by Gemini AI")
+st.markdown("🎬 **Movie Recap AI Pro V13** - Plain Text Edition | သီဟ/နီလာ အသံ | Powered by Gemini AI")
