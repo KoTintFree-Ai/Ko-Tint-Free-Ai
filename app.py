@@ -50,38 +50,46 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- Session State ---
+# --- Session State Initialization ---
 def init_state():
-    keys = ['audio_path', 'srt_data', 'plain_text', 'word_count', 'last_uploaded', 'processing_done',
-            'valid_keys_info', 'active_key', 'bulk_msg', 'test_results']
-    for k in keys:
-        if k not in st.session_state: st.session_state[k] = None
+    # Define keys and their default values
+    defaults = {
+        'audio_path': None,
+        'srt_data': None,
+        'plain_text': None,
+        'word_count': 0,
+        'last_uploaded': None,
+        'processing_done': False,
+        'valid_keys_info': {},
+        'active_key': None,
+        'bulk_msg': "",
+        'test_results': [],
+        'v_speed': 55,
+        'v_pitch': 50,
+        'target_min': 2,
+        'target_sec': 30,
+        'bulk_key_input': ""
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+            
+    # Initialize keys 1-5
     for i in range(1, 6):
-        if f'key_{i}' not in st.session_state: st.session_state[f'key_{i}'] = ""
-
-    if st.session_state.processing_done is None: st.session_state.processing_done = False
-    if st.session_state.bulk_msg is None: st.session_state.bulk_msg = ""
-    if st.session_state.test_results is None: st.session_state.test_results = []
-    if st.session_state.valid_keys_info is None: st.session_state.valid_keys_info = {}
-    if 'v_speed' not in st.session_state: st.session_state.v_speed = 55
-    if 'v_pitch' not in st.session_state: st.session_state.v_pitch = 50
-    if 'target_min' not in st.session_state: st.session_state.target_min = 2
-    if 'target_sec' not in st.session_state: st.session_state.target_sec = 30
+        key_name = f'key_{i}'
+        if key_name not in st.session_state:
+            st.session_state[key_name] = ""
 
 # --- PERSISTENT KEY STORAGE ---
 KEYS_FILE = os.path.join(SCRIPT_DIR, "saved_keys.json")
 
 def save_keys_to_file():
-    keys_data = {}
-    for i in range(1, 6):
-        k = st.session_state.get(f'key_{i}', "")
-        if k: keys_data[f'key_{i}'] = k
+    keys_data = {f'key_{i}': st.session_state[f'key_{i}'] for i in range(1, 6) if st.session_state[f'key_{i}']}
     if keys_data:
         try:
             with open(KEYS_FILE, 'w') as f:
                 json.dump(keys_data, f)
-        except Exception:
-            pass
+        except: pass
 
 def load_keys_from_file():
     if os.path.exists(KEYS_FILE):
@@ -89,13 +97,9 @@ def load_keys_from_file():
             with open(KEYS_FILE, 'r') as f:
                 keys_data = json.load(f)
             for k, v in keys_data.items():
-                if k in st.session_state and not st.session_state.get(k):
+                if k in st.session_state and not st.session_state[k]:
                     st.session_state[k] = v
-                wk = f"w_{k}"
-                if wk not in st.session_state:
-                    st.session_state[wk] = v
-        except Exception:
-            pass
+        except: pass
 
 init_state()
 load_keys_from_file()
@@ -103,9 +107,9 @@ load_keys_from_file()
 # --- HELPER: SLIDER WITH PLUS/MINUS ---
 def plus_minus_slider(label, key, min_val, max_val, step=1):
     st.write(f"**{label}**")
-    if key not in st.session_state: st.session_state[key] = min_val
     def on_btn(delta):
         st.session_state[key] = int(np.clip(st.session_state[key] + delta, min_val, max_val))
+    
     col1, col2, col3 = st.columns([1, 4, 1])
     with col1: st.button("➖", key=f"btn_min_{key}", on_click=on_btn, args=(-step,))
     with col2: st.slider(label, min_val, max_val, step=step, key=key, label_visibility="collapsed")
@@ -124,181 +128,91 @@ def fmt_srt(s):
     m = int((s % 1) * 1000)
     return f"{time.strftime('%H:%M:%S', time.gmtime(s))},{m:03d}"
 
-def normalize_myanmar(text):
-    if not text: return text
-    import unicodedata
-    return unicodedata.normalize('NFC', text)
-
-def wrap_text(text, max_len=25):
-    if not text: return text
-    text = normalize_myanmar(text)
-    text = " ".join(text.split())
-    if len(text) <= max_len:
-        return text
-    cluster_pattern = r'[\u1000-\u102A\u103F\u1040-\u1049][\u102B-\u103E\u1037\u1038\u1039\u103A]*'
-    clusters = re.findall(cluster_pattern + r'|[^\u1000-\u1049]', text)
-    lines = []
-    cur_line = ""
-    cur_len = 0
-    for c in clusters:
-        if c == " ":
-            if cur_len >= max_len:
-                lines.append(cur_line.strip())
-                cur_line = ""
-                cur_len = 0
-            else:
-                cur_line += c
-                cur_len += 1
-            continue
-        if cur_len + 1 > max_len and cur_line:
-            lines.append(cur_line.strip())
-            cur_line = c
-            cur_len = 1
-        else:
-            cur_line += c
-            cur_len += 1
-    if cur_line:
-        lines.append(cur_line.strip())
-    return "\n".join(lines[:3])
-
 def clean_text_for_tts(text):
     """Extremely aggressive cleaning to remove ALL numbers and SRT metadata."""
     # 1. Remove markdown code blocks
     text = re.sub(r'```srt?', '', text, flags=re.IGNORECASE)
     text = re.sub(r'```', '', text).strip()
-    
-    # 2. Remove SRT timestamps (00:00:00,000 --> 00:00:00,000)
+    # 2. Remove SRT timestamps
     text = re.sub(r'\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}', ' ', text)
-    
     # 3. Remove ALL digits (English 0-9 and Myanmar ၀-၉)
     text = re.sub(r'[0-9\u1040-\u1049]+', ' ', text)
-    
     # 4. Remove standalone symbols and labels
     text = re.sub(r'(?i)^(narration|recap|script|translation|speaker|intro|outro|scene):', ' ', text, flags=re.MULTILINE)
-    
     # 5. Remove common filler phrases
     fillers = ["ပရိတ်သတ်ကြီးရေ", "မင်္ဂလာပါ", "ကြိုဆိုပါတယ်", "နိဒါန်း", "နိဂုံး", "ဇာတ်လမ်းအစ", "ဇာတ်လမ်းအဆုံး"]
-    for f in fillers:
-        text = text.replace(f, " ")
-        
-    # 6. Clean up extra punctuation and whitespace
+    for f in fillers: text = text.replace(f, " ")
+    # 6. Final cleanup
     text = re.sub(r'[။၊\.!?;:,\(\)\[\]\{\}\*]+', ' ', text)
-    text = " ".join(text.split())
-    
-    return text.strip()
-
-def count_myanmar_words(text):
-    if not text: return 0
-    cluster_pattern = r'[\u1000-\u102A\u103F\u1040-\u1049][\u102B-\u103E\u1037\u1038\u1039\u103A]*'
-    clusters = re.findall(cluster_pattern, text)
-    return len(clusters)
+    return " ".join(text.split()).strip()
 
 async def gen_audio_srt(raw_text, out_p, vid, spd, ptc, target=0):
     rate = f"+{int((spd-55)*2)}%" if spd>=55 else f"{int((spd-55)*2)}%"
     pitch = f"+{int((ptc-50)*2)}Hz" if ptc>=50 else f"{int((ptc-50)*2)}Hz"
-    
-    # Aggressively clean text before sending to TTS
     clean_narration = clean_text_for_tts(raw_text)
-    if not clean_narration:
-        raise Exception("ဘာသာပြန်စာသား မတွေ့ရှိပါ။")
+    if not clean_narration: raise Exception("ဘာသာပြန်စာသား မတွေ့ရှိပါ။")
 
-    # Split into manageable chunks for TTS
     chunks = []
     current_chunk = ""
-    words = clean_narration.split()
-    for word in words:
-        if len(current_chunk) + len(word) < 150:
-            current_chunk += word + " "
+    for word in clean_narration.split():
+        if len(current_chunk) + len(word) < 150: current_chunk += word + " "
         else:
             chunks.append(current_chunk.strip())
             current_chunk = word + " "
-    if current_chunk:
-        chunks.append(current_chunk.strip())
+    if current_chunk: chunks.append(current_chunk.strip())
 
-    temp_files = []
-    cur_t = 0.0
-    srt_blocks = []
-
-    for idx, txt in enumerate(chunks):
+    temp_files = []; cur_t = 0.0; srt_blocks = []
+    for txt in chunks:
         p = tempfile.mktemp(suffix=".mp3")
         try:
             communicate = edge_tts.Communicate(txt, vid, rate=rate, pitch=pitch)
             await communicate.save(p)
             d = get_dur(p)
             if d > 0:
-                srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(cur_t)} --> {fmt_srt(cur_t+d)}\n{wrap_text(txt)}\n\n")
-                temp_files.append(p)
-                cur_t += d
+                srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(cur_t)} --> {fmt_srt(cur_t+d)}\n{txt[:30]}...\n\n")
+                temp_files.append(p); cur_t += d
         except: continue
 
     if not temp_files: raise Exception("အသံဖိုင် ထုတ်လုပ်ခြင်း မအောင်မြင်ပါ။")
-
     raw_mp3 = tempfile.mktemp(suffix=".mp3")
     l_p = tempfile.mktemp(suffix=".txt")
     with open(l_p, "w", encoding='utf-8') as f:
         f.write("\n".join([f"file '{os.path.abspath(p)}'" for p in temp_files]))
     subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", l_p, "-c", "copy", raw_mp3], capture_output=True)
-
+    
     total_dur = get_dur(raw_mp3)
-
     if target > 0 and total_dur > 0:
-        factor = total_dur / target
-        factor = np.clip(factor, 0.7, 2.0)
-        if abs(factor - 1.0) > 0.01:
-            subprocess.run(["ffmpeg", "-y", "-i", raw_mp3, "-filter:a", f"atempo={factor}", out_p], capture_output=True)
-        else:
-            shutil.copy(raw_mp3, out_p)
-
-        # Update SRT timings based on the speed factor
-        final_srt = []
-        for line in "".join(srt_blocks).splitlines(keepends=True):
-            if "-->" in line:
-                try:
-                    s, e = line.split(" --> ")
-                    s_s = sum(float(x)*60**i for i,x in enumerate(reversed(s.replace(",",".").split(":")))) / factor
-                    e_s = sum(float(x)*60**i for i,x in enumerate(reversed(e.replace(",",".").split(":")))) / factor
-                    final_srt.append(f"{fmt_srt(s_s)} --> {fmt_srt(e_s)}\n")
-                except: final_srt.append(line)
-            else: final_srt.append(line)
-        res_srt = "".join(final_srt)
-    else:
-        shutil.copy(raw_mp3, out_p)
-        res_srt = "".join(srt_blocks)
-
+        factor = np.clip(total_dur / target, 0.7, 2.0)
+        subprocess.run(["ffmpeg", "-y", "-i", raw_mp3, "-filter:a", f"atempo={factor}", out_p], capture_output=True)
+    else: shutil.copy(raw_mp3, out_p)
+    
     if os.path.exists(raw_mp3): os.remove(raw_mp3)
-    return res_srt, get_dur(out_p), clean_narration
-
-# --- TITLE ---
-st.title("🎬 Movie Recap AI")
-st.markdown("အင်္ဂလိပ် ဗီဒီယို/အသံဖိုင်မှ မြန်မာ Movie Recap ဘာသာပြန်အသံ + SRT ထုတ်ပေးသော AI")
+    return "".join(srt_blocks), get_dur(out_p), clean_narration
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.subheader("🔑 Gemini API Keys")
-    st.text_input("Key 1", type="password", value=st.session_state.get('key_1', ''), key="w_key_1")
-    show_more = st.toggle("🔽 ကျန် Keys များ", value=False)
-    if show_more:
-        for i in range(2, 6):
-            st.text_input(f"Key {i}", type="password", value=st.session_state.get(f'key_{i}', ''), key=f"w_key_{i}")
-
-    def sync_keys():
-        for i in range(1, 6):
-            wk = f"w_key_{i}"
-            if st.session_state.get(wk): st.session_state[f"key_{i}"] = st.session_state[wk]
-        save_keys_to_file()
-
-    sync_keys()
-    api_keys = [st.session_state.get(f'key_{i}', '').strip() for i in range(1, 6) if st.session_state.get(f'key_{i}', '').strip()]
-
-    st.text_area("Key များအားလုံးကို Paste ချပါ", height=80, key="bulk_key_input")
-    if st.button("📋 Auto-Fill Keys"):
-        text = st.session_state.bulk_key_input
-        found = list(dict.fromkeys(re.findall(r'(AIza[0-9A-Za-z-_]{30,}|AQ\.[0-9A-Za-z-_]{30,})', text)))
-        for i, k in enumerate(found[:5]):
-            st.session_state[f'key_{i+1}'] = k
-            st.session_state[f'w_key_{i+1}'] = k
-        save_keys_to_file()
+    
+    # Render key inputs using session state values
+    for i in range(1, 6):
+        if i == 1 or st.session_state.get('show_more_keys'):
+            st.session_state[f'key_{i}'] = st.text_input(f"Key {i}", type="password", value=st.session_state[f'key_{i}'])
+    
+    if st.button("🔽 ကျန် Keys များ ဖော်ပြရန်/ဝှက်ရန်"):
+        st.session_state['show_more_keys'] = not st.session_state.get('show_more_keys', False)
         st.rerun()
+
+    st.markdown("---")
+    bulk_input = st.text_area("Key များအားလုံးကို Paste ချပါ", height=80, key="bulk_key_widget")
+    
+    if st.button("📋 Auto-Fill Keys"):
+        if bulk_input:
+            found = list(dict.fromkeys(re.findall(r'(AIza[0-9A-Za-z-_]{30,}|AQ\.[0-9A-Za-z-_]{30,})', bulk_input)))
+            for i, k in enumerate(found[:5]):
+                st.session_state[f'key_{i+1}'] = k
+            save_keys_to_file()
+            # The widget itself is cleared by not providing a value or clearing state
+            st.rerun()
 
     st.markdown("---")
     st.subheader("🔊 အသံ ဆက်တင်များ")
@@ -309,7 +223,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("⏱️ အချိန် ထိန်းချုပ်ရန်")
-    fit_dur = st.toggle("သတ်မှတ်အချိန်အတွင်း အပြီးပြောရန်", value=True)
+    fit_dur = st.toggle("သတ်မှတ်အချိန်အတွင်း အပြီးပြောရန်", value=st.session_state.target_sec > 0)
     target_sec = 0
     if fit_dur:
         tm = plus_minus_slider("မိနစ်", "target_min", 0, 60, 1)
@@ -317,12 +231,14 @@ with st.sidebar:
         target_sec = (tm * 60) + ts
 
 # --- MAIN AREA ---
+st.title("🎬 Movie Recap AI")
 up = st.file_uploader("ဗီဒီယို သို့မဟုတ် အော်ဒီယိုဖိုင် ရွေးချယ်ပါ", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"])
 
 if up:
     tp = os.path.join(tempfile.gettempdir(), f"input_{hash(up.name)}." + up.name.split(".")[-1])
     with open(tp, "wb") as f: f.write(up.getbuffer())
 
+    api_keys = [st.session_state[f'key_{i}'] for i in range(1, 6) if st.session_state[f'key_{i}'].strip()]
     if not api_keys: st.warning("⚠️ Sidebar တွင် API Key ထည့်ပေးပါ")
     elif st.button("🚀 စတင်လုပ်ဆောင်ရန်"):
         prg = st.progress(0); stt = st.empty()
@@ -334,35 +250,26 @@ if up:
 
             stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည်...")
             prg.progress(30)
-            prm = """Translate this audio into a Myanmar Movie Recap.
-RULES:
-1. NO FILLERS (Greetings, intros, outros).
-2. NO NUMBERS (1, 2, 3, etc.).
-3. NO LABELS (Scene 1, Narration:).
-4. Output ONLY the story description in SRT format.
-5. High-energy, dramatic tone."""
-
+            prm = "Provide a dramatic Myanmar Movie Recap. RULES: No fillers, no numbers, no labels. Output SRT format only."
             with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
             cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mpeg","data":b64}}]}]
 
             srt_res = None
             for k in api_keys:
-                for ver in API_VERSIONS:
-                    try:
-                        r = requests.post(f"https://generativelanguage.googleapis.com/{ver}/models/gemini-1.5-flash:generateContent?key={k}", json={"contents":cont}, timeout=180)
-                        if r.status_code == 200:
-                            srt_res = r.json()['candidates'][0]['content']['parts'][0]['text']
-                            if srt_res: break
-                    except: continue
-                if srt_res: break
-
+                try:
+                    r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={k}", json={"contents":cont}, timeout=180)
+                    if r.status_code == 200:
+                        srt_res = r.json()['candidates'][0]['content']['parts'][0]['text']
+                        if srt_res: break
+                except: continue
+            
             if not srt_res: raise Exception("ဘာသာပြန်ခြင်း မအောင်မြင်ပါ။")
 
             stt.text("🔊 အဆင့် ၃: အသံဖိုင် ထုတ်လုပ်နေပါသည်...")
             prg.progress(60)
             ao = os.path.join(tempfile.gettempdir(), f"audio_{int(time.time())}.mp3")
-            st.session_state.srt_data, _, st.session_state.plain_text = asyncio.run(gen_audio_srt(srt_res, ao, v_id, st.session_state.v_speed, st.session_state.v_pitch, target_sec if fit_dur else 0))
-            st.session_state.word_count = count_myanmar_words(st.session_state.plain_text)
+            st.session_state.srt_data, _, st.session_state.plain_text = asyncio.run(gen_audio_srt(srt_res, ao, v_id, v_speed, v_pitch, target_sec if fit_dur else 0))
+            st.session_state.word_count = len(re.findall(r'[\u1000-\u102A\u103F\u1040-\u1049][\u102B-\u103E\u1037\u1038\u1039\u103A]*', st.session_state.plain_text))
             st.session_state.audio_path = ao
             prg.progress(100); stt.text("✅ ပြီးဆုံးပါပြီ!"); st.balloons()
             st.session_state.processing_done = True
@@ -374,9 +281,7 @@ if st.session_state.get('processing_done'):
         st.audio(st.session_state.audio_path)
         with open(st.session_state.audio_path, "rb") as f: st.download_button("📥 MP3 ဒေါင်းလုဒ်", f, "recap.mp3", "audio/mp3")
     st.metric("မြန်မာစာလုံးရေ", f"{st.session_state.word_count}")
-    st.download_button("📥 SRT ဒေါင်းလုဒ်", st.session_state.srt_data, "recap.srt", "text/plain")
     with st.expander("📝 စာသားသက်သက် ကြည့်ရန်", expanded=True):
         st.text_area("Plain Text", st.session_state.plain_text, height=300)
-        st.download_button("📥 TXT ဒေါင်းလုဒ်", st.session_state.plain_text, "recap.txt", "text/plain")
     if st.button("🔄 ပြန်လုပ်ရန်"):
         st.session_state.processing_done = False; st.rerun()
