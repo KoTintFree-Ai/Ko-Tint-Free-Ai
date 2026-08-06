@@ -28,7 +28,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FONT_PATH = os.path.join(SCRIPT_DIR, "Pyidaungsu.ttf")
 
 st.set_page_config(
-    page_title="Movie Recap AI Pro V11 - Final",
+    page_title="Movie Recap AI Pro V12 - Stable",
     page_icon="🎬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -44,25 +44,28 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# Session State Initialization
+# Session State Initialization - WITHOUT direct assignment
 def init_state():
-    keys = ['step1_translation', 'step2_audio_path', 'step2_srt', 'step3_final_srt', 'valid_keys_info', 'active_key']
-    for k in keys:
-        if k not in st.session_state: st.session_state[k] = None
+    if 'step1_translation' not in st.session_state:
+        st.session_state.step1_translation = None
+    if 'step2_audio_path' not in st.session_state:
+        st.session_state.step2_audio_path = None
+    if 'step2_srt' not in st.session_state:
+        st.session_state.step2_srt = None
+    if 'step3_final_srt' not in st.session_state:
+        st.session_state.step3_final_srt = None
+    if 'valid_keys_info' not in st.session_state:
+        st.session_state.valid_keys_info = {}
+    if 'active_key' not in st.session_state:
+        st.session_state.active_key = None
+    
     for i in range(1, 6):
-        if f'key_{i}' not in st.session_state: st.session_state[f'key_{i}'] = ""
-    if st.session_state.valid_keys_info is None: st.session_state.valid_keys_info = {}
-    if 'v_speed' not in st.session_state: st.session_state.v_speed = 50
-    if 'v_pitch' not in st.session_state: st.session_state.v_pitch = 50
-    if 'v_voice' not in st.session_state: st.session_state.v_voice = "သီဟ (Thiha) - ယောက်ျားအသံ"
-    if 'blur_y_pos' not in st.session_state: st.session_state.blur_y_pos = 85
-    if 'blur_h_size' not in st.session_state: st.session_state.blur_h_size = 10
-    if 'sub_y_pos' not in st.session_state: st.session_state.sub_y_pos = 85
-    if 'font_size' not in st.session_state: st.session_state.font_size = 22
+        if f'key_{i}' not in st.session_state:
+            st.session_state[f'key_{i}'] = ""
 
 init_state()
 
-st.title("🎬 Movie Recap AI Pro V11 - Final Version")
+st.title("🎬 Movie Recap AI Pro V12 - Stable")
 st.markdown("အင်္ဂလိပ် ဗီဒီယိုမှ မြန်မာ Movie Recap ပြုလုပ်ပေးသော AI (Manual Steps + Auto-Merge + Auto-Blur)")
 
 # --- HELPER FUNCTIONS ---
@@ -256,11 +259,7 @@ with st.sidebar:
         st.warning("⚠️ RAM သုံးစွဲမှု များနေပါသည်။")
     
     if st.button("🧹 RAM ရှင်းထုတ်ရန်"):
-        keys_to_keep = {f'key_{i}': st.session_state.get(f'key_{i}', "") for i in range(1, 6)}
-        keys_to_keep['valid_keys_info'] = st.session_state.get('valid_keys_info', {})
         st.cache_data.clear()
-        for k, v in keys_to_keep.items():
-            st.session_state[k] = v
         gc.collect()
         st.success("RAM ရှင်းလင်းပြီးပါပြီ")
     
@@ -303,16 +302,16 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("🎙️ အသံ ဆက်တင်များ")
-    st.session_state.v_voice = st.selectbox("အသံ ရွေးချယ်ပါ", list(MYANMAR_VOICES.keys()), key="voice_select")
-    st.session_state.v_speed = st.slider("အမြန်နှုန်း", 0, 100, 50, key="speed_slider")
-    st.session_state.v_pitch = st.slider("အမြင့်မြတ်မှု", 0, 100, 50, key="pitch_slider")
+    voice_choice = st.selectbox("အသံ ရွေးချယ်ပါ", list(MYANMAR_VOICES.keys()), key="voice_select_widget")
+    v_speed = st.slider("အမြန်နှုန်း", 0, 100, 50, key="speed_slider_widget")
+    v_pitch = st.slider("အမြင့်မြတ်မှု", 0, 100, 50, key="pitch_slider_widget")
     
     st.markdown("---")
     st.subheader("🎬 ဗီဒီယို ဆက်တင်များ")
-    st.session_state.blur_y_pos = st.slider("Blur Y အနေအထား (%)", 50, 98, 85, key="blur_y")
-    st.session_state.blur_h_size = st.slider("Blur အမြင့် (%)", 1, 20, 10, key="blur_h")
-    st.session_state.sub_y_pos = st.slider("စာတန်း Y အနေအထား (%)", 50, 98, 85, key="sub_y")
-    st.session_state.font_size = st.slider("စာလုံးအရွယ်အစား", 12, 40, 22, key="font_size")
+    blur_y_pos = st.slider("Blur Y အနေအထား (%)", 50, 98, 85, key="blur_y_widget")
+    blur_h_size = st.slider("Blur အမြင့် (%)", 1, 20, 10, key="blur_h_widget")
+    sub_y_pos = st.slider("စာတန်း Y အနေအထား (%)", 50, 98, 85, key="sub_y_widget")
+    font_size = st.slider("စာလုံးအရွယ်အစား", 12, 40, 22, key="font_size_widget")
 
 # --- MAIN CONTENT ---
 tab1, tab2, tab3, tab4 = st.tabs(["📹 Step 1", "🔊 Step 2", "📝 Step 3", "🎬 Step 4"])
@@ -322,7 +321,7 @@ with tab1:
     st.header("Step 1️⃣: ဗီဒီယို → မြန်မာစာ")
     
     up1 = st.file_uploader("ဗီဒီယို/အော်ဒီယို ရွေးချယ်ပါ", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"], key="step1_upload")
-    target_sec = st.number_input("အတိုင်းအတာ (စက္ကန့်)", 10, 300, 60, key="target_duration")
+    target_sec = st.number_input("အတိုင်းအတာ (စက္ကန့်)", 10, 300, 60, key="target_duration_input")
     
     if up1 and not api_keys:
         st.error("⚠️ API Key ထည့်ပေးပါ")
@@ -410,8 +409,8 @@ DO NOT include any preamble or conclusion. Just the SRT blocks."""
 with tab2:
     st.header("Step 2️⃣: မြန်မာစာ → အသံ")
     
-    step2_text = st.text_area("Step 1 မှ စာသားကို ကူးထည့်ပါ", height=300, key="step2_text_input")
-    step2_target = st.number_input("အတိုင်းအတာ (စက္ကန့်)", 10, 300, 60, key="step2_duration")
+    step2_text = st.text_area("Step 1 မှ စာသားကို ကူးထည့်ပါ", height=300, key="step2_text_input_widget")
+    step2_target = st.number_input("အတိုင်းအတာ (စက္ကန့်)", 10, 300, 60, key="step2_duration_input")
     
     if step2_text and st.button("🎙️ Step 2 စတင်"):
         prg = st.progress(0)
@@ -424,8 +423,8 @@ with tab2:
             ao_name = f"audio_{int(time.time())}.mp3"
             ao = os.path.join(tempfile.gettempdir(), ao_name)
             
-            voice_locale = MYANMAR_VOICES[st.session_state.v_voice]
-            srt_data, audio_dur = asyncio.run(gen_audio_srt(step2_text, ao, voice_locale, st.session_state.v_speed, st.session_state.v_pitch, step2_target))
+            voice_locale = MYANMAR_VOICES[voice_choice]
+            srt_data, audio_dur = asyncio.run(gen_audio_srt(step2_text, ao, voice_locale, v_speed, v_pitch, step2_target))
             
             st.session_state.step2_audio_path = ao
             st.session_state.step2_srt = srt_data
@@ -448,7 +447,7 @@ with tab2:
 with tab3:
     st.header("Step 3️⃣: အသံ → SRT")
     
-    step3_srt = st.text_area("Step 2 မှ SRT ကို ကူးထည့်ပါ", height=300, key="step3_srt_input")
+    step3_srt = st.text_area("Step 2 မှ SRT ကို ကူးထည့်ပါ", height=300, key="step3_srt_input_widget")
     
     if step3_srt and st.button("✏️ Step 3 စတင်"):
         try:
@@ -471,15 +470,15 @@ with tab4:
     col1, col2 = st.columns(2)
     
     with col1:
-        up4_video = st.file_uploader("ဗီဒီယို ဖိုင်", type=["mp4", "mov", "avi"], key="step4_video")
+        up4_video = st.file_uploader("ဗီဒီယို ဖိုင်", type=["mp4", "mov", "avi"], key="step4_video_widget")
     
     with col2:
-        up4_audio = st.file_uploader("အသံ ဖိုင်", type=["mp3", "wav", "m4a"], key="step4_audio")
+        up4_audio = st.file_uploader("အသံ ဖိုင်", type=["mp3", "wav", "m4a"], key="step4_audio_widget")
     
-    step4_srt = st.text_area("SRT ကုဒ်", height=200, key="step4_srt_input")
+    step4_srt = st.text_area("SRT ကုဒ်", height=200, key="step4_srt_input_widget")
     
-    use_auto_blur = st.checkbox("Auto-Blur အသုံးပြုမည်", value=True, key="auto_blur_check")
-    use_auto_sub = st.checkbox("Auto-Subtitle အသုံးပြုမည်", value=True, key="auto_sub_check")
+    use_auto_blur = st.checkbox("Auto-Blur အသုံးပြုမည်", value=True, key="auto_blur_check_widget")
+    use_auto_sub = st.checkbox("Auto-Subtitle အသုံးပြုမည်", value=True, key="auto_sub_check_widget")
     
     if up4_video and up4_audio and step4_srt and st.button("🎬 Step 4 စတင်"):
         prg = st.progress(0)
@@ -510,10 +509,14 @@ with tab4:
                 if os.path.exists(bi):
                     with open(bi, 'rb') as f:
                         frame_bytes = f.read()
-                    blur_y, blur_h = auto_detect_subtitle_area(frame_bytes)
-                    st.session_state.blur_y_pos = blur_y
-                    st.session_state.blur_h_size = blur_h
+                    detected_blur_y, detected_blur_h = auto_detect_subtitle_area(frame_bytes)
                     os.remove(bi)
+                else:
+                    detected_blur_y = blur_y_pos
+                    detected_blur_h = blur_h_size
+            else:
+                detected_blur_y = blur_y_pos
+                detected_blur_h = blur_h_size
             
             stt.text("🎬 ဗီဒီယို နှင့် အသံ ပေါင်းစပ်နေပါသည်...")
             prg.progress(50)
@@ -530,11 +533,10 @@ with tab4:
             
             # Build filter complex for blur + subtitle
             if use_auto_blur and use_auto_sub:
-                h = int(get_dur(merged_av) * 1000)  # Approximate height
-                by_px = int(1080 * (st.session_state.blur_y_pos / 100))
-                bh_px = int(1080 * (st.session_state.blur_h_size / 100))
+                by_px = int(1080 * (detected_blur_y / 100))
+                bh_px = int(1080 * (detected_blur_h / 100))
                 
-                filter_str = f"[0:v]boxblur=luma_radius=10:chroma_radius=4:alpha_radius=1,crop=iw:{bh_px}:0:{by_px},boxblur=luma_radius=10:chroma_radius=4:alpha_radius=1[blurred];[0:v][blurred]overlay=0:{by_px}[v];[v]subtitles={srt_path}:force_style='FontName=Pyidaungsu,FontSize={st.session_state.font_size},PrimaryColour=&H00FFFFFF&'[out]"
+                filter_str = f"[0:v]boxblur=luma_radius=10:chroma_radius=4:alpha_radius=1,crop=iw:{bh_px}:0:{by_px},boxblur=luma_radius=10:chroma_radius=4:alpha_radius=1[blurred];[0:v][blurred]overlay=0:{by_px}[v];[v]subtitles={srt_path}:force_style='FontName=Pyidaungsu,FontSize={font_size},PrimaryColour=&H00FFFFFF&'[out]"
                 
                 output_path = os.path.join(tempfile.gettempdir(), f"final_{int(time.time())}.mp4")
                 subprocess.run([
@@ -545,7 +547,7 @@ with tab4:
                 output_path = os.path.join(tempfile.gettempdir(), f"final_{int(time.time())}.mp4")
                 subprocess.run([
                     "ffmpeg", "-y", "-i", merged_av, "-vf",
-                    f"subtitles={srt_path}:force_style='FontName=Pyidaungsu,FontSize={st.session_state.font_size},PrimaryColour=&H00FFFFFF&'",
+                    f"subtitles={srt_path}:force_style='FontName=Pyidaungsu,FontSize={font_size},PrimaryColour=&H00FFFFFF&'",
                     "-c:a", "copy", output_path
                 ], capture_output=True)
             else:
@@ -567,8 +569,6 @@ with tab4:
         
         except Exception as e:
             st.error(f"❌ အမှားအယွင်း: {str(e)}")
-            import traceback
-            st.error(traceback.format_exc())
 
 st.markdown("---")
-st.markdown("🎬 **Movie Recap AI Pro V11** - Manual Steps + Auto-Merge + Auto-Blur | သီဟ/နီလာ အသံ | Powered by Gemini AI")
+st.markdown("🎬 **Movie Recap AI Pro V12** - Manual Steps + Auto-Merge + Auto-Blur | သီဟ/နီလာ အသံ | Powered by Gemini AI")
