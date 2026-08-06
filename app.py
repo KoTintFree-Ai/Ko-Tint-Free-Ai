@@ -18,7 +18,6 @@ DEFAULT_MODELS = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", "
 
 # Advanced Networking: Force IPv4 for better stability on Streamlit Cloud
 import socket
-import urllib3
 orig_getaddrinfo = socket.getaddrinfo
 def filtered_getaddrinfo(*args, **kwargs):
     res = orig_getaddrinfo(*args, **kwargs)
@@ -113,17 +112,6 @@ def plus_minus_slider(label, key, min_val, max_val, step=1):
     with col3: st.button("➕", key=f"btn_pls_{key}", on_click=on_btn, args=(step,))
     return st.session_state[key]
 
-# --- ERROR TRANSLATOR ---
-def translate_error(err_msg, status_code=None):
-    err_msg = str(err_msg).lower()
-    if "api_key_invalid" in err_msg or "invalid api key" in err_msg or status_code == 403:
-        return "API Key မမှန်ကန်ပါ။ (Key ကို သေချာပြန်စစ်ပြီး ကူးထည့်ပေးပါ)"
-    if "quota" in err_msg or "429" in err_msg or status_code == 429:
-        return "API Key အသုံးပြုမှု ပမာဏ ပြည့်သွားပါပြီ။ (ခဏစောင့်ပါ သို့မဟုတ် Key အသစ်ပြောင်းသုံးပါ)"
-    if "location" in err_msg or "not supported" in err_msg:
-        return "သင်၏ ဒေသ (Region) တွင် ဤ API ကို ပိတ်ထားပါသည်။ (VPN သုံးရန် လိုအပ်ပါသည်)"
-    return f"အမှားအယွင်းတစ်ခု ဖြစ်ပေါ်နေပါသည်။ ({err_msg})"
-
 # --- UTILITIES ---
 def get_dur(p):
     try:
@@ -173,36 +161,31 @@ def wrap_text(text, max_len=25):
         lines.append(cur_line.strip())
     return "\n".join(lines[:3])
 
-def get_plain_text(srt_text):
-    """Aggressively clean SRT to get ONLY the narration text and remove ALL numbers."""
+def clean_text_for_tts(text):
+    """Extremely aggressive cleaning to remove ALL numbers and SRT metadata."""
     # 1. Remove markdown code blocks
-    text = re.sub(r'```srt?', '', srt_text, flags=re.IGNORECASE)
+    text = re.sub(r'```srt?', '', text, flags=re.IGNORECASE)
     text = re.sub(r'```', '', text).strip()
     
-    # 2. Remove SRT timestamps
-    text = re.sub(r'\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}', '', text)
+    # 2. Remove SRT timestamps (00:00:00,000 --> 00:00:00,000)
+    text = re.sub(r'\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}', ' ', text)
     
-    # 3. Split by lines to process each line
-    lines = text.split('\n')
-    clean_lines = []
-    for line in lines:
-        l = line.strip()
-        if not l: continue
+    # 3. Remove ALL digits (English 0-9 and Myanmar ၀-၉)
+    text = re.sub(r'[0-9\u1040-\u1049]+', ' ', text)
+    
+    # 4. Remove standalone symbols and labels
+    text = re.sub(r'(?i)^(narration|recap|script|translation|speaker|intro|outro|scene):', ' ', text, flags=re.MULTILINE)
+    
+    # 5. Remove common filler phrases
+    fillers = ["ပရိတ်သတ်ကြီးရေ", "မင်္ဂလာပါ", "ကြိုဆိုပါတယ်", "နိဒါန်း", "နိဂုံး", "ဇာတ်လမ်းအစ", "ဇာတ်လမ်းအဆုံး"]
+    for f in fillers:
+        text = text.replace(f, " ")
         
-        # 4. Remove standalone numbers (SRT index)
-        if re.match(r'^\d+$', l): continue
-        
-        # 5. Remove numbers at the beginning of sentences (e.g., "1.", "၁။", "(2)")
-        l = re.sub(r'^[\(\[]?\d+[\.\)\]။၊\s]*', '', l)
-        l = re.sub(r'^[\(\[]?[\u1040-\u1049]+[\.\)\]။၊\s]*', '', l)
-        
-        # 6. Remove common AI/Recap filler labels
-        l = re.sub(r'(?i)^(narration|recap|script|translation|speaker|here is|intro|outro|scene \d+):', '', l)
-        
-        if l.strip():
-            clean_lines.append(l.strip())
-            
-    return ' '.join(clean_lines)
+    # 6. Clean up extra punctuation and whitespace
+    text = re.sub(r'[။၊\.!?;:,\(\)\[\]\{\}\*]+', ' ', text)
+    text = " ".join(text.split())
+    
+    return text.strip()
 
 def count_myanmar_words(text):
     if not text: return 0
@@ -210,70 +193,63 @@ def count_myanmar_words(text):
     clusters = re.findall(cluster_pattern, text)
     return len(clusters)
 
-def parse_srt_text(text):
-    """Clean and split SRT text into segments for TTS, ensuring NO numbers or fillers are included."""
-    clean_full_text = get_plain_text(text)
-    
-    # Split into segments based on Myanmar punctuation
-    segments = []
-    parts = re.split(r'([။၊.!?;])', clean_full_text)
-    for i in range(0, len(parts)-1, 2):
-        seg = (parts[i] + parts[i+1]).strip()
-        if seg: segments.append(seg)
-    if len(parts) % 2 != 0 and parts[-1].strip():
-        segments.append(parts[-1].strip())
-
-    return [s for s in segments if s]
-
-async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
+async def gen_audio_srt(raw_text, out_p, vid, spd, ptc, target=0):
     rate = f"+{int((spd-55)*2)}%" if spd>=55 else f"{int((spd-55)*2)}%"
     pitch = f"+{int((ptc-50)*2)}Hz" if ptc>=50 else f"{int((ptc-50)*2)}Hz"
     
-    segments = parse_srt_text(text)
-    if not segments: segments = [get_plain_text(text)]
+    # Aggressively clean text before sending to TTS
+    clean_narration = clean_text_for_tts(raw_text)
+    if not clean_narration:
+        raise Exception("ဘာသာပြန်စာသား မတွေ့ရှိပါ။")
+
+    # Split into manageable chunks for TTS
+    chunks = []
+    current_chunk = ""
+    words = clean_narration.split()
+    for word in words:
+        if len(current_chunk) + len(word) < 150:
+            current_chunk += word + " "
+        else:
+            chunks.append(current_chunk.strip())
+            current_chunk = word + " "
+    if current_chunk:
+        chunks.append(current_chunk.strip())
 
     temp_files = []
     cur_t = 0.0
     srt_blocks = []
 
-    for idx, txt in enumerate(segments):
-        clean_txt = txt.strip()
-        if not clean_txt: continue
-        
-        # Final safety check: remove any leading numbers/symbols
-        clean_txt = re.sub(r'^[\d\u1040-\u1049\.\)\]။၊\s]+', '', clean_txt)
-        
-        if not clean_txt.strip(): continue
-        
+    for idx, txt in enumerate(chunks):
         p = tempfile.mktemp(suffix=".mp3")
         try:
-            communicate = edge_tts.Communicate(clean_txt, vid, rate=rate, pitch=pitch)
+            communicate = edge_tts.Communicate(txt, vid, rate=rate, pitch=pitch)
             await communicate.save(p)
             d = get_dur(p)
             if d > 0:
-                srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(cur_t)} --> {fmt_srt(cur_t+d)}\n{wrap_text(clean_txt)}\n\n")
+                srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(cur_t)} --> {fmt_srt(cur_t+d)}\n{wrap_text(txt)}\n\n")
                 temp_files.append(p)
                 cur_t += d
         except: continue
 
     if not temp_files: raise Exception("အသံဖိုင် ထုတ်လုပ်ခြင်း မအောင်မြင်ပါ။")
 
-    raw = tempfile.mktemp(suffix=".mp3")
+    raw_mp3 = tempfile.mktemp(suffix=".mp3")
     l_p = tempfile.mktemp(suffix=".txt")
     with open(l_p, "w", encoding='utf-8') as f:
         f.write("\n".join([f"file '{os.path.abspath(p)}'" for p in temp_files]))
-    subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", l_p, "-c", "copy", raw], capture_output=True)
+    subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", l_p, "-c", "copy", raw_mp3], capture_output=True)
 
-    total = get_dur(raw)
+    total_dur = get_dur(raw_mp3)
 
-    if target > 0 and total > 0:
-        factor = total / target
+    if target > 0 and total_dur > 0:
+        factor = total_dur / target
         factor = np.clip(factor, 0.7, 2.0)
         if abs(factor - 1.0) > 0.01:
-            subprocess.run(["ffmpeg", "-y", "-i", raw, "-filter:a", f"atempo={factor}", out_p], capture_output=True)
+            subprocess.run(["ffmpeg", "-y", "-i", raw_mp3, "-filter:a", f"atempo={factor}", out_p], capture_output=True)
         else:
-            shutil.copy(raw, out_p)
+            shutil.copy(raw_mp3, out_p)
 
+        # Update SRT timings based on the speed factor
         final_srt = []
         for line in "".join(srt_blocks).splitlines(keepends=True):
             if "-->" in line:
@@ -286,11 +262,11 @@ async def gen_audio_srt(text, out_p, vid, spd, ptc, target=0):
             else: final_srt.append(line)
         res_srt = "".join(final_srt)
     else:
-        shutil.copy(raw, out_p)
+        shutil.copy(raw_mp3, out_p)
         res_srt = "".join(srt_blocks)
 
-    if os.path.exists(raw): os.remove(raw)
-    return res_srt, get_dur(out_p)
+    if os.path.exists(raw_mp3): os.remove(raw_mp3)
+    return res_srt, get_dur(out_p), clean_narration
 
 # --- TITLE ---
 st.title("🎬 Movie Recap AI")
@@ -298,12 +274,9 @@ st.markdown("အင်္ဂလိပ် ဗီဒီယို/အသံဖိ�
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.subheader("🔑 Gemini API Keys (၅ ခုအထိ)")
-    if st.session_state.active_key:
-        st.success("🟢 Gemini API အလုပ်လုပ်နေပါသည်")
-
+    st.subheader("🔑 Gemini API Keys")
     st.text_input("Key 1", type="password", value=st.session_state.get('key_1', ''), key="w_key_1")
-    show_more = st.toggle("🔽 ကျန် Keys များ ဖော်ပြရန်", value=False, key="show_more_keys")
+    show_more = st.toggle("🔽 ကျန် Keys များ", value=False)
     if show_more:
         for i in range(2, 6):
             st.text_input(f"Key {i}", type="password", value=st.session_state.get(f'key_{i}', ''), key=f"w_key_{i}")
@@ -311,60 +284,21 @@ with st.sidebar:
     def sync_keys():
         for i in range(1, 6):
             wk = f"w_key_{i}"
-            if st.session_state.get(wk):
-                st.session_state[f"key_{i}"] = st.session_state[wk]
+            if st.session_state.get(wk): st.session_state[f"key_{i}"] = st.session_state[wk]
         save_keys_to_file()
 
     sync_keys()
     api_keys = [st.session_state.get(f'key_{i}', '').strip() for i in range(1, 6) if st.session_state.get(f'key_{i}', '').strip()]
 
-    st.markdown("---")
-    st.text_area("Key များအားလုံးကို ဤနေရာတွင် Paste ချပါ", placeholder="ဥပမာ- AIza...", height=80, key="bulk_key_input")
-
-    def auto_fill():
-        if st.session_state.bulk_key_input:
-            text = st.session_state.bulk_key_input
-            found = re.findall(r'(AIza[0-9A-Za-z-_]{30,}|AQ\.[0-9A-Za-z-_]{30,})', text)
-            found = list(dict.fromkeys([k.strip().strip('။၊.()[]{}<>:;*') for k in found]))
-            if found:
-                for i in range(min(5, len(found))):
-                    st.session_state[f'key_{i+1}'] = found[i]
-                    st.session_state[f'w_key_{i+1}'] = found[i]
-            st.session_state.bulk_key_input = ""
-            save_keys_to_file()
-            st.rerun()
-
-    st.button("📋 Key များ Auto-Fill", on_click=auto_fill)
-
-    st.markdown("---")
-    if st.button("🔌 Keys စမ်းသပ်ရန်"):
-        if not api_keys: st.error("API Key အရင်ထည့်ပေးပါ။")
-        else:
-            st.session_state.test_results = []
-            with st.spinner("Keys များကို စစ်ဆေးနေသည်..."):
-                for i, k in enumerate(api_keys):
-                    success = False
-                    for ver in API_VERSIONS:
-                        try:
-                            url = f"https://generativelanguage.googleapis.com/{ver}/models?key={k}"
-                            r = requests.get(url, headers=HTTP_HEADERS, timeout=25)
-                            if r.status_code == 200:
-                                data = r.json()
-                                models = [m['name'].split('/')[-1] for m in data.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
-                                st.session_state.valid_keys_info[k] = {"version": ver, "models": models}
-                                if not st.session_state.active_key: st.session_state.active_key = k
-                                st.session_state.test_results.append(f"✅ Gemini Key {i+1} အောင်မြင်ပါသည်။")
-                                success = True; break
-                        except: continue
-                    if not success: st.session_state.test_results.append(f"❌ Gemini Key {i+1} မမှန်ကန်ပါ။")
-            st.rerun()
-
-    if st.session_state.test_results:
-        for res in st.session_state.test_results:
-            if "✅" in res: st.success(res)
-            else: st.error(res)
-        if st.button("🗑️ ရလဒ်များ ရှင်းလင်းရန်"):
-            st.session_state.test_results = []; st.rerun()
+    st.text_area("Key များအားလုံးကို Paste ချပါ", height=80, key="bulk_key_input")
+    if st.button("📋 Auto-Fill Keys"):
+        text = st.session_state.bulk_key_input
+        found = list(dict.fromkeys(re.findall(r'(AIza[0-9A-Za-z-_]{30,}|AQ\.[0-9A-Za-z-_]{30,})', text)))
+        for i, k in enumerate(found[:5]):
+            st.session_state[f'key_{i+1}'] = k
+            st.session_state[f'w_key_{i+1}'] = k
+        save_keys_to_file()
+        st.rerun()
 
     st.markdown("---")
     st.subheader("🔊 အသံ ဆက်တင်များ")
@@ -375,7 +309,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("⏱️ အချိန် ထိန်းချုပ်ရန်")
-    fit_dur = st.toggle("သတ်မှတ်အချိန်အတွင်း အပြီးပြောရန်", value=True, key="fit_duration_toggle")
+    fit_dur = st.toggle("သတ်မှတ်အချိန်အတွင်း အပြီးပြောရန်", value=True)
     target_sec = 0
     if fit_dur:
         tm = plus_minus_slider("မိနစ်", "target_min", 0, 60, 1)
@@ -386,87 +320,63 @@ with st.sidebar:
 up = st.file_uploader("ဗီဒီယို သို့မဟုတ် အော်ဒီယိုဖိုင် ရွေးချယ်ပါ", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"])
 
 if up:
-    fid = hash(up.name)
-    tp = os.path.join(tempfile.gettempdir(), f"input_{fid}." + up.name.split(".")[-1])
-    if not os.path.exists(tp) or st.session_state.get('last_uploaded') != fid:
-        with open(tp, "wb") as f: f.write(up.getbuffer())
-        st.session_state.last_uploaded = fid
+    tp = os.path.join(tempfile.gettempdir(), f"input_{hash(up.name)}." + up.name.split(".")[-1])
+    with open(tp, "wb") as f: f.write(up.getbuffer())
 
-    if not api_keys: st.warning("⚠️ Sidebar တွင် Gemini API Key ထည့်ပေးပါ")
+    if not api_keys: st.warning("⚠️ Sidebar တွင် API Key ထည့်ပေးပါ")
     elif st.button("🚀 စတင်လုပ်ဆောင်ရန်"):
-        if not shutil.which("ffmpeg"): st.error("❌ FFmpeg မရရှိပါ။")
-        else:
-            prg = st.progress(0); stt = st.empty()
-            try:
-                for k in ['audio_path', 'srt_data', 'plain_text', 'word_count']: st.session_state[k] = None
-                
-                stt.text("📊 အဆင့် ၁: အသံဖိုင်ကို ပြင်ဆင်နေပါသည်...")
-                prg.progress(10)
-                ag = tempfile.mktemp(suffix=".mp3")
-                subprocess.run(["ffmpeg", "-y", "-i", tp, "-vn", "-ar", "16000", "-ac", "1", "-b:a", "32k", ag], capture_output=True)
+        prg = st.progress(0); stt = st.empty()
+        try:
+            stt.text("📊 အဆင့် ၁: အသံဖိုင်ကို ပြင်ဆင်နေပါသည်...")
+            prg.progress(10)
+            ag = tempfile.mktemp(suffix=".mp3")
+            subprocess.run(["ffmpeg", "-y", "-i", tp, "-vn", "-ar", "16000", "-ac", "1", "-b:a", "32k", ag], capture_output=True)
 
-                stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည် (Gemini API)...")
-                prg.progress(30)
-                prm = f"""Listen to this audio and provide a HIGH-ENERGY Myanmar Movie Recap narration.
-STRICT RULES:
-1. NO FILLERS: Do NOT use "Hello audience", "Welcome back", "Recap by...", or any greetings.
-2. NO INTRO/OUTRO: Start directly with the movie scenes. End immediately when the recap is done.
-3. NO LABELS: Do NOT include labels like "Narration:", "Scene 1:", or timestamps in the text.
-4. NO NUMBERS: Do NOT use numbering like 1., 2., 3. or ၁။၊ ၂။၊ ၃။.
-5. PURE CONTENT: Only describe the character actions, emotions, and plot events shown in the audio.
-6. SRT FORMAT: Output ONLY in valid SRT format.
-7. DURATION: Ensure the narration timing matches the source audio naturally.
-8. Standard Myanmar Unicode ONLY."""
+            stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည်...")
+            prg.progress(30)
+            prm = """Translate this audio into a Myanmar Movie Recap.
+RULES:
+1. NO FILLERS (Greetings, intros, outros).
+2. NO NUMBERS (1, 2, 3, etc.).
+3. NO LABELS (Scene 1, Narration:).
+4. Output ONLY the story description in SRT format.
+5. High-energy, dramatic tone."""
 
-                with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
-                cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mpeg","data":b64}}]}]
+            with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
+            cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mpeg","data":b64}}]}]
 
-                srt_res = None
-                with st.status("🌐 AI API နှင့် ဆက်သွယ်နေပါသည်...", expanded=True) as status:
-                    for k in api_keys:
-                        info = st.session_state.valid_keys_info.get(k)
-                        versions = [info['version']] if info else API_VERSIONS
-                        models = sorted(info['models'] if info else DEFAULT_MODELS, key=lambda x: 0 if 'flash' in x.lower() else 1)
-                        for ver in versions:
-                            for m in models:
-                                try:
-                                    r = requests.post(f"https://generativelanguage.googleapis.com/{ver}/models/{m}:generateContent?key={k}", json={"contents":cont}, timeout=180)
-                                    if r.status_code == 200:
-                                        data = r.json()
-                                        if 'candidates' in data and data['candidates'][0]['content']['parts']:
-                                            srt_res = data['candidates'][0]['content']['parts'][0]['text']
-                                            if srt_res: st.session_state.active_key = k; break
-                                except: continue
+            srt_res = None
+            for k in api_keys:
+                for ver in API_VERSIONS:
+                    try:
+                        r = requests.post(f"https://generativelanguage.googleapis.com/{ver}/models/gemini-1.5-flash:generateContent?key={k}", json={"contents":cont}, timeout=180)
+                        if r.status_code == 200:
+                            srt_res = r.json()['candidates'][0]['content']['parts'][0]['text']
                             if srt_res: break
-                        if srt_res: break
+                    except: continue
+                if srt_res: break
 
-                if not srt_res: raise Exception("ဘာသာပြန်ခြင်း မအောင်မြင်ပါ။ API Keys သို့မဟုတ် Network ကို စစ်ဆေးပါ။")
+            if not srt_res: raise Exception("ဘာသာပြန်ခြင်း မအောင်မြင်ပါ။")
 
-                stt.text("🔊 အဆင့် ၃: အသံဖိုင် ထုတ်လုပ်နေပါသည်...")
-                prg.progress(60)
-                ao = os.path.join(tempfile.gettempdir(), f"audio_{int(time.time())}.mp3")
-                st.session_state.srt_data, _ = asyncio.run(gen_audio_srt(srt_res, ao, v_id, st.session_state.v_speed, st.session_state.v_pitch, target_sec if fit_dur else 0))
-                st.session_state.plain_text = get_plain_text(srt_res)
-                st.session_state.word_count = count_myanmar_words(st.session_state.plain_text)
-                st.session_state.audio_path = ao
-                prg.progress(100); stt.text("✅ အောင်မြင်စွာ ပြီးဆုံးပါပြီ!"); st.balloons()
-                st.session_state.processing_done = True
-                if os.path.exists(ag): os.remove(ag)
-            except Exception as e: st.error(f"❌ အမှားအယွင်း: {str(e)}"); st.session_state.processing_done = False
+            stt.text("🔊 အဆင့် ၃: အသံဖိုင် ထုတ်လုပ်နေပါသည်...")
+            prg.progress(60)
+            ao = os.path.join(tempfile.gettempdir(), f"audio_{int(time.time())}.mp3")
+            st.session_state.srt_data, _, st.session_state.plain_text = asyncio.run(gen_audio_srt(srt_res, ao, v_id, st.session_state.v_speed, st.session_state.v_pitch, target_sec if fit_dur else 0))
+            st.session_state.word_count = count_myanmar_words(st.session_state.plain_text)
+            st.session_state.audio_path = ao
+            prg.progress(100); stt.text("✅ ပြီးဆုံးပါပြီ!"); st.balloons()
+            st.session_state.processing_done = True
+        except Exception as e: st.error(f"❌ အမှား: {str(e)}")
 
-if st.session_state.processing_done:
-    st.markdown("---"); st.subheader("📥 Download & Results")
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        if st.session_state.audio_path:
-            st.audio(st.session_state.audio_path)
-            with open(st.session_state.audio_path, "rb") as f: st.download_button("📥 MP3 ဒေါင်းလုဒ်", f, "recap_audio.mp3", "audio/mp3")
-    with col2:
-        if st.session_state.word_count is not None: st.metric("မြန်မာစာလုံးရေ", f"{st.session_state.word_count}")
-    if st.session_state.srt_data: st.download_button("📥 SRT ဒေါင်းလုဒ်", st.session_state.srt_data, "recap.srt", "text/plain")
-    if st.session_state.plain_text:
-        with st.expander("📝 စာသားသက်သက် ကြည့်ရန် (Plain Text)", expanded=True):
-            st.text_area("Plain Text Content", st.session_state.plain_text, height=300)
-            st.download_button("📥 TXT ဒေါင်းလုဒ်", st.session_state.plain_text, "recap_text.txt", "text/plain")
+if st.session_state.get('processing_done'):
+    st.markdown("---")
+    if st.session_state.audio_path:
+        st.audio(st.session_state.audio_path)
+        with open(st.session_state.audio_path, "rb") as f: st.download_button("📥 MP3 ဒေါင်းလုဒ်", f, "recap.mp3", "audio/mp3")
+    st.metric("မြန်မာစာလုံးရေ", f"{st.session_state.word_count}")
+    st.download_button("📥 SRT ဒေါင်းလုဒ်", st.session_state.srt_data, "recap.srt", "text/plain")
+    with st.expander("📝 စာသားသက်သက် ကြည့်ရန်", expanded=True):
+        st.text_area("Plain Text", st.session_state.plain_text, height=300)
+        st.download_button("📥 TXT ဒေါင်းလုဒ်", st.session_state.plain_text, "recap.txt", "text/plain")
     if st.button("🔄 ပြန်လုပ်ရန်"):
         st.session_state.processing_done = False; st.rerun()
