@@ -1,301 +1,1107 @@
-import streamlit as st
-import os
-import base64
-import time
-import tempfile
-import requests
-import asyncio
-import edge_tts
-import subprocess
-import re
-import json
-import shutil
-import numpy as np
-
-# --- CONFIGURATION ---
-# Updated Gemini Model List - Using only current and stable models to avoid 404
-GEMINI_CONFIGS = [
-    {"model": "gemini-1.5-flash", "ver": "v1beta"},
-    {"model": "gemini-1.5-flash", "ver": "v1"},
-    {"model": "gemini-1.5-flash-8b", "ver": "v1beta"},
-    {"model": "gemini-1.5-pro", "ver": "v1beta"},
-    {"model": "gemini-2.0-flash-exp", "ver": "v1beta"}
-]
-
-# Safety Settings to prevent content blocking for movie recaps
-SAFETY_SETTINGS = [
-    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
-]
-
-# Advanced Networking: Force IPv4 for better stability on Streamlit Cloud
-import socket
-orig_getaddrinfo = socket.getaddrinfo
-def filtered_getaddrinfo(*args, **kwargs):
-    res = orig_getaddrinfo(*args, **kwargs)
-    return [r for r in res if r[0] == socket.AF_INET]
-socket.getaddrinfo = filtered_getaddrinfo
-
-# Standard Headers
-HTTP_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "application/json",
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# 🎬 Movie Recap Translator Bot\n",
+    "\n",
+    "English Audio/Video → Myanmar MovieRecap Style\n",
+    "\n",
+    "### Workflow:\n",
+    "1. English voice/video ပို့ပါ\n",
+    "2. Gemini API → transcribe + Myanmar translate\n",
+    "3. Myanmar text + Audio ပြန်ပို့"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "source": [
+    "# Cell 1: Install Dependencies\n",
+    "!pip install pyTelegramBotAPI edge-tts --quiet\n",
+    "!apt-get install -y ffmpeg 2>/dev/null | tail -1\n",
+    "print(\"✅ Dependencies installed!\")"
+   ],
+   "outputs": []
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "source": [
+    "# Cell 2: Configuration\n",
+    "TELEGRAM_BOT_TOKEN = \"8783814558:AAFCIyfcoY8vbvsdpFXXtBbXUgRJhmyKZD8\"\n",
+    "GEMINI_API_KEYS = [\n",
+    "        \"AQ.Ab8RN6LEq5RgDg3VgoVUQM1_HENOEUe1pSMVczmRROMmgqhx_g\",\n",
+    "        \"AQ.Ab8RN6IwCXzS42tpQHfxWKLGF-Tlq0gOo-yvsdr8VCMr6UvGaA\"\n",
+    "    ]\n",
+    "current_key_index = 0\n",
+    "\n",
+    "def get_current_key():\n",
+    "    return GEMINI_API_KEYS[current_key_index]\n",
+    "\n",
+    "def rotate_key():\n",
+    "    global current_key_index\n",
+    "    current_key_index = (current_key_index + 1) % len(GEMINI_API_KEYS)\n",
+    "    print(f\"🔄 API Key rotated to Key #{current_key_index + 1}\")\n",
+    "    return get_current_key()\n",
+    "\n",
+    "GEMINI_MODEL = \"gemini-3.5-flash\"\n",
+    "!pip install requests urllib3 --quiet\n",
+    "GEMINI_BASE_URL = \"https://generativelanguage.googleapis.com/v1beta/models\"\n",
+    "MAX_VIDEO_SIZE_MB = 50\n",
+    "print(\"✅ Configuration set!\")"
+   ],
+   "outputs": []
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "source": [
+    "import os\n",
+    "import sys\n",
+    "import time\n",
+    "import json\n",
+    "import base64\n",
+    "import tempfile\n",
+    "import urllib.request\n",
+    "import subprocess\n",
+    "from urllib.error import HTTPError, URLError\n",
+    "import telebot\n",
+    "import edge_tts\n",
+    "\n",
+    "# ============================================================\n",
+    "# RETRY UTILITIES\n",
+    "# ============================================================\n",
+    "\n",
+    "def retry_with_backoff(func, max_retries=10, delay=5, exceptions=(Exception,)):\n",
+    "    \"\"\"Retry a function with exponential backoff, handling 429 specifically.\"\"\"\n",
+    "    for attempt in range(max_retries):\n",
+    "        try:\n",
+    "            return func()\n",
+    "        except exceptions as e:\n",
+    "            if attempt == max_retries - 1:\n",
+    "                raise\n",
+    "            \n",
+    "            # Special handling for Rate Limit (429)\n",
+    "            if hasattr(e, 'code') and e.code == 429:\n",
+    "                # If we've already tried all keys (e.g. attempt > number of keys)\n",
+    "                # we should wait longer\n",
+    "                num_keys = len(GEMINI_API_KEYS)\n",
+    "                if (attempt + 1) % num_keys == 0:\n",
+    "                    wait_time = 45 # Wait longer after trying all keys\n",
+    "                    print(f\"[RateLimit] All keys might be exhausted. Waiting {wait_time}s...\")\n",
+    "                else:\n",
+    "                    wait_time = 3 # Short wait before trying next key\n",
+    "                    print(f\"[RateLimit] Rotating key...\")\n",
+    "                rotate_key()\n",
+    "            else:\n",
+    "                wait_time = delay\n",
+    "                print(f\"[Retry] {e} - Retrying in {wait_time}s... (attempt {attempt+1}/{max_retries})\")\n",
+    "                delay *= 2\n",
+    "            \n",
+    "            time.sleep(wait_time)\n",
+    "\n",
+    "# ============================================================\n",
+    "# GEMINI API - v1beta COMPATIBLE\n",
+    "# ============================================================\n",
+    "\n",
+    "def _do_gemini_request(parts):\n",
+    "    \"\"\"Execute a single Gemini API request (no retry).\"\"\"\n",
+    "    payload = {\n",
+    "        \"contents\": [{\"parts\": parts}],\n",
+    "        \"generationConfig\": {\n",
+    "            \"temperature\": 0.7,\n",
+    "            \"maxOutputTokens\": 16384\n",
+    "        }\n",
+    "    }\n",
+    "\n",
+    "    url = f\"{GEMINI_BASE_URL}/{GEMINI_MODEL}:generateContent?key={get_current_key()}\"\n",
+    "    headers = {\"Content-Type\": \"application/json\"}\n",
+    "    data = json.dumps(payload).encode('utf-8')\n",
+    "\n",
+    "    req = urllib.request.Request(url, data=data, headers=headers, method='POST')\n",
+    "\n",
+    "    with urllib.request.urlopen(req, timeout=300) as response:\n",
+    "        result = json.loads(response.read().decode('utf-8'))\n",
+    "\n",
+    "    # Extract response\n",
+    "    if 'candidates' in result and result['candidates']:\n",
+    "        candidate = result['candidates'][0]\n",
+    "        if 'content' in candidate and 'parts' in candidate['content']:\n",
+    "            resp_parts = candidate['content']['parts']\n",
+    "            text = resp_parts[0]['text'] if resp_parts else \"\"\n",
+    "            if candidate.get('finishReason') == 'MAX_TOKENS':\n",
+    "                text += \"\\\\n\\\\n[⚠️ စာသားရှည်လွန်းသဖြင့် ဒီနေရာမှာတင် ပြတ်တောက်သွားပါသည်။]\"\n",
+    "            return text\n",
+    "    elif 'error' in result:\n",
+    "        return f\"Error: {result['error'].get('message', 'Unknown error')}\"\n",
+    "    else:\n",
+    "        return \"No response from Gemini.\"\n",
+    "\n",
+    "\n",
+    "def gemini_generate(parts):\n",
+    "    \"\"\"\n",
+    "    Send request to Gemini API v1beta with retry logic.\n",
+    "    parts format (NO 'type' key):\n",
+    "      Text:       {\"text\": \"your text here\"}\n",
+    "      Inline:     {\"inline_data\": {\"mime_type\": \"audio/mp3\", \"data\": \"base64...\"}}\n",
+    "      File URI:   {\"file_data\": {\"file_uri\": \"...\", \"mime_type\": \"audio/mp3\"}}\n",
+    "    \"\"\"\n",
+    "    try:\n",
+    "        return retry_with_backoff(\n",
+    "            lambda: _do_gemini_request(parts),\n",
+    "            max_retries=10,\n",
+    "            delay=5,\n",
+    "            exceptions=(urllib.error.HTTPError, HTTPError, URLError, ConnectionError, OSError)\n",
+    "        )\n",
+    "    except HTTPError as e:\n",
+    "        try:\n",
+    "            error_body = e.read().decode('utf-8')\n",
+    "            return f\"API Error ({e.code}): {error_body}\"\n",
+    "        except:\n",
+    "            return f\"API Error ({e.code})\"\n",
+    "    except Exception as e:\n",
+    "        return f\"Request Error: {str(e)}\"\n",
+    "\n",
+    "\n",
+    "def transcribe_file(file_path, file_type=\"audio\"):\n",
+    "    \"\"\"Transcribe audio/video file using Gemini API.\"\"\"\n",
+    "    file_size_mb = os.path.getsize(file_path) / (1024 * 1024)\n",
+    "    print(f\"[Gemini] File size: {file_size_mb:.1f} MB\")\n",
+    "\n",
+    "    if file_size_mb < 19:\n",
+    "        # INLINE: base64 encode file and send directly\n",
+    "        mime_type = \"audio/mp3\" if file_type == \"audio\" else \"video/mp4\"\n",
+    "\n",
+    "        with open(file_path, 'rb') as f:\n",
+    "            file_data = base64.b64encode(f.read()).decode('utf-8')\n",
+    "\n",
+    "        prompt = \"\"\"You are a professional transcription expert. Please:\n",
+    "1. Transcribe ALL speech and dialogue from this file accurately\n",
+    "2. Identify different speakers if possible\n",
+    "3. Include timestamps if available\n",
+    "4. Transcribe in the ORIGINAL LANGUAGE\n",
+    "5. Be thorough and include all spoken content\n",
+    "\n",
+    "Provide the complete transcription.\"\"\"\n",
+    "\n",
+    "        # v1beta format: NO \"type\" key\n",
+    "        parts = [\n",
+    "            {\"text\": prompt},\n",
+    "            {\"inline_data\": {\"mime_type\": mime_type, \"data\": file_data}}\n",
+    "        ]\n",
+    "        return gemini_generate(parts)\n",
+    "\n",
+    "    else:\n",
+    "        # LARGE FILE: upload to Gemini Files API first\n",
+    "        mime_type = \"audio/mp3\" if file_type == \"audio\" else \"video/mp4\"\n",
+    "        file_size = os.path.getsize(file_path)\n",
+    "\n",
+    "        print(\"[Gemini] Uploading to Files API...\")\n",
+    "\n",
+    "        # Step 1: Initialize upload\n",
+    "        upload_url = \"https://generativelanguage.googleapis.com/upload/v1beta/files\"\n",
+    "        headers = {\n",
+    "            \"x-goog-api-key\": get_current_key(),\n",
+    "            \"X-Goog-Upload-Protocol\": \"resumable\",\n",
+    "            \"X-Goog-Upload-Command\": \"start\",\n",
+    "            \"X-Goog-Upload-Header-Content-Length\": str(file_size),\n",
+    "            \"X-Goog-Upload-Header-Content-Type\": mime_type,\n",
+    "            \"Content-Type\": \"application/json\"\n",
+    "        }\n",
+    "        data = json.dumps({\"file\": {\"display_name\": \"upload\"}}).encode('utf-8')\n",
+    "        req = urllib.request.Request(upload_url, data=data, headers=headers, method='POST')\n",
+    "        resp = urllib.request.urlopen(req)\n",
+    "        upload_location = resp.headers.get('X-Goog-Upload-URL')\n",
+    "\n",
+    "        # Step 2: Upload file data\n",
+    "        with open(file_path, 'rb') as f:\n",
+    "            file_data = f.read()\n",
+    "\n",
+    "        headers2 = {\n",
+    "            \"Content-Length\": str(file_size),\n",
+    "            \"X-Goog-Upload-Offset\": \"0\",\n",
+    "            \"X-Goog-Upload-Command\": \"upload, finalize\"\n",
+    "        }\n",
+    "        req2 = urllib.request.Request(upload_location, data=file_data, headers=headers2, method='POST')\n",
+    "        resp2 = urllib.request.urlopen(req2)\n",
+    "        upload_result = json.loads(resp2.read().decode('utf-8'))\n",
+    "\n",
+    "        file_uri = upload_result['file']['uri']\n",
+    "        file_name = upload_result['file']['name']\n",
+    "        print(f\"[Gemini] Uploaded: {file_uri}\")\n",
+    "\n",
+    "        # Step 3: Wait for processing\n",
+    "        for attempt in range(60):\n",
+    "            check_url = f\"https://generativelanguage.googleapis.com/v1beta/{file_name}?key={get_current_key()}\"\n",
+    "            req_check = urllib.request.Request(check_url)\n",
+    "            resp_check = urllib.request.urlopen(req_check)\n",
+    "            status = json.loads(resp_check.read().decode('utf-8'))\n",
+    "            state = status.get('state', '')\n",
+    "            print(f\"[Gemini] State: {state} (attempt {attempt + 1})\")\n",
+    "            if state == 'ACTIVE':\n",
+    "                break\n",
+    "            elif state == 'FAILED':\n",
+    "                return \"File processing failed.\"\n",
+    "            time.sleep(5)\n",
+    "\n",
+    "        # Step 4: Transcribe\n",
+    "        prompt = \"\"\"You are a professional transcription expert. Please:\n",
+    "1. Transcribe ALL speech and dialogue from this file accurately\n",
+    "2. Identify different speakers if possible\n",
+    "3. Include timestamps if available\n",
+    "4. Transcribe in the ORIGINAL LANGUAGE\n",
+    "5. Be thorough and include all spoken content\n",
+    "\n",
+    "Provide the complete transcription.\"\"\"\n",
+    "\n",
+    "        # v1beta format: NO \"type\" key, use \"file_data\" directly\n",
+    "        parts = [\n",
+    "            {\"text\": prompt},\n",
+    "            {\"file_data\": {\"file_uri\": file_uri, \"mime_type\": mime_type}}\n",
+    "        ]\n",
+    "        return gemini_generate(parts)\n",
+    "\n",
+    "\n",
+    "def translate_to_myanmar(transcription, duration_sec=None):\n",
+    "    \"\"\"Translate English transcription to Myanmar Thiha Voice MovieRecap style with duration awareness.\"\"\"\n",
+    "    \n",
+    "    duration_info = \"\"\n",
+    "    if duration_sec:\n",
+    "        # Average Myanmar speaking speed is roughly 2.5 to 3 words per second for recap style\n",
+    "        # We target about 2.8 words per second\n",
+    "        target_word_count = int(duration_sec * 2.8)\n",
+    "        duration_info = f\"\\\\n- TARGET LENGTH: Approximately {target_word_count} Myanmar words.\\\\n- The original video duration is {int(duration_sec)} seconds. Ensure your narration fits this timeframe (not too short, not too long).\"\n",
+    "\n",
+    "    prompt = f\"\"\"You are a Myanmar translator with the dramatic storytelling voice of \\\"Thiha Voice\\\" (movie recap channel).\n",
+    "\n",
+    "IMPORTANT RULES:\n",
+    "- ONLY translate what is in the transcription. DO NOT add any extra content, scenes, or information that is not mentioned.\n",
+    "- DO NOT invent new plot points, characters, or events.\n",
+    "- DO NOT write an intro or outro that is not in the original content.{duration_info}\n",
+    "- Provide a COMPREHENSIVE yet EFFICIENT narration. Cover all important details and scenes from the transcription without being overly long-winded.\n",
+    "- Maintain a natural movie recap pace - engaging and detailed, but avoiding unnecessary repetition.\n",
+    "- Ensure the story flow is smooth and covers the entire content from beginning to end with a good level of detail.\n",
+    "\n",
+    "SPEAKING STYLE (Thiha Voice tone):\n",
+    "- Use dramatic, engaging narration tone - voice ကြမ်းကြမ်း၊ ဆွဲဆွဲငင်ငင်\n",
+    "- Use colloquial Myanmar storytelling phrases naturally:\n",
+    "  \"ဆိုပြီး...\"\n",
+    "  \"ဒီမှာတော့...\"\n",
+    "  \"ဆိုတဲ့အခါမှာ...\"\n",
+    "  \"ဒါပေမယ့်...\"\n",
+    "  \"ဆိုတာကတော့...\"\n",
+    "- Be exciting and dramatic but stay faithful to the original content\n",
+    "- Write in paragraphs, NOT bullet points\n",
+    "- Write ENTIRELY in Myanmar language\n",
+    "\n",
+    "Here is the English transcription to translate:\n",
+    "\n",
+    "===\n",
+    "{transcription}\n",
+    "===\n",
+    "\n",
+    "Translate the above into Myanmar in Thiha Voice dramatic style. Remember: translate ONLY what's in the transcription, do not add anything extra.\"\"\"\n",
+    "\n",
+    "    # v1beta format: just {\"text\": \"...\"}\n",
+    "    parts = [{\"text\": prompt}]\n",
+    "    return gemini_generate(parts)\n",
+    "\n",
+    "\n",
+    "# ============================================================\n",
+    "# TEXT-TO-SPEECH\n",
+    "# ============================================================\n",
+    "\n",
+    "# ============================================================\n",
+    "# USER VOICE SETTINGS\n",
+    "# ============================================================\n",
+    "\n",
+    "# Default settings\n",
+    "DEFAULT_VOICE = \"my-MM-ThihaNeural\"\n",
+    "DEFAULT_SPEED = 55   # 1-100 (Slightly faster to match video length)\n",
+    "DEFAULT_PITCH = 50   # 1-100 (50 = normal)\n",
+    "\n",
+    "# Per-user settings storage: {chat_id: {\"voice\": ..., \"speed\": ..., \"pitch\": ...}}\n",
+    "user_settings = {}\n",
+    "\n",
+    "def get_user_settings(chat_id):\n",
+    "    \"\"\"Get user settings with defaults.\"\"\"\n",
+    "    if chat_id not in user_settings:\n",
+    "        user_settings[chat_id] = {\n",
+    "            \"voice\": DEFAULT_VOICE,\n",
+    "            \"speed\": DEFAULT_SPEED,\n",
+    "            \"pitch\": DEFAULT_PITCH\n",
+    "        }\n",
+    "    return user_settings[chat_id]\n",
+    "\n",
+    "def speed_to_edge_rate(speed):\n",
+    "    \"\"\"Convert speed 1-100 to Edge TTS rate percentage.\n",
+    "    1 = -50%, 50 = +0%, 100 = +100%\n",
+    "    Edge TTS requires + or - sign.\"\"\"\n",
+    "    val = int((speed - 50) * 2)\n",
+    "    return f\"+{val}%\" if val >= 0 else f\"{val}%\"\n",
+    "\n",
+    "def pitch_to_edge_hz(pitch):\n",
+    "    \"\"\"Convert pitch 1-100 to Edge TTS Hz.\n",
+    "    1 = -100Hz, 50 = +0Hz, 100 = +100Hz\n",
+    "    Edge TTS requires + or - sign.\"\"\"\n",
+    "    val = int((pitch - 50) * 2)\n",
+    "    return f\"+{val}Hz\" if val >= 0 else f\"{val}Hz\"\n",
+    "\n",
+    "# Available Myanmar voices\n",
+    "VOICES = {\n",
+    "    \"thiha\": \"my-MM-ThihaNeural\",\n",
+    "    \"nilar\": \"my-MM-NilarNeural\"\n",
+    "}\n",
+    "\n",
+    "async def _generate_single_chunk(text, output_path, voice=None, speed=50, pitch=50):\n",
+    "    \"\"\"Generate audio for a single text chunk with per-user settings.\"\"\"\n",
+    "    v = voice or DEFAULT_VOICE\n",
+    "    rate = speed_to_edge_rate(speed)\n",
+    "    pitch_hz = pitch_to_edge_hz(pitch)\n",
+    "    communicate = edge_tts.Communicate(text, v, rate=rate, pitch=pitch_hz)\n",
+    "    await communicate.save(output_path)\n",
+    "    return True\n",
+    "\n",
+    "def text_to_speech_myanmar(text, output_path, chat_id=None):\n",
+    "    \"\"\"Convert Myanmar text to speech audio file using Edge TTS (ThihaNeural voice).\n",
+    "    \n",
+    "    Splits long text into chunks and concatenates audio files.\n",
+    "    Uses per-user voice settings if chat_id is provided.\n",
+    "    \"\"\"\n",
+    "    clean_text = text.strip()\n",
+    "\n",
+    "    if not clean_text:\n",
+    "        print(\"[TTS] No text to convert\")\n",
+    "        return False\n",
+    "\n",
+    "    import asyncio\n",
+    "    import tempfile\n",
+    "\n",
+    "    # Chunk size for Edge TTS - split by sentences for natural flow\n",
+    "    MAX_CHUNK = 2000  # chars per chunk for Edge TTS\n",
+    "    temp_dir = tempfile.mkdtemp()\n",
+    "    temp_audio_files = []\n",
+    "\n",
+    "    try:\n",
+    "        # Split text into chunks by sentences\n",
+    "        chunks = []\n",
+    "        if len(clean_text) <= MAX_CHUNK:\n",
+    "            chunks = [clean_text]\n",
+    "        else:\n",
+    "            # Split by Myanmar sentence markers\n",
+    "            sentence_endings = ['။', '\\n', '. ', '! ', '? ']\n",
+    "            sentences = [clean_text]\n",
+    "            for ending in sentence_endings:\n",
+    "                new_sentences = []\n",
+    "                for s in sentences:\n",
+    "                    parts = s.split(ending)\n",
+    "                    new_sentences.extend(parts)\n",
+    "                sentences = new_sentences\n",
+    "            \n",
+    "            # Group sentences into chunks\n",
+    "            current_chunk = \"\"\n",
+    "            for sentence in sentences:\n",
+    "                sentence = sentence.strip()\n",
+    "                if not sentence:\n",
+    "                    continue\n",
+    "                if len(current_chunk) + len(sentence) > MAX_CHUNK:\n",
+    "                    if current_chunk:\n",
+    "                        chunks.append(current_chunk)\n",
+    "                    # If single sentence too long, split by character\n",
+    "                    if len(sentence) > MAX_CHUNK:\n",
+    "                        for i in range(0, len(sentence), MAX_CHUNK):\n",
+    "                            chunks.append(sentence[i:i+MAX_CHUNK])\n",
+    "                    else:\n",
+    "                        current_chunk = sentence\n",
+    "                else:\n",
+    "                    if current_chunk:\n",
+    "                        current_chunk += ending.strip()\n",
+    "                    current_chunk += sentence\n",
+    "            if current_chunk:\n",
+    "                chunks.append(current_chunk)\n",
+    "\n",
+    "        print(f\"[TTS] Splitting into {len(chunks)} chunks\")\n",
+    "\n",
+    "        loop = asyncio.new_event_loop()\n",
+    "        asyncio.set_event_loop(loop)\n",
+    "        try:\n",
+    "            tasks = []\n",
+    "            # Get per-user settings\n",
+    "            user_voice = DEFAULT_VOICE\n",
+    "            user_speed = DEFAULT_SPEED\n",
+    "            user_pitch = DEFAULT_PITCH\n",
+    "            if chat_id and chat_id in user_settings:\n",
+    "                us = user_settings[chat_id]\n",
+    "                user_voice = us.get(\"voice\", DEFAULT_VOICE)\n",
+    "                user_speed = us.get(\"speed\", DEFAULT_SPEED)\n",
+    "                user_pitch = us.get(\"pitch\", DEFAULT_PITCH)\n",
+    "            \n",
+    "            for i, chunk in enumerate(chunks):\n",
+    "                chunk = chunk.strip()\n",
+    "                if not chunk: continue\n",
+    "                temp_file = os.path.join(temp_dir, f\"chunk_{i:03d}.mp3\")\n",
+    "                temp_audio_files.append(temp_file)\n",
+    "                tasks.append(_generate_single_chunk(chunk, temp_file, voice=user_voice, speed=user_speed, pitch=user_pitch))\n",
+    "            \n",
+    "            print(f\"[TTS] Parallel processing {len(tasks)} chunks...\")\n",
+    "            loop.run_until_complete(asyncio.gather(*tasks))\n",
+    "            # Filter only successful files\n",
+    "            temp_audio_files = [f for f in temp_audio_files if os.path.exists(f) and os.path.getsize(f) > 0]\n",
+    "        finally:\n",
+    "            loop.close()\n",
+    "\n",
+    "        if len(temp_audio_files) == 0:\n",
+    "            print(\"[TTS] ❌ No audio chunks generated\")\n",
+    "            return False\n",
+    "\n",
+    "        # Concatenate all chunks\n",
+    "        if len(temp_audio_files) == 1:\n",
+    "            os.rename(temp_audio_files[0], output_path)\n",
+    "        else:\n",
+    "            # Use ffmpeg to concatenate all mp3 files\n",
+    "            concat_list = os.path.join(temp_dir, \"concat.txt\")\n",
+    "            with open(concat_list, 'w') as f:\n",
+    "                for tf in temp_audio_files:\n",
+    "                    f.write(f\"file '{tf}'\\n\")\n",
+    "            \n",
+    "            cmd = f\"ffmpeg -f concat -safe 0 -i {concat_list} -c copy {output_path} -y 2>/dev/null\"\n",
+    "            os.system(cmd)\n",
+    "\n",
+    "            # Verify output exists\n",
+    "            if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:\n",
+    "                # Fallback: just use the first chunk\n",
+    "                print(\"[TTS] ⚠️ Concat failed, using first chunk only\")\n",
+    "                os.rename(temp_audio_files[0], output_path)\n",
+    "            else:\n",
+    "                print(f\"[TTS] ✅ Concatenated {len(temp_audio_files)} chunks\")\n",
+    "\n",
+    "        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:\n",
+    "            size_kb = os.path.getsize(output_path) / 1024\n",
+    "            print(f\"[TTS] ✅ ThihaNeural audio saved: {output_path} ({size_kb:.1f} KB)\")\n",
+    "            return True\n",
+    "        else:\n",
+    "            print(\"[TTS] ❌ Audio file empty or missing\")\n",
+    "            return False\n",
+    "    except Exception as e:\n",
+    "        print(f\"[TTS] ❌ Failed: {e}\")\n",
+    "        return False\n",
+    "    finally:\n",
+    "        # Cleanup temp files\n",
+    "        import shutil\n",
+    "        try:\n",
+    "            shutil.rmtree(temp_dir, ignore_errors=True)\n",
+    "        except:\n",
+    "            pass\n",
+    "\n",
+    "\n",
+    "# ============================================================\n",
+    "# SRT SUBTITLE GENERATOR\n",
+    "# ============================================================\n",
+    "\n",
+    "def generate_srt(text, output_path, audio_duration=None):\n",
+    "    \"\"\"Generate SRT subtitle file from Myanmar text.\n",
+    "    \n",
+    "    Splits text into sentences and creates timed subtitles.\n",
+    "    If audio_duration is provided, distributes time evenly.\n",
+    "    Otherwise uses estimated timing based on word count.\n",
+    "    \"\"\"\n",
+    "    import re\n",
+    "    \n",
+    "    clean_text = text.strip()\n",
+    "    if not clean_text:\n",
+    "        return False\n",
+    "    \n",
+    "    # Split by Myanmar sentence markers\n",
+    "    sentence_endings = ['။', '. ', '! ', '? ', '\\n']\n",
+    "    sentences = [clean_text]\n",
+    "    for ending in sentence_endings:\n",
+    "        new_s = []\n",
+    "        for s in sentences:\n",
+    "            parts = s.split(ending)\n",
+    "            new_s.extend(parts)\n",
+    "        sentences = new_s\n",
+    "    \n",
+    "    # Clean up empty sentences\n",
+    "    sentences = [s.strip() for s in sentences if s.strip()]\n",
+    "    \n",
+    "    if not sentences:\n",
+    "        sentences = [clean_text]\n",
+    "    \n",
+    "    def format_srt_time(seconds):\n",
+    "        \"\"\"Convert seconds to SRT time format: HH:MM:SS,mmm\"\"\"\n",
+    "        hours = int(seconds // 3600)\n",
+    "        minutes = int((seconds % 3600) // 60)\n",
+    "        secs = int(seconds % 60)\n",
+    "        millis = int((seconds % 1) * 1000)\n",
+    "        return f\"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}\"\n",
+    "\n",
+    "    # Generate SRT content with weighted timing\n",
+    "    srt_lines = []\n",
+    "    current_time = 0.5  # Start after 0.5 seconds\n",
+    "    \n",
+    "    if audio_duration and audio_duration > 0:\n",
+    "        total_chars = sum(len(s) for s in sentences)\n",
+    "        # Available time after removing initial delay and small gaps (0.1s) between sentences\n",
+    "        available_time = audio_duration - 0.5 - (len(sentences) * 0.1)\n",
+    "        if available_time < 0: available_time = audio_duration # Fallback\n",
+    "        \n",
+    "        for i, sentence in enumerate(sentences):\n",
+    "            char_ratio = len(sentence) / total_chars\n",
+    "            duration = available_time * char_ratio\n",
+    "            \n",
+    "            start_time = current_time\n",
+    "            end_time = current_time + duration\n",
+    "            current_time = end_time + 0.1 # Small gap\n",
+    "            \n",
+    "            srt_lines.append(str(i + 1))\n",
+    "            srt_lines.append(f\"{format_srt_time(start_time)} --> {format_srt_time(end_time)}\")\n",
+    "            srt_lines.append(sentence)\n",
+    "            srt_lines.append(\"\")\n",
+    "    else:\n",
+    "        # Fallback to estimated timing\n",
+    "        for i, sentence in enumerate(sentences):\n",
+    "            duration = max(2.0, len(sentence) / 15.0) # ~15 chars per second\n",
+    "            start_time = current_time\n",
+    "            end_time = current_time + duration\n",
+    "            current_time = end_time + 0.3\n",
+    "            \n",
+    "            srt_lines.append(str(i + 1))\n",
+    "            srt_lines.append(f\"{format_srt_time(start_time)} --> {format_srt_time(end_time)}\")\n",
+    "            srt_lines.append(sentence)\n",
+    "            srt_lines.append(\"\")\n",
+    "    \n",
+    "    srt_content = \"\\n\".join(srt_lines)\n",
+    "    \n",
+    "    with open(output_path, 'w', encoding='utf-8') as f:\n",
+    "        f.write(srt_content)\n",
+    "    \n",
+    "    print(f\"[SRT] ✅ Subtitle file saved: {output_path} ({len(sentences)} subtitles)\")\n",
+    "    return True\n",
+    "\n",
+    "\n",
+    "# ============================================================\n",
+    "# TELEGRAM BOT\n",
+    "# ============================================================\n",
+    "\n",
+    "bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)\n",
+    "\n",
+    "\n",
+    "def safe_send(chat_id, text, status_msg_id=None, is_edit=False):\n",
+    "    \"\"\"\n",
+    "    Safely send a message with retry logic, splitting into chunks if > 4000 chars.\n",
+    "    Returns the last message_id for editing.\n",
+    "    \"\"\"\n",
+    "    MAX_LEN = 3800\n",
+    "    total_len = len(text)\n",
+    "    \n",
+    "    def _send_chunk(chunk_text, msg_id=None):\n",
+    "        for attempt in range(3):\n",
+    "            try:\n",
+    "                if msg_id:\n",
+    "                    return bot.edit_message_text(chunk_text, chat_id, msg_id).message_id\n",
+    "                else:\n",
+    "                    return bot.send_message(chat_id, chunk_text).message_id\n",
+    "            except:\n",
+    "                time.sleep(2)\n",
+    "        return None\n",
+    "\n",
+    "    if total_len <= MAX_LEN:\n",
+    "        return _send_chunk(text, status_msg_id if is_edit else None)\n",
+    "    else:\n",
+    "        if is_edit and status_msg_id:\n",
+    "            bot.edit_message_text(\"📝 စာသားရှည်လွန်းလို့ အပိုင်းလိုက် ခွဲပို့ပေးပါမယ်...\", chat_id, status_msg_id)\n",
+    "        \n",
+    "        chunks = [text[i:i+MAX_LEN] for i in range(0, total_len, MAX_LEN)]\n",
+    "        num_chunks = len(chunks)\n",
+    "        for i, chunk in enumerate(chunks):\n",
+    "            header = f\"🇲🇲 Part ({i+1}/{num_chunks})\\\\n\" + (\"=\"*15) + \"\\\\n\\\\n\"\n",
+    "            _send_chunk(header + chunk)\n",
+    "            time.sleep(1)\n",
+    "        return status_msg_id\n",
+    "\n",
+    "\n",
+    "@bot.message_handler(commands=['start'])\n",
+    "def send_welcome(message):\n",
+    "    welcome = \"\"\"🎬 Movie Recap Translator Bot 🎬\n",
+    "\n",
+    "မင်္ဂလာပါ! English voice message သို့မဟုတ် video ပို့ပါ။\n",
+    "Myanmar MovieRecap style ဇာတ်လမ်းအကျဉ်းချုပ် + Audio ဖြင့် ပြန်ပို့ပေးပါမယ်!\n",
+    "\n",
+    "⚙️ Commands:\n",
+    "/start - Bot အကြောင်း\n",
+    "/help - အသုံးပြုနည်း\n",
+    "/settings - အသံ Settings (buttons နဲ့ ပြောင်းရန်)\n",
+    "📝 SRT Subtitle auto ပို့ပေးပါတယ် (CapCut)\n",
+    "\n",
+    "⚠️ Video: 50MB အောက်\n",
+    "🎙️ Voice: အကန့်အသတ်မရှိ\"\"\"\n",
+    "    bot.reply_to(message, welcome)\n",
+    "\n",
+    "\n",
+    "@bot.message_handler(commands=['help'])\n",
+    "def send_help(message):\n",
+    "    help_text = \"\"\"📖 အသုံးပြုနည်း\n",
+    "\n",
+    "🎙️ Voice message ပို့ပါ → Myanmar recap + audio\n",
+    "🎬 Video ပို့ပါ → Myanmar recap + audio\n",
+    "\n",
+    "⚙️ အသံ Settings:\n",
+    "/voice thiha - Thiha Voice (male)\n",
+    "/voice nilar - Nilar Voice (female)\n",
+    "/speed 1-100 - အမြန်နှုန်း (50=ပုံမှန်, 1=အဖြေးဆုံး, 100=အမြန်ဆုံး)\n",
+    "/pitch 1-100 - အသံနိမ့်မြင့် (50=ပုံမှန်, 1=အနိမ့်ဆုံး, 100=အမြင့်ဆုံး)\n",
+    "/settings - လက်ရှိ settings ကြည့်ရန်\n",
+    "\n",
+    "• Clear English audio works best\n",
+    "• Video < 2 min recommended\n",
+    "• Max video: 50MB\"\"\"\n",
+    "    bot.reply_to(message, help_text)\n",
+    "\n",
+    "\n",
+    "# ============================================================\n",
+    "# INLINE KEYBOARD SETTINGS\n",
+    "# ============================================================\n",
+    "from telebot import types\n",
+    "\n",
+    "def build_settings_keyboard(chat_id, include_start_skip=True):\n",
+    "    \"\"\"Build inline keyboard for voice settings.\n",
+    "    include_start_skip: if True, add Start/Skip buttons at top/bottom.\"\"\"\n",
+    "    settings = get_user_settings(chat_id)\n",
+    "    \n",
+    "    # Voice buttons\n",
+    "    voice_name = \"Unknown\"\n",
+    "    for name, voice_id in VOICES.items():\n",
+    "        if settings[\"voice\"] == voice_id:\n",
+    "            voice_name = name.capitalize()\n",
+    "            break\n",
+    "    \n",
+    "    keyboard = types.InlineKeyboardMarkup(row_width=2)\n",
+    "    \n",
+    "    # Start button FIRST (top) if requested\n",
+    "    if include_start_skip:\n",
+    "        keyboard.add(types.InlineKeyboardButton(\"▶️ Start Processing\", callback_data=\"start_processing\"))\n",
+    "    \n",
+    "    # Voice selection\n",
+    "    thiha_cb = types.InlineKeyboardButton(\"✅ Thiha\" if \"Thiha\" in voice_name else \"🎙️ Thiha\", callback_data=\"voice_thiha\")\n",
+    "    nilar_cb = types.InlineKeyboardButton(\"✅ Nilar\" if \"Nilar\" in voice_name else \"🎙️ Nilar\", callback_data=\"voice_nilar\")\n",
+    "    keyboard.add(thiha_cb, nilar_cb)\n",
+    "    \n",
+    "    # Speed row\n",
+    "    keyboard.add(types.InlineKeyboardButton(\"⚡ Speed: \" + str(settings['speed']), callback_data=\"noop\"))\n",
+    "    speed_row = [types.InlineKeyboardButton(\"-10\", callback_data=\"speed_-10\")]\n",
+    "    for s in [20, 30, 40, 50, 60, 70, 80]:\n",
+    "        btn = types.InlineKeyboardButton(str(s) if settings['speed'] != s else \"[\" + str(s) + \"]\", callback_data=\"speed_\" + str(s))\n",
+    "        speed_row.append(btn)\n",
+    "    speed_row.append(types.InlineKeyboardButton(\"+10\", callback_data=\"speed_+10\"))\n",
+    "    keyboard.add(*speed_row)\n",
+    "    \n",
+    "    # Pitch row\n",
+    "    keyboard.add(types.InlineKeyboardButton(\"🎵 Pitch: \" + str(settings['pitch']), callback_data=\"noop\"))\n",
+    "    pitch_row = [types.InlineKeyboardButton(\"-10\", callback_data=\"pitch_-10\")]\n",
+    "    for p in [20, 30, 40, 50, 60, 70, 80]:\n",
+    "        btn = types.InlineKeyboardButton(str(p) if settings['pitch'] != p else \"[\" + str(p) + \"]\", callback_data=\"pitch_\" + str(p))\n",
+    "        pitch_row.append(btn)\n",
+    "    pitch_row.append(types.InlineKeyboardButton(\"+10\", callback_data=\"pitch_+10\"))\n",
+    "    keyboard.add(*pitch_row)\n",
+    "    \n",
+    "    # Skip button LAST (bottom) if requested\n",
+    "    if include_start_skip:\n",
+    "        keyboard.add(types.InlineKeyboardButton(\"⏭️ Skip (Default)\", callback_data=\"skip_settings\"))\n",
+    "    \n",
+    "    return keyboard\n",
+    "\n",
+    "\n",
+    "@bot.message_handler(commands=['settings'])\n",
+    "def show_settings(message):\n",
+    "    \"\"\"Show settings with inline keyboard.\"\"\"\n",
+    "    chat_id = message.chat.id\n",
+    "    settings = get_user_settings(chat_id)\n",
+    "    \n",
+    "    voice_name = \"Unknown\"\n",
+    "    for name, voice_id in VOICES.items():\n",
+    "        if settings[\"voice\"] == voice_id:\n",
+    "            voice_name = name.capitalize()\n",
+    "            break\n",
+    "    \n",
+    "    rate = speed_to_edge_rate(settings[\"speed\"])\n",
+    "    pitch_hz = pitch_to_edge_hz(settings[\"pitch\"])\n",
+    "    \n",
+    "    info = \"⚙️ Voice Settings\\n\\n🎙️ Voice: \" + voice_name + \"\\n⚡ Speed: \" + str(settings['speed']) + \" (\" + rate + \")\\n   1=အဖြေးဆုံး | 50=ပုံမှန် | 100=အမြန်ဆုံး\\n🎵 Pitch: \" + str(settings['pitch']) + \" (\" + pitch_hz + \")\\n   1=အနိမ့်ဆုံး | 50=ပုံမှန် | 100=အမြင့်ဆုံး\\n\\n👇 Buttons နှိပ်ပြီး ပြောင်းပါ\"\n",
+    "    \n",
+    "    keyboard = build_settings_keyboard(chat_id, include_start_skip=False)\n",
+    "    bot.send_message(chat_id, info, reply_markup=keyboard)\n",
+    "\n",
+    "\n",
+    "@bot.callback_query_handler(func=lambda call: True)\n",
+    "def handle_callback(call):\n",
+    "    \"\"\"Handle inline keyboard button presses.\"\"\"\n",
+    "    chat_id = call.message.chat.id\n",
+    "    data = call.data\n",
+    "    \n",
+    "    # Voice selection\n",
+    "    if data.startswith(\"voice_\"):\n",
+    "        voice_name = data.replace(\"voice_\", \"\")\n",
+    "        if voice_name in VOICES:\n",
+    "            settings = get_user_settings(chat_id)\n",
+    "            settings[\"voice\"] = VOICES[voice_name]\n",
+    "            # Update keyboard\n",
+    "            info = \"⚙️ Voice Settings\\n\\n🎙️ Voice: \" + voice_name.capitalize() + \"\\n✅ အသံ ပြောင်းပြီးပါပြီ!\\n\\n👇 နောက်ထပ် ပြောင်းချင်ရင် buttons နှိပ်ပါ\"\n",
+    "            keyboard = build_settings_keyboard(chat_id, include_start_skip=(chat_id in pending_requests))\n",
+    "            try:\n",
+    "                bot.edit_message_text(info, chat_id, call.message.message_id, reply_markup=keyboard)\n",
+    "            except:\n",
+    "                bot.send_message(chat_id, info, reply_markup=keyboard)\n",
+    "        bot.answer_callback_query(call.id)\n",
+    "    \n",
+    "    # Speed adjustment\n",
+    "    elif data.startswith(\"speed_\"):\n",
+    "        val_str = data.replace(\"speed_\", \"\")\n",
+    "        settings = get_user_settings(chat_id)\n",
+    "        \n",
+    "        if val_str in [\"+10\", \"-10\"]:\n",
+    "            delta = 10 if val_str == \"+10\" else -10\n",
+    "            new_speed = max(1, min(100, settings[\"speed\"] + delta))\n",
+    "        else:\n",
+    "            try:\n",
+    "                new_speed = int(val_str)\n",
+    "            except:\n",
+    "                bot.answer_callback_query(call.id, \"Invalid\")\n",
+    "                return\n",
+    "        \n",
+    "        settings[\"speed\"] = new_speed\n",
+    "        rate = speed_to_edge_rate(new_speed)\n",
+    "        \n",
+    "        voice_name = \"Unknown\"\n",
+    "        for name, voice_id in VOICES.items():\n",
+    "            if settings[\"voice\"] == voice_id:\n",
+    "                voice_name = name.capitalize()\n",
+    "                break\n",
+    "        \n",
+    "        pitch_hz = pitch_to_edge_hz(settings[\"pitch\"])\n",
+    "        info = \"⚙️ Voice Settings\\n\\n🎙️ Voice: \" + voice_name + \"\\n⚡ Speed: \" + str(new_speed) + \" (\" + rate + \")\\n   1=အဖြေးဆုံး | 50=ပုံမှန် | 100=အမြန်ဆုံး\\n🎵 Pitch: \" + str(settings['pitch']) + \" (\" + pitch_hz + \")\\n   1=အနိမ့်ဆုံး | 50=ပုံမှန် | 100=အမြင့်ဆုံး\\n\\n👇 Buttons နှိပ်ပြီး ပြောင်းပါ\"\n",
+    "        \n",
+    "        has_pending = chat_id in pending_requests\n",
+    "        keyboard = build_settings_keyboard(chat_id, include_start_skip=has_pending)\n",
+    "        try:\n",
+    "            bot.edit_message_text(info, chat_id, call.message.message_id, reply_markup=keyboard)\n",
+    "        except:\n",
+    "            bot.send_message(chat_id, info, reply_markup=keyboard)\n",
+    "        bot.answer_callback_query(call.id)\n",
+    "    \n",
+    "    # Pitch adjustment\n",
+    "    elif data.startswith(\"pitch_\"):\n",
+    "        val_str = data.replace(\"pitch_\", \"\")\n",
+    "        settings = get_user_settings(chat_id)\n",
+    "        \n",
+    "        if val_str in [\"+10\", \"-10\"]:\n",
+    "            delta = 10 if val_str == \"+10\" else -10\n",
+    "            new_pitch = max(1, min(100, settings[\"pitch\"] + delta))\n",
+    "        else:\n",
+    "            try:\n",
+    "                new_pitch = int(val_str)\n",
+    "            except:\n",
+    "                bot.answer_callback_query(call.id, \"Invalid\")\n",
+    "                return\n",
+    "        \n",
+    "        settings[\"pitch\"] = new_pitch\n",
+    "        pitch_hz = pitch_to_edge_hz(new_pitch)\n",
+    "        \n",
+    "        voice_name = \"Unknown\"\n",
+    "        for name, voice_id in VOICES.items():\n",
+    "            if settings[\"voice\"] == voice_id:\n",
+    "                voice_name = name.capitalize()\n",
+    "                break\n",
+    "        \n",
+    "        rate = speed_to_edge_rate(settings[\"speed\"])\n",
+    "        info = \"⚙️ Voice Settings\\n\\n🎙️ Voice: \" + voice_name + \"\\n⚡ Speed: \" + str(settings['speed']) + \" (\" + rate + \")\\n   1=အဖြေးဆုံး | 50=ပုံမှန် | 100=အမြန်ဆုံး\\n🎵 Pitch: \" + str(new_pitch) + \" (\" + pitch_hz + \")\\n   1=အနိမ့်ဆုံး | 50=ပုံမှန် | 100=အမြင့်ဆုံး\\n\\n👇 Buttons နှိပ်ပြီး ပြောင်းပါ\"\n",
+    "        \n",
+    "        has_pending = chat_id in pending_requests\n",
+    "        keyboard = build_settings_keyboard(chat_id, include_start_skip=has_pending)\n",
+    "        try:\n",
+    "            bot.edit_message_text(info, chat_id, call.message.message_id, reply_markup=keyboard)\n",
+    "        except:\n",
+    "            bot.send_message(chat_id, info, reply_markup=keyboard)\n",
+    "        bot.answer_callback_query(call.id)\n",
+    "    \n",
+    "    # Start processing\n",
+    "    elif data == \"start_processing\":\n",
+    "        if chat_id in pending_requests:\n",
+    "            pending = pending_requests.pop(chat_id)\n",
+    "            settings_msg_id = call.message.message_id\n",
+    "            bot.edit_message_text(\"🚀 Processing စလုပ်ပါပြီ...\", chat_id, settings_msg_id, reply_markup=None)\n",
+    "            process_media(chat_id, pending[\"media_type\"], pending[\"file_data\"], settings_msg_id)\n",
+    "        else:\n",
+    "            bot.answer_callback_query(call.id, \"⚠️ Media မရှိပါ\")\n",
+    "        bot.answer_callback_query(call.id)\n",
+    "    \n",
+    "    # Skip settings - use default and process\n",
+    "    elif data == \"skip_settings\":\n",
+    "        if chat_id in pending_requests:\n",
+    "            pending = pending_requests.pop(chat_id)\n",
+    "            settings_msg_id = call.message.message_id\n",
+    "            bot.edit_message_text(\"⏭️ Default settings နဲ့ Processing...\", chat_id, settings_msg_id, reply_markup=None)\n",
+    "            process_media(chat_id, pending[\"media_type\"], pending[\"file_data\"], settings_msg_id)\n",
+    "        else:\n",
+    "            bot.answer_callback_query(call.id, \"⚠️ Media မရှိပါ\")\n",
+    "        bot.answer_callback_query(call.id)\n",
+    "    \n",
+    "    # No-op (for label buttons)\n",
+    "    elif data == \"noop\":\n",
+    "        bot.answer_callback_query(call.id)\n",
+    "\n",
+    "\n",
+    "# ============================================================\n",
+    "# PENDING MEDIA STORAGE\n",
+    "# ============================================================\n",
+    "pending_requests = {}\n",
+    "\n",
+    "\n",
+    "def show_settings_for_processing(chat_id, media_type, file_data):\n",
+    "    \"\"\"Show settings keyboard and store pending media info.\"\"\"\n",
+    "    settings = get_user_settings(chat_id)\n",
+    "    \n",
+    "    voice_name = \"Unknown\"\n",
+    "    for name, voice_id in VOICES.items():\n",
+    "        if settings[\"voice\"] == voice_id:\n",
+    "            voice_name = name.capitalize()\n",
+    "            break\n",
+    "    \n",
+    "    rate = speed_to_edge_rate(settings[\"speed\"])\n",
+    "    pitch_hz = pitch_to_edge_hz(settings[\"pitch\"])\n",
+    "    \n",
+    "    emoji = \"🎙️\" if media_type == \"voice\" else \"🎬\"\n",
+    "    msg = emoji + \" \" + (\"Voice ရပြီ!\" if media_type == \"voice\" else \"Video ရပြီ!\") + \"\\n\\n⚙️ အသံ Settings ရွေးပါ:\\n\\n🎙️ Voice: \" + voice_name + \"\\n⚡ Speed: \" + str(settings['speed']) + \" (\" + rate + \")\\n🎵 Pitch: \" + str(settings['pitch']) + \" (\" + pitch_hz + \")\\n\\n👇 Settings ပြောင်းပါ၊ ✅ ပြီးရင် Start နှိပ်ပါ\\n⏭️ ပြောင်းမယ်မဆိုရင် Skip နှိပ်ပါ\"\n",
+    "    \n",
+    "    # Store pending request\n",
+    "    pending_requests[chat_id] = {\n",
+    "        \"media_type\": media_type,\n",
+    "        \"file_data\": file_data\n",
+    "    }\n",
+    "    \n",
+    "    # Build keyboard - Start button first, then settings, then Skip\n",
+    "    keyboard = types.InlineKeyboardMarkup(row_width=2)\n",
+    "    \n",
+    "    # Start button FIRST (top)\n",
+    "    start_btn = types.InlineKeyboardButton(\"▶️ Start Processing\", callback_data=\"start_processing\")\n",
+    "    keyboard.add(start_btn)\n",
+    "    \n",
+    "    # Voice selection\n",
+    "    thiha_cb = types.InlineKeyboardButton(\"✅ Thiha\" if \"Thiha\" in voice_name else \"🎙️ Thiha\", callback_data=\"voice_thiha\")\n",
+    "    nilar_cb = types.InlineKeyboardButton(\"✅ Nilar\" if \"Nilar\" in voice_name else \"🎙️ Nilar\", callback_data=\"voice_nilar\")\n",
+    "    keyboard.add(thiha_cb, nilar_cb)\n",
+    "    \n",
+    "    # Speed row\n",
+    "    keyboard.add(types.InlineKeyboardButton(\"⚡ Speed: \" + str(settings['speed']), callback_data=\"noop\"))\n",
+    "    speed_row = [types.InlineKeyboardButton(\"-10\", callback_data=\"speed_-10\")]\n",
+    "    for s in [20, 30, 40, 50, 60, 70, 80]:\n",
+    "        btn = types.InlineKeyboardButton(str(s) if settings['speed'] != s else \"[\" + str(s) + \"]\", callback_data=\"speed_\" + str(s))\n",
+    "        speed_row.append(btn)\n",
+    "    speed_row.append(types.InlineKeyboardButton(\"+10\", callback_data=\"speed_+10\"))\n",
+    "    keyboard.add(*speed_row)\n",
+    "    \n",
+    "    # Pitch row\n",
+    "    keyboard.add(types.InlineKeyboardButton(\"🎵 Pitch: \" + str(settings['pitch']), callback_data=\"noop\"))\n",
+    "    pitch_row = [types.InlineKeyboardButton(\"-10\", callback_data=\"pitch_-10\")]\n",
+    "    for p in [20, 30, 40, 50, 60, 70, 80]:\n",
+    "        btn = types.InlineKeyboardButton(str(p) if settings['pitch'] != p else \"[\" + str(p) + \"]\", callback_data=\"pitch_\" + str(p))\n",
+    "        pitch_row.append(btn)\n",
+    "    pitch_row.append(types.InlineKeyboardButton(\"+10\", callback_data=\"pitch_+10\"))\n",
+    "    keyboard.add(*pitch_row)\n",
+    "    \n",
+    "    # Skip button LAST (bottom)\n",
+    "    skip_btn = types.InlineKeyboardButton(\"⏭️ Skip (Default)\", callback_data=\"skip_settings\")\n",
+    "    keyboard.add(skip_btn)\n",
+    "    \n",
+    "    sent = bot.send_message(chat_id, msg, reply_markup=keyboard)\n",
+    "    return sent\n",
+    "\n",
+    "\n",
+    "def get_duration(file_path):\n",
+    "    \"\"\"Get duration of media file in seconds using ffprobe.\"\"\"\n",
+    "    try:\n",
+    "        cmd = f\"ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 '{file_path}'\"\n",
+    "        output = subprocess.check_output(cmd, shell=True).decode('utf-8').strip()\n",
+    "        return float(output)\n",
+    "    except:\n",
+    "        return None\n",
+    "\n",
+    "def process_media(chat_id, media_type, file_data, status_msg_id):\n",
+    "    \"\"\"Process the stored media - transcribe, translate, TTS, SRT.\"\"\"\n",
+    "    temp_ogg = None\n",
+    "    temp_video = None\n",
+    "    mp3_file = None\n",
+    "    audio_file = None\n",
+    "    srt_file = None\n",
+    "    \n",
+    "    try:\n",
+    "        duration = None\n",
+    "        if media_type == \"voice\":\n",
+    "            bot.edit_message_text(\"📥 Downloading...\", chat_id, status_msg_id)\n",
+    "            file_bytes = file_data\n",
+    "            temp_ogg = tempfile.mktemp(suffix='.ogg')\n",
+    "            with open(temp_ogg, 'wb') as f:\n",
+    "                f.write(file_bytes)\n",
+    "            mp3_file = tempfile.mktemp(suffix='.mp3')\n",
+    "            ret = os.system(f\"ffmpeg -i '{temp_ogg}' -y '{mp3_file}' 2>/dev/null\")\n",
+    "            process_file = mp3_file if (ret == 0 and os.path.exists(mp3_file) and os.path.getsize(mp3_file) > 0) else temp_ogg\n",
+    "            duration = get_duration(process_file)\n",
+    "        else:\n",
+    "            bot.edit_message_text(\"📥 Downloading video...\", chat_id, status_msg_id)\n",
+    "            file_bytes = file_data\n",
+    "            temp_video = tempfile.mktemp(suffix='.mp4')\n",
+    "            with open(temp_video, 'wb') as f:\n",
+    "                f.write(file_bytes)\n",
+    "            size_mb = os.path.getsize(temp_video) / (1024 * 1024)\n",
+    "            bot.edit_message_text(f\"📊 Video: {size_mb:.1f}MB\\n🤖 Processing...\", chat_id, status_msg_id)\n",
+    "            process_file = temp_video\n",
+    "            duration = get_duration(process_file)\n",
+    "        \n",
+    "        bot.edit_message_text(\"🤖 Transcribing with Gemini...\", chat_id, status_msg_id)\n",
+    "        ftype = \"audio\" if media_type == \"voice\" else \"video\"\n",
+    "        transcription = transcribe_file(process_file, file_type=ftype)\n",
+    "        \n",
+    "        if transcription.startswith(\"Error\") or transcription.startswith(\"API Error\"):\n",
+    "            bot.send_message(chat_id, f\"❌ Error: {transcription[:500]}\")\n",
+    "            return\n",
+    "        \n",
+    "        bot.edit_message_text(\"🇲🇲 Myanmar MovieRecap style ဘာသာပြန်နေပါတယ်...\", chat_id, status_msg_id)\n",
+    "        myanmar_text = translate_to_myanmar(transcription, duration_sec=duration)\n",
+    "        \n",
+    "        if myanmar_text.startswith(\"Error\") or myanmar_text.startswith(\"API Error\"):\n",
+    "            bot.send_message(chat_id, f\"❌ Translation error: {myanmar_text[:500]}\")\n",
+    "            return\n",
+    "        \n",
+    "        safe_send(chat_id, \"🇲🇲 Myanmar Recap:\\n\\n\" + myanmar_text, status_msg_id, is_edit=True)\n",
+    "        \n",
+    "        bot.send_message(chat_id, \"🔊 Audio create လုပ်နေပါတယ်...\")\n",
+    "        audio_file = tempfile.mktemp(suffix='.mp3')\n",
+    "        srt_file = tempfile.mktemp(suffix='.srt')\n",
+    "        \n",
+    "        if text_to_speech_myanmar(myanmar_text, audio_file, chat_id=chat_id):\n",
+    "            with open(audio_file, 'rb') as audio:\n",
+    "                bot.send_audio(chat_id, audio, caption=\"🔊 Myanmar Audio\", title=\"Myanmar Recap Audio\")\n",
+    "            \n",
+    "            # Get the actual duration of the generated Myanmar audio\n",
+    "            myanmar_audio_duration = get_duration(audio_file)\n",
+    "            generate_srt(myanmar_text, srt_file, audio_duration=myanmar_audio_duration)\n",
+    "            if os.path.exists(srt_file) and os.path.getsize(srt_file) > 0:\n",
+    "                with open(srt_file, 'rb') as srt:\n",
+    "                    bot.send_document(chat_id, srt, caption=\"📝 SRT Subtitle (CapCut)\")\n",
+    "        else:\n",
+    "            bot.send_message(chat_id, \"⚠️ Audio create မရပါ\")\n",
+    "        \n",
+    "        bot.send_message(chat_id, \"✅ Completed! 🎬\")\n",
+    "    \n",
+    "    except Exception as e:\n",
+    "        try:\n",
+    "            bot.edit_message_text(\"❌ Error: \" + str(e)[:400], chat_id, status_msg_id)\n",
+    "        except:\n",
+    "            bot.send_message(chat_id, \"❌ Error: \" + str(e)[:400])\n",
+    "        print(\"[Error] \" + str(e))\n",
+    "    \n",
+    "    finally:\n",
+    "        for f in [temp_ogg, temp_video, mp3_file, audio_file, srt_file]:\n",
+    "            if f and os.path.exists(f):\n",
+    "                try:\n",
+    "                    os.remove(f)\n",
+    "                except:\n",
+    "                    pass\n",
+    "\n",
+    "\n",
+    "@bot.message_handler(content_types=['voice'])\n",
+    "def handle_voice(message):\n",
+    "    chat_id = message.chat.id\n",
+    "    try:\n",
+    "        file_info = bot.get_file(message.voice.file_id)\n",
+    "        file_bytes = bot.download_file(file_info.file_path)\n",
+    "    except Exception as e:\n",
+    "        bot.send_message(chat_id, \"❌ File download error: \" + str(e)[:300])\n",
+    "        return\n",
+    "    \n",
+    "    show_settings_for_processing(chat_id, \"voice\", file_bytes)\n",
+    "\n",
+    "\n",
+    "@bot.message_handler(content_types=['video'])\n",
+    "def handle_video(message):\n",
+    "    chat_id = message.chat.id\n",
+    "\n",
+    "    if hasattr(message.video, 'file_size') and message.video.file_size:\n",
+    "        size_mb = message.video.file_size / (1024 * 1024)\n",
+    "        if size_mb > MAX_VIDEO_SIZE_MB:\n",
+    "            bot.send_message(chat_id, f\"❌ Video ကြီးလွန်းပါတယ်! ({size_mb:.1f}MB / max {MAX_VIDEO_SIZE_MB}MB)\")\n",
+    "            return\n",
+    "\n",
+    "    try:\n",
+    "        file_info = bot.get_file(message.video.file_id)\n",
+    "        file_bytes = bot.download_file(file_info.file_path)\n",
+    "    except Exception as e:\n",
+    "        bot.send_message(chat_id, \"❌ File download error: \" + str(e)[:300])\n",
+    "        return\n",
+    "    \n",
+    "    show_settings_for_processing(chat_id, \"video\", file_bytes)\n",
+    "\n",
+    "\n",
+    "# ============================================================\n",
+    "# START BOT\n",
+    "# ============================================================\n",
+    "\n",
+    "print(\"=\" * 50)\n",
+    "print(\"🎬 MOVIE RECAP TRANSLATOR BOT\")\n",
+    "print(\"=\" * 50)\n",
+    "\n",
+    "if TELEGRAM_BOT_TOKEN == \"YOUR_TELEGRAM_BOT_TOKEN_HERE\":\n",
+    "    print(\"❌ Token မသတ်မှတ်ရသေးပါ!\")\n",
+    "else:\n",
+    "    print(\"✅ Token: Set\")\n",
+    "    print(\"✅ Model: gemini-3.5-flash\")\n",
+    "    print(\"🚀 Bot starting with retry logic...\")\n",
+    "    print(\"⚠️ Connection errors will auto-retry\")\n",
+    "    print(\"=\" * 50)\n",
+    "\n",
+    "    # Configure bot with retry and longer timeouts\n",
+    "    # Note: callback_query updates must be in allowed_updates for buttons to work\n",
+    "    print(f\"📋 Callback handlers registered: {len(bot.callback_query_handlers)}\")\n",
+    "    print(f\"📋 Message handlers registered: {len(bot.message_handlers)}\")\n",
+    "    bot.infinity_polling(\n",
+    "        timeout=60,\n",
+    "        long_polling_timeout=60,\n",
+    "        allowed_updates=[\"message\", \"edited_message\", \"callback_query\"]\n",
+    "    )\n"
+   ],
+   "outputs": []
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Quick Guide\n",
+    "\n",
+    "1. Cell 1 → run (install)\n",
+    "2. Cell 2 → run (tokens set)\n",
+    "3. Cell 3 → run (bot starts)\n",
+    "4. Telegram မှာ voice/video ပို့ပါ\n",
+    "\n",
+    "Stop: cell ■ button နှိပ်ပါ\n",
+    "Restart: Runtime → Restart runtime"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "name": "python",
+   "version": "3.11.0"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 4
 }
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-
-st.set_page_config(
-    page_title="Movie Recap AI",
-    page_icon="🎬",
-    layout="centered",
-    initial_sidebar_state="expanded"
-)
-
-# --- CSS ---
-st.markdown("""
-    <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    .stDeployButton {display:none;}
-    [data-testid="stSidebarNav"] {display: none;}
-    .stButton>button {width: 100%;}
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- Session State Initialization ---
-def init_state():
-    defaults = {
-        'audio_path': None,
-        'srt_data': None,
-        'plain_text': None,
-        'word_count': 0,
-        'processing_done': False,
-        'test_results': [],
-        'v_speed': 55,
-        'v_pitch': 50,
-        'target_min': 2,
-        'target_sec': 30,
-        'show_more_keys': False
-    }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
-    for i in range(1, 6):
-        if f'key_{i}' not in st.session_state:
-            st.session_state[f'key_{i}'] = ""
-
-# --- PERSISTENT KEY STORAGE ---
-KEYS_FILE = os.path.join(SCRIPT_DIR, "saved_keys.json")
-
-def save_keys_to_file():
-    keys_data = {f'key_{i}': st.session_state[f'key_{i}'] for i in range(1, 6) if st.session_state[f'key_{i}']}
-    try:
-        with open(KEYS_FILE, 'w') as f:
-            json.dump(keys_data, f)
-    except: pass
-
-def load_keys_from_file():
-    if os.path.exists(KEYS_FILE):
-        try:
-            with open(KEYS_FILE, 'r') as f:
-                keys_data = json.load(f)
-            for k, v in keys_data.items():
-                if k in st.session_state and not st.session_state[k]:
-                    st.session_state[k] = v
-        except: pass
-
-init_state()
-load_keys_from_file()
-
-# --- HELPER: SLIDER WITH PLUS/MINUS ---
-def plus_minus_slider(label, key, min_val, max_val, step=1):
-    st.write(f"**{label}**")
-    def on_btn(delta):
-        st.session_state[key] = int(np.clip(st.session_state[key] + delta, min_val, max_val))
-    col1, col2, col3 = st.columns([1, 4, 1])
-    with col1: st.button("➖", key=f"btn_min_{key}", on_click=on_btn, args=(-step,))
-    with col2: st.slider(label, min_val, max_val, step=step, key=key, label_visibility="collapsed")
-    with col3: st.button("➕", key=f"btn_pls_{key}", on_click=on_btn, args=(step,))
-    return st.session_state[key]
-
-# --- UTILITIES ---
-def get_dur(p):
-    try:
-        cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", p]
-        r = subprocess.run(cmd, capture_output=True, text=True)
-        return float(r.stdout.strip())
-    except: return 0
-
-def fmt_srt(s):
-    m = int((s % 1) * 1000)
-    return f"{time.strftime('%H:%M:%S', time.gmtime(s))},{m:03d}"
-
-def clean_text_for_tts(text):
-    text = re.sub(r'```srt?', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'```', '', text).strip()
-    text = re.sub(r'\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}', ' ', text)
-    text = re.sub(r'[0-9\u1040-\u1049]+', ' ', text)
-    text = re.sub(r'(?i)^(narration|recap|script|translation|speaker|intro|outro|scene):', ' ', text, flags=re.MULTILINE)
-    fillers = ["ပရိတ်သတ်ကြီးရေ", "မင်္ဂလာပါ", "ကြိုဆိုပါတယ်", "နိဒါန်း", "နိဂုံး", "ဇာတ်လမ်းအစ", "ဇာတ်လမ်းအဆုံး"]
-    for f in fillers: text = text.replace(f, " ")
-    text = re.sub(r'[။၊\.!?;:,\(\)\[\]\{\}\*]+', ' ', text)
-    return " ".join(text.split()).strip()
-
-async def gen_audio_srt(raw_text, out_p, vid, spd, ptc, target=0):
-    rate = f"+{int((spd-55)*2)}%" if spd>=55 else f"{int((spd-55)*2)}%"
-    pitch = f"+{int((ptc-50)*2)}Hz" if ptc>=50 else f"{int((ptc-50)*2)}Hz"
-    clean_narration = clean_text_for_tts(raw_text)
-    if not clean_narration: raise Exception("ဘာသာပြန်စာသား မတွေ့ရှိပါ။")
-    chunks = []
-    current_chunk = ""
-    for word in clean_narration.split():
-        if len(current_chunk) + len(word) < 150: current_chunk += word + " "
-        else:
-            chunks.append(current_chunk.strip())
-            current_chunk = word + " "
-    if current_chunk: chunks.append(current_chunk.strip())
-    temp_files = []; cur_t = 0.0; srt_blocks = []
-    for txt in chunks:
-        p = tempfile.mktemp(suffix=".mp3")
-        try:
-            communicate = edge_tts.Communicate(txt, vid, rate=rate, pitch=pitch)
-            await communicate.save(p)
-            d = get_dur(p)
-            if d > 0:
-                srt_blocks.append(f"{len(srt_blocks)+1}\n{fmt_srt(cur_t)} --> {fmt_srt(cur_t+d)}\n{txt[:30]}...\n\n")
-                temp_files.append(p); cur_t += d
-        except: continue
-    if not temp_files: raise Exception("အသံဖိုင် ထုတ်လုပ်ခြင်း မအောင်မြင်ပါ။")
-    raw_mp3 = tempfile.mktemp(suffix=".mp3")
-    l_p = tempfile.mktemp(suffix=".txt")
-    with open(l_p, "w", encoding='utf-8') as f:
-        f.write("\n".join([f"file '{os.path.abspath(p)}'" for p in temp_files]))
-    subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", l_p, "-c", "copy", raw_mp3], capture_output=True)
-    total_dur = get_dur(raw_mp3)
-    if target > 0 and total_dur > 0:
-        factor = np.clip(total_dur / target, 0.7, 2.0)
-        subprocess.run(["ffmpeg", "-y", "-i", raw_mp3, "-filter:a", f"atempo={factor}", out_p], capture_output=True)
-    else: shutil.copy(raw_mp3, out_p)
-    if os.path.exists(raw_mp3): os.remove(raw_mp3)
-    return "".join(srt_blocks), get_dur(out_p), clean_narration
-
-# --- SIDEBAR ---
-with st.sidebar:
-    st.subheader("🔑 Gemini API Keys")
-    for i in range(1, 6):
-        if i == 1 or st.session_state.show_more_keys:
-            st.session_state[f'key_{i}'] = st.text_input(f"Key {i}", type="password", value=st.session_state[f'key_{i}'])
-    if st.button("🔽 ကျန် Keys များ ဖော်ပြရန်/ဝှက်ရန်"):
-        st.session_state.show_more_keys = not st.session_state.show_more_keys
-        st.rerun()
-    st.markdown("---")
-    bulk_input = st.text_area("Key များအားလုံးကို Paste ချပါ", height=80, key="bulk_key_widget")
-    if st.button("📋 Auto-Fill Keys"):
-        if bulk_input:
-            found = list(dict.fromkeys(re.findall(r'(AIza[0-9A-Za-z-_]{30,}|AQ\.[0-9A-Za-z-_]{30,})', bulk_input)))
-            for i, k in enumerate(found[:5]): st.session_state[f'key_{i+1}'] = k
-            save_keys_to_file(); st.rerun()
-    st.markdown("---")
-    if st.button("🔌 Keys စမ်းသပ်ရန်"):
-        api_keys = [st.session_state[f'key_{i}'] for i in range(1, 6) if st.session_state[f'key_{i}'].strip()]
-        if not api_keys: st.error("API Key အရင်ထည့်ပေးပါ။")
-        else:
-            st.session_state.test_results = []
-            with st.spinner("Keys များကို စစ်ဆေးနေသည်..."):
-                for i, k in enumerate(api_keys):
-                    success = False
-                    for ver in ["v1beta", "v1"]:
-                        try:
-                            url = f"https://generativelanguage.googleapis.com/{ver}/models?key={k}"
-                            r = requests.get(url, headers=HTTP_HEADERS, timeout=20)
-                            if r.status_code == 200:
-                                st.session_state.test_results.append(f"✅ Key {i+1} အောင်မြင်ပါသည်။")
-                                success = True; break
-                        except: continue
-                    if not success: st.session_state.test_results.append(f"❌ Key {i+1} မမှန်ကန်ပါ။")
-            st.rerun()
-    if st.session_state.test_results:
-        for res in st.session_state.test_results:
-            if "✅" in res: st.success(res)
-            else: st.error(res)
-        if st.button("🗑️ ရလဒ်များ ရှင်းလင်းရန်"):
-            st.session_state.test_results = []; st.rerun()
-    st.markdown("---")
-    st.subheader("🔊 အသံ ဆက်တင်များ")
-    v_choice = st.selectbox("အသံရွေးချယ်ပါ", ["သီဟ (အမျိုးသားသံ)", "နီလာ (အမျိုးသမီးသံ)"])
-    v_id = "my-MM-ThihaNeural" if "သီဟ" in v_choice else "my-MM-NilarNeural"
-    v_speed = plus_minus_slider("အသံနှုန်း", "v_speed", 1, 100, 1)
-    v_pitch = plus_minus_slider("Pitch", "v_pitch", 1, 100, 1)
-    st.markdown("---")
-    st.subheader("⏱️ အချိန် ထိန်းချုပ်ရန်")
-    fit_dur = st.toggle("သတ်မှတ်အချိန်အတွင်း အပြီးပြောရန်", value=st.session_state.target_sec > 0)
-    target_sec = 0
-    if fit_dur:
-        tm = plus_minus_slider("မိနစ်", "target_min", 0, 60, 1)
-        ts = plus_minus_slider("စက္ကန့်", "target_sec", 0, 59, 1)
-        target_sec = (tm * 60) + ts
-
-# --- MAIN AREA ---
-st.title("🎬 Movie Recap AI")
-up = st.file_uploader("ဗီဒီယို သို့မဟုတ် အော်ဒီယိုဖိုင် ရွေးချယ်ပါ", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"])
-if up:
-    tp = os.path.join(tempfile.gettempdir(), f"input_{hash(up.name)}." + up.name.split(".")[-1])
-    with open(tp, "wb") as f: f.write(up.getbuffer())
-    api_keys = [st.session_state[f'key_{i}'] for i in range(1, 6) if st.session_state[f'key_{i}'].strip()]
-    if not api_keys: st.warning("⚠️ Sidebar တွင် API Key ထည့်ပေးပါ")
-    elif st.button("🚀 စတင်လုပ်ဆောင်ရန်"):
-        prg = st.progress(0); stt = st.empty()
-        try:
-            stt.text("📊 အဆင့် ၁: အသံဖိုင်ကို ပြင်ဆင်နေပါသည်..."); prg.progress(10)
-            ag = tempfile.mktemp(suffix=".mp3")
-            subprocess.run(["ffmpeg", "-y", "-i", tp, "-vn", "-ar", "16000", "-ac", "1", "-b:a", "32k", ag], capture_output=True)
-            
-            stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည်..."); prg.progress(30)
-            prm = "Provide a dramatic Myanmar Movie Recap. RULES: No fillers, no numbers, no labels. Output SRT format only."
-            with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
-            cont = {
-                "contents": [{"parts": [{"text": prm}, {"inline_data": {"mime_type": "audio/mpeg", "data": b64}}]}],
-                "safetySettings": SAFETY_SETTINGS
-            }
-            
-            srt_res = None
-            last_error = "ဘာသာပြန်ခြင်း မအောင်မြင်ပါ။"
-            
-            for k in api_keys:
-                for cfg in GEMINI_CONFIGS:
-                    try:
-                        url = f"https://generativelanguage.googleapis.com/{cfg['ver']}/models/{cfg['model']}:generateContent?key={k}"
-                        r = requests.post(url, json=cont, timeout=180)
-                        if r.status_code == 200:
-                            res_json = r.json()
-                            if 'candidates' in res_json and res_json['candidates']:
-                                srt_res = res_json['candidates'][0]['content']['parts'][0]['text']
-                                if srt_res: break
-                        else:
-                            last_error = f"API Error ({r.status_code}): {r.text[:100]}"
-                    except Exception as e:
-                        last_error = f"Request Error: {str(e)}"
-                        continue
-                if srt_res: break
-            
-            if not srt_res: raise Exception(last_error)
-
-            stt.text("🔊 အဆင့် ၃: အသံဖိုင် ထုတ်လုပ်နေပါသည်..."); prg.progress(60)
-            ao = os.path.join(tempfile.gettempdir(), f"audio_{int(time.time())}.mp3")
-            st.session_state.srt_data, _, st.session_state.plain_text = asyncio.run(gen_audio_srt(srt_res, ao, v_id, v_speed, v_pitch, target_sec if fit_dur else 0))
-            st.session_state.word_count = len(re.findall(r'[\u1000-\u102A\u103F\u1040-\u1049][\u102B-\u103E\u1037\u1038\u1039\u103A]*', st.session_state.plain_text))
-            st.session_state.audio_path = ao
-            prg.progress(100); stt.text("✅ ပြီးဆုံးပါပြီ!"); st.balloons(); st.session_state.processing_done = True
-        except Exception as e: st.error(f"❌ အမှား: {str(e)}")
-if st.session_state.get('processing_done'):
-    st.markdown("---")
-    if st.session_state.audio_path:
-        st.audio(st.session_state.audio_path)
-        with open(st.session_state.audio_path, "rb") as f: st.download_button("📥 MP3 ဒေါင်းလုဒ်", f, "recap.mp3", "audio/mp3")
-    st.metric("မြန်မာစာလုံးရေ", f"{st.session_state.word_count}")
-    with st.expander("📝 စာသားသက်သက် ကြည့်ရန်", expanded=True):
-        st.text_area("Plain Text", st.session_state.plain_text, height=300)
-    if st.button("🔄 ပြန်လုပ်ရန်"):
-        st.session_state.processing_done = False; st.rerun()
