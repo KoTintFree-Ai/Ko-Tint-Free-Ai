@@ -1,4 +1,3 @@
-import os
 import google.generativeai as genai
 import streamlit as st
 
@@ -68,7 +67,6 @@ if uploaded_file is not None:
                 "🔄 လုပ်ဆောင်နေပါသည်... ကျေးဇူးပြု၍ ခဏစောင့်ဆိုင်းပေးပါ။"
             )
 
-            # Session State ကို သုံးပြီး Scope Error ကင်းရှင်းစေခြင်း
             if "cur_t" not in st.session_state:
                 st.session_state["cur_t"] = 0
 
