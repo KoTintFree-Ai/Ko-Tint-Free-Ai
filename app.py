@@ -287,6 +287,7 @@ with st.sidebar:
             st.session_state.valid_keys_info = {}
             with st.spinner("စစ်ဆေးနေသည်..."):
                 for i, k in enumerate(api_keys):
+                    is_valid = False
                     for ver in API_VERSIONS:
                         try:
                             url = f"https://generativelanguage.googleapis.com/{ver}/models?key={k}"
@@ -296,12 +297,13 @@ with st.sidebar:
                                 models = [m['name'].split('/')[-1] for m in data.get('models', []) if 'generateContent' in m.get('supportedGenerationMethods', [])]
                                 st.session_state.valid_keys_info[k] = {"version": ver, "models": models}
                                 st.success(f"✅ Key {i+1} အောင်မြင်ပါတယ်")
+                                is_valid = True
                                 break
-                        except: continue
-            
-            # စာသားသေချာမြင်ရအောင် ၃ စက္ကန့် စောင့်ဆိုင်းခြင်း
-            time.sleep(3)
-            st.rerun()
+                        except: 
+                            continue
+                    
+                    if not is_valid:
+                        st.error(f"❌ Key {i+1} အလုပ်မလုပ်ပါ (Key မှားနေသည် သို့မဟုတ် Expire ဖြစ်နေပါသည်)")
 
     st.markdown("---")
     st.subheader("🎙️ အသံ ဆက်တင်များ")
