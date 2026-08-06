@@ -27,7 +27,7 @@ MYANMAR_VOICES = {
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 st.set_page_config(
-    page_title="Movie Recap AI V15 - Final",
+    page_title="Movie Recap AI V16 - Optimized",
     page_icon="🎬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -53,6 +53,8 @@ def init_state():
         st.session_state.step2_srt = None
     if 'valid_keys' not in st.session_state:
         st.session_state.valid_keys = []
+    if 'key_status' not in st.session_state:
+        st.session_state.key_status = {}
     
     for i in range(1, 6):
         if f'key_{i}' not in st.session_state:
@@ -60,7 +62,7 @@ def init_state():
 
 init_state()
 
-st.title("🎬 Movie Recap AI V15 - Final Edition")
+st.title("🎬 Movie Recap AI V16 - Optimized")
 st.markdown("ရိုးရှင်းတဲ့ အင်္ဂလိပ် ဗီဒီယို → မြန်မာစာ → အသံ → SRT → ဗီဒီယို")
 
 # --- HELPER FUNCTIONS ---
@@ -100,20 +102,32 @@ def wrap_text(text, max_width=50):
         lines.append(' '.join(current_line))
     return '\n'.join(lines)
 
-def test_api_key(key):
-    """Test a single API key"""
-    for ver in API_VERSIONS:
-        try:
-            url = f"https://generativelanguage.googleapis.com/{ver}/models?key={key}"
-            r = requests.get(url, timeout=15)
-            if r.status_code == 200:
-                data = r.json()
-                models = [m['name'].split('/')[-1] for m in data.get('models', []) 
-                         if 'generateContent' in m.get('supportedGenerationMethods', [])]
-                return {"valid": True, "version": ver, "models": models}
-        except:
-            pass
-    return {"valid": False}
+def test_api_key_detailed(key):
+    """Test a single API key with detailed error reporting"""
+    try:
+        # Try v1beta first
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+        r = requests.get(url, timeout=15)
+        
+        if r.status_code == 200:
+            data = r.json()
+            models = [m['name'].split('/')[-1] for m in data.get('models', []) 
+                     if 'generateContent' in m.get('supportedGenerationMethods', [])]
+            return {"valid": True, "version": "v1beta", "models": models, "error": None}
+        elif r.status_code == 403:
+            return {"valid": False, "error": "Forbidden (403) - API Key မမှန်ကန်သည့်နည်းလည်း ရှိနိုင်သည်"}
+        elif r.status_code == 429:
+            return {"valid": False, "error": "Rate Limited (429) - အသုံးပြုမှု ပမာဏ ကျော်လွန်သည်"}
+        elif r.status_code == 404:
+            return {"valid": False, "error": "Not Found (404) - API URL မမှန်"}
+        else:
+            return {"valid": False, "error": f"HTTP {r.status_code}: {r.text[:100]}"}
+    except requests.exceptions.Timeout:
+        return {"valid": False, "error": "Timeout - ကွန်ယက်ချိတ်ဆက်မှု နှေးနေသည်"}
+    except requests.exceptions.ConnectionError:
+        return {"valid": False, "error": "Connection Error - အင်တာနက်ချိတ်ဆက်မှု မရှိ"}
+    except Exception as e:
+        return {"valid": False, "error": f"Error: {str(e)[:100]}"}
 
 async def gen_audio_from_text(text, out_p, voice_locale, speed, pitch):
     """Generate audio from text with robust error handling"""
@@ -210,7 +224,7 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("🔑 API Keys")
     
-    k1 = st.text_input("API Key 1", type="password", key="key_1")
+    k1 = st.text_input("API Key 1", type="password", key="key_1", placeholder="sk-... သို့မဟုတ် AIza...")
     show_more = st.toggle("ကျန် Keys", value=False)
     if show_more:
         k2 = st.text_input("API Key 2", type="password", key="key_2")
@@ -230,14 +244,17 @@ with st.sidebar:
             st.error("API Key ထည့်ပေးပါ")
         else:
             st.session_state.valid_keys = []
+            st.session_state.key_status = {}
             with st.spinner("စစ်ဆေးနေ..."):
                 for i, k in enumerate(api_keys):
-                    result = test_api_key(k)
+                    result = test_api_key_detailed(k)
+                    st.session_state.key_status[k] = result
+                    
                     if result["valid"]:
                         st.session_state.valid_keys.append(k)
                         st.success(f"✅ Key {i+1} အောင်မြင်")
                     else:
-                        st.error(f"❌ Key {i+1} မမှန်ကန်")
+                        st.error(f"❌ Key {i+1}: {result['error']}")
             
             if st.session_state.valid_keys:
                 st.info(f"✅ စုစုပေါင်း {len(st.session_state.valid_keys)} Key အောင်မြင်")
@@ -266,7 +283,7 @@ with tab1:
     up1 = st.file_uploader("ဗီဒီယို/အော်ဒီယို", type=["mp4", "mov", "avi", "mp3", "wav", "m4a"], key="up1")
     
     if up1 and not st.session_state.valid_keys:
-        st.error("⚠️ အရင် API Key ကို စမ်းသပ်ပါ")
+        st.error("⚠️ အရင် Sidebar မှာ API Key ကို စမ်းသပ်ပါ")
     elif up1 and st.button("🚀 Step 1 စတင်"):
         fid = up1.name + str(up1.size)
         tp = os.path.join(tempfile.gettempdir(), f"input_{fid}." + up1.name.split(".")[-1])
@@ -292,16 +309,7 @@ with tab1:
             stt.text("⏳ Gemini ဖြင့် ဘာသာပြန်နေ...")
             prg.progress(50)
             
-            prm = """ဒီ အော်ဒီယိုကို နားထောင်ပြီး မြန်မာစာသားအဖြစ် ဘာသာပြန်ပါ။
-
-လိုအပ်ချက်များ:
-1. ရိုးရှင်းတဲ့ မြန်မာစာသားသီးသန့် ပဲ ရေးပါ
-2. အချိန်/timestamps တွေ မထည့်ပါ
-3. နိဒါန်း၊ နှုတ်ဆက်တာ၊ အပိုစာသားတွေ လုံးဝ မထည့်ပါ
-4. ဇာတ်လမ်းကိုပဲ တိုက်ရိုက် ဘာသာပြန်ပါ
-5. စာကြောင်းတွေကို Myanmar sentence marker (။) ဖြင့် ခွဲပါ
-
-ရလာဒ်: မြန်မာစာသားသီးသန့်"""
+            prm = """ဒီ အော်ဒီယိုကို နားထောင်ပြီး မြန်မာစာသားအဖြစ် ဘာသာပြန်ပါ။ ရိုးရှင်းတဲ့ မြန်မာစာသားသီးသန့် ပဲ ရေးပါ။ အချိန်/timestamps တွေ၊ နိဒါန်း၊ နှုတ်ဆက်တာ၊ အပိုစာသားတွေ လုံးဝ မထည့်ပါ။ ဇာတ်လမ်းကိုပဲ တိုက်ရိုက် ဘာသာပြန်ပါ။ စာကြောင်းတွေကို Myanmar sentence marker (။) ဖြင့် ခွဲပါ။"""
             
             with open(ag, 'rb') as f:
                 b64 = base64.b64encode(f.read()).decode()
@@ -482,4 +490,4 @@ with tab4:
             st.error(f"❌ အမှား: {str(e)}")
 
 st.markdown("---")
-st.markdown("🎬 **Movie Recap AI V15** - Final Edition | သီဟ/နီလာ | Powered by Gemini")
+st.markdown("🎬 **Movie Recap AI V16** - Optimized | သီဟ/နီလာ | Powered by Gemini")
