@@ -1,40 +1,7 @@
-import streamlit as st
-import os
-import base64
-import time
-import tempfile
-import requests
-import asyncio
-import edge_tts
-import subprocess
-import re
-import json
-import shutil
-import numpy as np
-
-# --- CONFIGURATION ---
-API_VERSIONS = ["v1beta", "v1"]
-DEFAULT_MODELS = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", "gemini-pro"]
-
-# Advanced Networking: Force IPv4 for better stability on Streamlit Cloud
-import socket
-orig_getaddrinfo = socket.getaddrinfo
-def filtered_getaddrinfo(*args, **kwargs):
-    res = orig_getaddrinfo(*args, **kwargs)
-    return [r for r in res if r[0] == socket.AF_INET]
-socket.getaddrinfo = filtered_getaddrinfo
-
-# Standard Headers
-HTTP_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "application/json",
-}
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-
-st.set_page_config(
-    page_title="Movie Recap AI",
-    page_icon="🎬",
+File "/mount/src/ko-tint-free-ai/app.py", line 279
+  )
+  ^
+SyntaxError: unmatched ')'    page_icon="🎬",
     layout="centered",
     initial_sidebar_state="expanded"
 )
