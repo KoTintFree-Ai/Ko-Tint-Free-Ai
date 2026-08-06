@@ -14,6 +14,7 @@ import numpy as np
 
 # --- CONFIGURATION ---
 API_VERSIONS = ["v1beta", "v1"]
+GEMINI_MODELS = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
 
 # Advanced Networking: Force IPv4 for better stability on Streamlit Cloud
 import socket
@@ -118,6 +119,7 @@ def fmt_srt(s):
     return f"{time.strftime('%H:%M:%S', time.gmtime(s))},{m:03d}"
 
 def clean_text_for_tts(text):
+    """Aggressively clean text to remove ALL numbers and fillers."""
     text = re.sub(r'```srt?', '', text, flags=re.IGNORECASE)
     text = re.sub(r'```', '', text).strip()
     text = re.sub(r'\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}', ' ', text)
@@ -236,19 +238,36 @@ if up:
             stt.text("📊 အဆင့် ၁: အသံဖိုင်ကို ပြင်ဆင်နေပါသည်..."); prg.progress(10)
             ag = tempfile.mktemp(suffix=".mp3")
             subprocess.run(["ffmpeg", "-y", "-i", tp, "-vn", "-ar", "16000", "-ac", "1", "-b:a", "32k", ag], capture_output=True)
+            
             stt.text("⏳ အဆင့် ၂: ဘာသာပြန်နေပါသည်..."); prg.progress(30)
             prm = "Provide a dramatic Myanmar Movie Recap. RULES: No fillers, no numbers, no labels. Output SRT format only."
             with open(ag, 'rb') as f: b64 = base64.b64encode(f.read()).decode()
-            cont = [{"role":"user","parts":[{"text":prm},{"inline_data":{"mime_type":"audio/mpeg","data":b64}}]}]
+            cont = {"contents": [{"parts": [{"text": prm}, {"inline_data": {"mime_type": "audio/mpeg", "data": b64}}]}]}
+            
             srt_res = None
+            error_msg = "ဘာသာပြန်ခြင်း မအောင်မြင်ပါ။"
+            
             for k in api_keys:
-                try:
-                    r = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={k}", json={"contents":cont}, timeout=180)
-                    if r.status_code == 200:
-                        srt_res = r.json()['candidates'][0]['content']['parts'][0]['text']
-                        if srt_res: break
-                except: continue
-            if not srt_res: raise Exception("ဘာသာပြန်ခြင်း မအောင်မြင်ပါ။")
+                for model in GEMINI_MODELS:
+                    for ver in API_VERSIONS:
+                        try:
+                            url = f"https://generativelanguage.googleapis.com/{ver}/models/{model}:generateContent?key={k}"
+                            r = requests.post(url, json=cont, timeout=180)
+                            if r.status_code == 200:
+                                res_json = r.json()
+                                if 'candidates' in res_json and res_json['candidates']:
+                                    srt_res = res_json['candidates'][0]['content']['parts'][0]['text']
+                                    if srt_res: break
+                            else:
+                                error_msg = f"API Error ({r.status_code}): {r.text[:100]}"
+                        except Exception as e:
+                            error_msg = f"Request Error: {str(e)}"
+                            continue
+                    if srt_res: break
+                if srt_res: break
+            
+            if not srt_res: raise Exception(error_msg)
+
             stt.text("🔊 အဆင့် ၃: အသံဖိုင် ထုတ်လုပ်နေပါသည်..."); prg.progress(60)
             ao = os.path.join(tempfile.gettempdir(), f"audio_{int(time.time())}.mp3")
             st.session_state.srt_data, _, st.session_state.plain_text = asyncio.run(gen_audio_srt(srt_res, ao, v_id, v_speed, v_pitch, target_sec if fit_dur else 0))
