@@ -13,8 +13,15 @@ import shutil
 import numpy as np
 
 # --- CONFIGURATION ---
-API_VERSIONS = ["v1beta", "v1"]
-GEMINI_MODELS = ["gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
+# Improved Model-Version Mapping to avoid 404 errors
+GEMINI_CONFIGS = [
+    {"model": "gemini-1.5-flash", "ver": "v1beta"},
+    {"model": "gemini-1.5-flash", "ver": "v1"},
+    {"model": "gemini-1.5-flash-8b", "ver": "v1beta"},
+    {"model": "gemini-1.5-pro", "ver": "v1beta"},
+    {"model": "gemini-2.0-flash-exp", "ver": "v1beta"},
+    {"model": "gemini-pro", "ver": "v1"}
+]
 
 # Advanced Networking: Force IPv4 for better stability on Streamlit Cloud
 import socket
@@ -119,7 +126,6 @@ def fmt_srt(s):
     return f"{time.strftime('%H:%M:%S', time.gmtime(s))},{m:03d}"
 
 def clean_text_for_tts(text):
-    """Aggressively clean text to remove ALL numbers and fillers."""
     text = re.sub(r'```srt?', '', text, flags=re.IGNORECASE)
     text = re.sub(r'```', '', text).strip()
     text = re.sub(r'\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{1,2}:\d{1,2}[,.]\d{1,3}', ' ', text)
@@ -193,7 +199,7 @@ with st.sidebar:
             with st.spinner("Keys များကို စစ်ဆေးနေသည်..."):
                 for i, k in enumerate(api_keys):
                     success = False
-                    for ver in API_VERSIONS:
+                    for ver in ["v1beta", "v1"]:
                         try:
                             url = f"https://generativelanguage.googleapis.com/{ver}/models?key={k}"
                             r = requests.get(url, headers=HTTP_HEADERS, timeout=20)
@@ -245,28 +251,26 @@ if up:
             cont = {"contents": [{"parts": [{"text": prm}, {"inline_data": {"mime_type": "audio/mpeg", "data": b64}}]}]}
             
             srt_res = None
-            error_msg = "ဘာသာပြန်ခြင်း မအောင်မြင်ပါ။"
+            last_error = "ဘာသာပြန်ခြင်း မအောင်မြင်ပါ။"
             
             for k in api_keys:
-                for model in GEMINI_MODELS:
-                    for ver in API_VERSIONS:
-                        try:
-                            url = f"https://generativelanguage.googleapis.com/{ver}/models/{model}:generateContent?key={k}"
-                            r = requests.post(url, json=cont, timeout=180)
-                            if r.status_code == 200:
-                                res_json = r.json()
-                                if 'candidates' in res_json and res_json['candidates']:
-                                    srt_res = res_json['candidates'][0]['content']['parts'][0]['text']
-                                    if srt_res: break
-                            else:
-                                error_msg = f"API Error ({r.status_code}): {r.text[:100]}"
-                        except Exception as e:
-                            error_msg = f"Request Error: {str(e)}"
-                            continue
-                    if srt_res: break
+                for cfg in GEMINI_CONFIGS:
+                    try:
+                        url = f"https://generativelanguage.googleapis.com/{cfg['ver']}/models/{cfg['model']}:generateContent?key={k}"
+                        r = requests.post(url, json=cont, timeout=180)
+                        if r.status_code == 200:
+                            res_json = r.json()
+                            if 'candidates' in res_json and res_json['candidates']:
+                                srt_res = res_json['candidates'][0]['content']['parts'][0]['text']
+                                if srt_res: break
+                        else:
+                            last_error = f"API Error ({r.status_code}): {r.text[:100]}"
+                    except Exception as e:
+                        last_error = f"Request Error: {str(e)}"
+                        continue
                 if srt_res: break
             
-            if not srt_res: raise Exception(error_msg)
+            if not srt_res: raise Exception(last_error)
 
             stt.text("🔊 အဆင့် ၃: အသံဖိုင် ထုတ်လုပ်နေပါသည်..."); prg.progress(60)
             ao = os.path.join(tempfile.gettempdir(), f"audio_{int(time.time())}.mp3")
