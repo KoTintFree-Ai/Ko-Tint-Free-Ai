@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import re
 import shutil
@@ -16,6 +17,11 @@ except Exception:
     psutil = None
 
 import engine
+
+try:
+    from streamlit_local_storage import LocalStorage
+except Exception:
+    LocalStorage = None
 
 APP_ROOT = Path(__file__).resolve().parent
 WORK_ROOT = APP_ROOT / "streamlit_jobs"
@@ -39,6 +45,8 @@ SESSION_ROOT.mkdir(parents=True, exist_ok=True)
 TEMP_ROOT = SESSION_ROOT / "temp"
 TEMP_ROOT.mkdir(parents=True, exist_ok=True)
 USER_ID = f"streamlit_{SESSION_ID}"
+LOCAL_STORAGE = LocalStorage() if LocalStorage is not None else None
+PREFERENCES_STORAGE_KEY = "ko_tint_free_ai_preferences_v1"
 
 TEXT = {
     "မြန်မာ": {
@@ -163,8 +171,6 @@ if "ui_lang" not in st.session_state:
     st.session_state.ui_lang = "မြန်မာ"
 if "theme" not in st.session_state:
     st.session_state.theme = "dark"
-T = TEXT[st.session_state.ui_lang]
-
 # Keep video preferences for this browser session. Each user gets a separate
 # Streamlit session_state, so these values do not leak between users.
 _REMEMBERED_DEFAULTS = {
@@ -187,6 +193,42 @@ _REMEMBERED_DEFAULTS = {
 for _pref_key, _pref_value in _REMEMBERED_DEFAULTS.items():
     if _pref_key not in st.session_state and _pref_value is not None:
         st.session_state[_pref_key] = _pref_value
+
+# Browser-local storage survives a tab close and is isolated per browser profile.
+# Only UI preferences are stored; API keys and uploaded media are never stored.
+PREFERENCE_KEYS = tuple(_REMEMBERED_DEFAULTS.keys()) + (
+    "ui_lang", "theme", "sub_y_percent", "sub_font_size", "blur_y_percent",
+    "blur_strength", "blur_height", "blur_width", "title_size", "title_width",
+)
+if LOCAL_STORAGE is not None and not st.session_state.get("_preferences_loaded", False):
+    try:
+        _stored_pref = LOCAL_STORAGE.getItem(PREFERENCES_STORAGE_KEY, key="_stored_preferences_read")
+        if _stored_pref is None:
+            _stored_pref = st.session_state.get("_stored_preferences_read")
+        if isinstance(_stored_pref, str):
+            _stored_pref = json.loads(_stored_pref)
+        if isinstance(_stored_pref, dict):
+            for _pref_key in PREFERENCE_KEYS:
+                if _pref_key in _stored_pref and _stored_pref[_pref_key] is not None:
+                    st.session_state[_pref_key] = _stored_pref[_pref_key]
+        st.session_state["_preferences_loaded"] = True
+    except Exception:
+        # The app remains usable if the optional browser component is blocked.
+        st.session_state["_preferences_loaded"] = True
+
+
+T = TEXT[st.session_state.ui_lang]
+
+
+def _save_preferences():
+    if LOCAL_STORAGE is None:
+        return
+    _payload = {key: st.session_state.get(key) for key in PREFERENCE_KEYS if key in st.session_state}
+    try:
+        LOCAL_STORAGE.setItem(PREFERENCES_STORAGE_KEY, json.dumps(_payload, ensure_ascii=False))
+    except Exception:
+        pass
+
 
 bg = "#0f172a" if st.session_state.theme == "dark" else "#f8fafc"
 fg = "#f8fafc" if st.session_state.theme == "dark" else "#0f172a"
@@ -362,6 +404,8 @@ with st.sidebar:
         else:
             st.error(f"{T['validation_failed']}: Gemini={'OK' if gemini_ok else 'FAIL'}, Groq={'OK' if groq_ok else 'FAIL'}")
 
+_save_preferences()
+
 if "result_path" not in st.session_state:
     st.session_state.result_path = None
 if "last_job" not in st.session_state:
@@ -376,12 +420,18 @@ with col1:
     if uploaded is not None:
         upload_sig = (uploaded.name, int(getattr(uploaded, "size", 0)))
         if st.session_state.get("uploaded_sig") != upload_sig:
+            upload_suffix = Path(uploaded.name).suffix or ".mp4"
+            upload_path = SESSION_ROOT / f"uploaded_source{upload_suffix}"
+            with open(upload_path, "wb") as upload_handle:
+                upload_handle.write(uploaded.getbuffer())
             st.session_state.uploaded_name = uploaded.name
-            st.session_state.uploaded_bytes = uploaded.getvalue()
+            st.session_state.uploaded_path = str(upload_path)
             st.session_state.uploaded_sig = upload_sig
             st.session_state.preview_frame_sig = None
-    persisted_upload = bool(st.session_state.get("uploaded_bytes"))
-    persisted_upload_name = st.session_state.get("uploaded_name", "source.mp4")
+            st.session_state.pop("uploaded_bytes", None)
+    persisted_upload_path = Path(st.session_state.get("uploaded_path", ""))
+    persisted_upload = persisted_upload_path.exists()
+    persisted_upload_name = st.session_state.get("uploaded_name", persisted_upload_path.name or "source.mp4")
 with col2:
     st.subheader(T["workflow"])
     st.markdown(T["workflow_text"])
@@ -423,7 +473,7 @@ if persisted_upload:
         preview_overlay = SESSION_ROOT / "calibration_overlay.png"
         try:
             if not preview_input.exists() or st.session_state.get("preview_source_sig") != st.session_state.get("uploaded_sig"):
-                preview_input.write_bytes(st.session_state.uploaded_bytes)
+                shutil.copyfile(persisted_upload_path, preview_input)
                 st.session_state.preview_source_sig = st.session_state.get("uploaded_sig")
             dim_w, dim_h = engine.get_video_dimensions(_platform_code(platform_label), _resolution_code(resolution_label))
             frame_sig = (st.session_state.get("uploaded_sig"), dim_w, dim_h)
@@ -524,7 +574,7 @@ if start:
         if logo_file:
             (TEMP_ROOT / f"logo_{USER_ID}.png").write_bytes(logo_file.getbuffer())
         if persisted_upload:
-            input_path.write_bytes(st.session_state.uploaded_bytes)
+            shutil.copyfile(persisted_upload_path, input_path)
         else:
             status_box.info("⬇️ Downloading source video...")
             engine.download_youtube_video(youtube_url.strip(), str(input_path))
