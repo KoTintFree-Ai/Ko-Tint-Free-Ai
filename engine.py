@@ -168,10 +168,13 @@ SUB_COLOR_CHOICES = [("yellow", "အဝါရောင်"), ("white", "အဖ�
 # =====================================================================
 def get_blur_mask_filter(current_video_label="[0:v]", y_position_percent=82, border_thick=0, blur_strength=5):
     # Keep the blur band inside the frame and use even dimensions for FFmpeg filters.
-    y_position_percent = max(0.0, min(float(y_position_percent), 88.0))
+    # Use a wider band so subtitles are fully covered, while keeping the crop
+    # inside the frame even near the bottom edge.
+    band_percent = 18.0
+    y_position_percent = max(0.0, min(float(y_position_percent), 100.0 - band_percent))
     blur_strength = max(1, min(int(blur_strength), 20))
     crop_y = f"trunc(ih*({y_position_percent}/100.0)/2)*2"
-    band_h = "trunc(ih*0.12/2)*2"
+    band_h = f"trunc(ih*{band_percent/100.0}/2)*2"
     # The overlay Y coordinate is relative to the full original frame. Using
     # the blurred crop height (H) here kept the mask near the same position.
     overlay_y = f"main_h*({y_position_percent}/100.0)"
@@ -443,7 +446,7 @@ def extract_preview_frame(video_path, out_path, dim_w, dim_h, percent=0.3):
 def render_calibration_preview(frame_path, out_path, blur_y, sub_y, blur_on, sub_font_size=36):
     parts = []
     if blur_on:
-        parts.append(f"drawbox=x=0:y=ih*({blur_y}/100.0):w=iw:h=ih*0.12:color=white@0.55:t=fill")
+        parts.append(f"drawbox=x=0:y=ih*({blur_y}/100.0):w=iw:h=ih*0.18:color=white@0.55:t=fill")
     # Show a subtitle-like sample instead of a large red guide rectangle.
     preview_size = max(18, min(int(sub_font_size), 96))
     parts.append(
@@ -778,7 +781,7 @@ def process_single_chunk(args):
 # =====================================================================
 # ADVANCED SYNC PIPELINE (EMBEDS TB AS INTRO COVER)
 # =====================================================================
-async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_video, output_video_path, voice_config, user_speed_val, user_id, progress_cb=None):
+async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_video, output_video_path, voice_config, user_speed_val, user_id, progress_cb=None, background_music_path=None, background_music_volume=0.0):
     clean_groq_key = str(groq_key).strip()
     gemini_pool = GeminiKeyPool(gemini_keys_str)
     total_video_duration = get_media_duration(input_video)
@@ -1093,27 +1096,19 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
     
     os.replace(final_merged, output_video_path)
 
-    # 📌 Background Music Mixing (BGM)
-    bgm_file = None
-    for f in os.listdir('.'):
-        if f.endswith('.mp3') and not f.startswith('temp/') and 'bgm' in f.lower():
-            bgm_file = f
-            break
-    if not bgm_file:
-        for f in os.listdir('.'):
-            if f.endswith('.mp3') and not f.startswith('temp/'):
-                bgm_file = f
-                break
-
-    if bgm_file and os.path.exists(bgm_file):
+    # 📌 Optional Background Music Mixing (BGM)
+    # The web UI passes an explicit uploaded path; never scan the working
+    # directory because that could accidentally mix the source/voice audio.
+    if background_music_path and os.path.exists(background_music_path) and float(background_music_volume) > 0:
         bgm_mixed = f"temp/bgm_mixed_{int(time.time())}.mp4"
+        volume = max(0.0, min(float(background_music_volume), 1.0))
         cmd_bgm = [
             'ffmpeg', '-y', '-i', output_video_path,
-            '-stream_loop', '-1', '-i', bgm_file,
-            '-filter_complex', '[1:a]volume=0.15[bgm];[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[a]',
+            '-stream_loop', '-1', '-i', background_music_path,
+            '-filter_complex', f'[1:a]volume={volume:.3f}[bgm];[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[a]',
             '-map', '0:v', '-map', '[a]',
             '-c:v', 'copy', '-c:a', 'aac', '-ar', '44100', '-ac', '2',
-            bgm_mixed
+            '-shortest', bgm_mixed
         ]
         try:
             run_ffmpeg(cmd_bgm, "mix_background_music")
