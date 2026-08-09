@@ -161,6 +161,8 @@ def _nudge_state(key, delta, lower, upper):
 
 
 def _nudge_slider(label, key, lower, upper, default, step=1):
+    # Keep the value in a non-widget session key. Streamlit forbids changing
+    # st.session_state[key] after that same key has been claimed by a slider.
     if key not in st.session_state:
         st.session_state[key] = default
     st.write(label)
@@ -170,7 +172,11 @@ def _nudge_slider(label, key, lower, upper, default, step=1):
             _nudge_state(key, -step, lower, upper)
             st.rerun()
     with middle:
-        value = st.slider("", lower, upper, step=step, key=key, label_visibility="collapsed")
+        value = st.slider(
+            "", lower, upper, value=int(st.session_state[key]), step=step,
+            key=f"{key}_widget", label_visibility="collapsed"
+        )
+        st.session_state[key] = value
     with right:
         if st.button("+", key=f"{key}_plus", help=T["plus"], use_container_width=True):
             _nudge_state(key, step, lower, upper)
@@ -248,7 +254,7 @@ with st.sidebar:
         title_enabled = st.toggle(T["title"], value=True)
         bypass_enabled = st.toggle(T["bypass"], value=False)
         font_files = getattr(engine, "AVAILABLE_FONTS", [])
-        font_labels = [f"{idx + 1}. {Path(path).stem}" for idx, path in enumerate(font_files)]
+        font_labels = [str(idx + 1) for idx, _ in enumerate(font_files)]
         font_choice = st.selectbox(T["font"], font_labels or ["Default"])
         wm_text = st.text_input(T["wm_text"], value="JOKER", max_chars=80)
         wm_pos_labels = {"bounce": "🔁 Bounce", "topleft": "↖️ Top left", "topright": "↗️ Top right", "bottom": "⬇️ Bottom center"}
@@ -356,7 +362,7 @@ async def _run_pipeline(input_video: str, audio_path: str, output_path: str, sta
     engine.user_wm_text[USER_ID] = wm_text or "JOKER"
     engine.user_wm_pos[USER_ID] = wm_pos
     if font_files and font_choice != "Default":
-        selected_index = int(font_choice.split(".", 1)[0]) - 1
+        selected_index = int(font_choice) - 1
         engine.user_font[USER_ID] = font_files[max(0, min(selected_index, len(font_files) - 1))]
     await engine.advanced_sync_pipeline(
         audio_path=audio_path,
