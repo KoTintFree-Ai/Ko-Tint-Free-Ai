@@ -155,31 +155,36 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-def _change_slider_value(key, delta, lower, upper):
-    current = int(st.session_state.get(key, lower))
-    st.session_state[key] = max(lower, min(upper, current + delta))
+def _request_slider_change(pending_key, delta):
+    # Store only a request in the callback. The actual slider widget value is
+    # applied at the start of the next script pass, before the widget exists.
+    st.session_state[pending_key] = delta
 
 
 def _nudge_slider(label, key, lower, upper, default, step=1):
-    # The callbacks run before the next script pass, which is the safe way to
-    # change a value that is also owned by a Streamlit slider widget.
-    if key not in st.session_state:
-        st.session_state[key] = default
+    widget_key = f"{key}_widget"
+    pending_key = f"{key}_pending"
+    if widget_key not in st.session_state:
+        st.session_state[widget_key] = default
+    if pending_key in st.session_state:
+        current = int(st.session_state[widget_key])
+        delta = int(st.session_state.pop(pending_key))
+        st.session_state[widget_key] = max(lower, min(upper, current + delta))
     st.write(label)
     left, middle, right = st.columns([0.18, 0.64, 0.18])
-    with middle:
-        st.slider("", lower, upper, step=step, key=key, label_visibility="collapsed")
     with left:
         st.button(
             "−", key=f"{key}_minus", help=T["minus"], use_container_width=True,
-            on_click=_change_slider_value, args=(key, -step, lower, upper)
+            on_click=_request_slider_change, args=(pending_key, -step)
         )
+    with middle:
+        st.slider("", lower, upper, step=step, key=widget_key, label_visibility="collapsed")
     with right:
         st.button(
             "+", key=f"{key}_plus", help=T["plus"], use_container_width=True,
-            on_click=_change_slider_value, args=(key, step, lower, upper)
+            on_click=_request_slider_change, args=(pending_key, step)
         )
-    return int(st.session_state[key])
+    return int(st.session_state[widget_key])
 
 
 def _named_color(value):
@@ -192,6 +197,7 @@ def _named_color(value):
     }.get(value, value)
 
 
+@st.cache_data(ttl=30, show_spinner=False)
 def _measure_network_speed():
     started = time.perf_counter()
     try:
