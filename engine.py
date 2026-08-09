@@ -74,6 +74,12 @@ user_queue_active = {}
 
 os.makedirs("temp", exist_ok=True)
 
+def ensure_work_dir(work_dir=None):
+    """Return an isolated absolute work directory for one Streamlit session/job."""
+    path = os.path.abspath(work_dir or "temp")
+    os.makedirs(path, exist_ok=True)
+    return path
+
 # =====================================================================
 # 🔤 CUSTOM FONT DETECTION & REGISTRATION
 # =====================================================================
@@ -479,9 +485,10 @@ def render_calibration_preview(frame_path, out_path, blur_y, sub_y, blur_on, sub
 # =====================================================================
 # 🖼️ TB THUMBNAIL GENERATOR (MODERN PREMIUM CARD STYLE)
 # =====================================================================
-def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920):
-    bg_path = f"temp/tb_bg_{int(time.time())}.jpg"
-    insert_path = f"temp/tb_in_{int(time.time())}.jpg"
+def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920, work_dir=None):
+    work_dir = ensure_work_dir(work_dir)
+    bg_path = os.path.join(work_dir, f"tb_bg_{int(time.time() * 1000)}.jpg")
+    insert_path = os.path.join(work_dir, f"tb_in_{int(time.time() * 1000)}.jpg")
     
     # နောက်ခံအတွက် ဗီဒီယိုအစောပိုင်းမှ ပုံထုတ်မည်
     extract_preview_frame(video_path, bg_path, w, h, percent=0.2)
@@ -746,8 +753,9 @@ def _parse_rate_percent(rate_str):
 # CHUNK PROCESSING 
 # =====================================================================
 def process_single_chunk(args):
-    idx, start_time, end_time, input_video, chunk_audio_path, is_speech, text, p_form, p_res, bypass_enabled = args
-    chunk_video_path = f"temp/chunk_vid_{idx}_{int(time.time())}.mp4"
+    idx, start_time, end_time, input_video, chunk_audio_path, is_speech, text, p_form, p_res, bypass_enabled, work_dir = args
+    work_dir = ensure_work_dir(work_dir)
+    chunk_video_path = os.path.join(work_dir, f"chunk_vid_{idx}_{int(time.time() * 1000)}.mp4")
     try:
         audio_dur = get_media_duration(chunk_audio_path)
         vid_dur = max(end_time - start_time, 0.1)
@@ -800,7 +808,8 @@ def process_single_chunk(args):
 # =====================================================================
 # ADVANCED SYNC PIPELINE (EMBEDS TB AS INTRO COVER)
 # =====================================================================
-async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_video, output_video_path, voice_config, user_speed_val, user_id, progress_cb=None, background_music_path=None, background_music_volume=0.0):
+async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_video, output_video_path, voice_config, user_speed_val, user_id, progress_cb=None, background_music_path=None, background_music_volume=0.0, work_dir=None):
+    work_dir = ensure_work_dir(work_dir)
     clean_groq_key = str(groq_key).strip()
     gemini_pool = GeminiKeyPool(gemini_keys_str)
     total_video_duration = get_media_duration(input_video)
@@ -908,7 +917,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
     selected_rate = voice_config.get("rate", "+15%")
 
     async def generate_audio_chunk(idx, seg):
-        path = f"temp/chunk_audio_{idx}_{int(time.time())}.mp3"
+        path = os.path.join(work_dir, f"chunk_audio_{idx}_{int(time.time() * 1000)}.mp3")
         expected_duration = seg["end"] - seg["start"]
 
         if not seg["is_speech"] or idx not in translated_dict or not translated_dict[idx].strip():
@@ -949,7 +958,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
     for idx, seg in enumerate(timeline_data):
         if idx in audio_files_map:
             translated_text = translated_dict.get(idx, "")
-            ffmpeg_args.append((idx, float(seg["start"]), float(seg["end"]), input_video, audio_files_map[idx], seg["is_speech"], translated_text, p_form, p_res, bypass_enabled))
+            ffmpeg_args.append((idx, float(seg["start"]), float(seg["end"]), input_video, audio_files_map[idx], seg["is_speech"], translated_text, p_form, p_res, bypass_enabled, work_dir))
 
     with ThreadPoolExecutor(max_workers=min(os.cpu_count() or 4, 8)) as executor:
         chunk_results = list(executor.map(process_single_chunk, ffmpeg_args))
@@ -959,11 +968,11 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
 
     if not ffmpeg_inputs: raise Exception("ဗီဒီယို Timeline ချိန်ညှိမှု မအောင်မြင်ပါ။")
 
-    concat_list_path = f"temp/list_{int(time.time())}.txt"
+    concat_list_path = os.path.join(work_dir, f"list_{int(time.time() * 1000)}.txt")
     with open(concat_list_path, "w", encoding="utf-8") as f_list:
         for vid in ffmpeg_inputs: f_list.write(f"file '{os.path.abspath(vid)}'\n")
 
-    merge_temp = f"temp/merge_temp_{int(time.time())}.mp4"
+    merge_temp = os.path.join(work_dir, f"merge_temp_{int(time.time() * 1000)}.mp4")
     run_ffmpeg(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', concat_list_path, '-c', 'copy', merge_temp], label="concat_merge")
 
     dim_w, dim_h = get_video_dimensions(p_form, p_res)
@@ -983,7 +992,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
     sub_y_percent = user_sub_y.get(user_id, 82)
     sub_font_size = user_sub_size.get(user_id, 35)
     sub_color = user_sub_color.get(user_id, "yellow")
-    job_dir = f"temp/subjob_{user_id}_{int(time.time())}"
+    job_dir = os.path.join(work_dir, f"subjob_{user_id}_{int(time.time() * 1000)}")
     os.makedirs(job_dir, exist_ok=True)
     subs_concat_path = None
     if sub_segments:
@@ -1022,8 +1031,8 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
     elif wm_pos == "bottom": wm_filter = f"drawtext=text='{wm_text}':fontcolor=white@0.8:fontsize=36:x=(w-tw)/2:y=h-th-20:box=1:boxcolor=black@0.4:boxborderw=5"
     else: wm_filter = f"drawtext=text='{wm_text}':fontcolor=white@0.4:fontsize=36:x='20+(w-tw-40)*(0.5+0.5*sin(t/2.5))':y='20+(h-th-40)*(0.5+0.5*cos(t/3.5))':box=1:boxcolor=black@0.15:boxborderw=5"
 
-    watermarked_temp = f"temp/watermarked_{int(time.time())}.mp4"
-    user_logo_path = f"temp/logo_{user_id}.png"
+    watermarked_temp = os.path.join(work_dir, f"watermarked_{int(time.time() * 1000)}.mp4")
+    user_logo_path = os.path.join(work_dir, f"logo_{user_id}.png")
 
     inputs = ['-i', merge_temp]
     next_input_idx = 1
@@ -1094,11 +1103,11 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
     if progress_cb:
         await progress_cb("🎵 အဆင့် ၇/၇ — Thumbnail နှင့် background music ထည့်ပြီး အပြီးသတ်နေပါသည်...")
     # 📌 TB Thumbnail ကိုဖန်တီးပြီး Video အစမှာ Cover အဖြစ် တွဲထည့်ခြင်း
-    tb_img_path = f"temp/tb_embed_{int(time.time())}.jpg"
-    create_thumbnail(input_video, story_title, tb_img_path, font_fam=selected_font_fam, w=dim_w, h=dim_h)
+    tb_img_path = os.path.join(work_dir, f"tb_embed_{int(time.time() * 1000)}.jpg")
+    create_thumbnail(input_video, story_title, tb_img_path, font_fam=selected_font_fam, w=dim_w, h=dim_h, work_dir=work_dir)
     
-    tb_vid = f"temp/tb_vid_{int(time.time())}.mp4"
-    tb_audio = f"temp/tb_audio_{int(time.time())}.mp3"
+    tb_vid = os.path.join(work_dir, f"tb_vid_{int(time.time() * 1000)}.mp4")
+    tb_audio = os.path.join(work_dir, f"tb_audio_{int(time.time() * 1000)}.mp3")
     create_silent_audio(1.0, tb_audio)
     
     cmd_tb = [
@@ -1110,12 +1119,12 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
     ]
     run_ffmpeg(cmd_tb, "create_tb_vid")
     
-    concat_txt = f"temp/final_concat_{int(time.time())}.txt"
+    concat_txt = os.path.join(work_dir, f"final_concat_{int(time.time() * 1000)}.txt")
     with open(concat_txt, "w", encoding="utf-8") as f:
         f.write(f"file '{os.path.abspath(tb_vid)}'\n") 
         f.write(f"file '{os.path.abspath(output_video_path)}'\n")
         
-    final_merged = f"temp/final_merged_{int(time.time())}.mp4"
+    final_merged = os.path.join(work_dir, f"final_merged_{int(time.time() * 1000)}.mp4")
     run_ffmpeg(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', concat_txt, '-c', 'copy', final_merged], "final_tb_concat")
     
     os.replace(final_merged, output_video_path)
@@ -1124,7 +1133,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
     # The web UI passes an explicit uploaded path; never scan the working
     # directory because that could accidentally mix the source/voice audio.
     if background_music_path and os.path.exists(background_music_path) and float(background_music_volume) > 0:
-        bgm_mixed = f"temp/bgm_mixed_{int(time.time())}.mp4"
+        bgm_mixed = os.path.join(work_dir, f"bgm_mixed_{int(time.time() * 1000)}.mp4")
         volume = max(0.0, min(float(background_music_volume), 1.0))
         cmd_bgm = [
             'ffmpeg', '-y', '-i', output_video_path,
