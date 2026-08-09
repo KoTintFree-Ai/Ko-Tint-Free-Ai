@@ -49,8 +49,10 @@ user_platform = {}
 user_res = {}            
 user_sub_mode = {}       
 user_sub_color = {}      
-user_title_mode = {}     
-user_blur_mode = {}      
+user_title_mode = {}
+user_title_size = {}
+user_title_width = {}
+user_blur_mode = {}
 user_blur_y = {}         
 user_blur_strength = {}  
 user_sub_y = {}          
@@ -249,7 +251,7 @@ def split_burmese_text_chronologically(text, start_t, end_t, max_chars=45):
 
 def create_text_image_full(text, font_size, text_color, outline_color, outline_width,
                             use_box, box_color, box_alpha, box_border,
-                            width=1080, height=1920, align="bottom", margin_v=280, font_family="Arial", is_title=False):
+                            width=1080, height=1920, align="bottom", margin_v=280, font_family="Arial", is_title=False, max_width_percent=100):
     width = int(width)
     height = int(height)
     margin_v = int(margin_v)
@@ -267,7 +269,8 @@ def create_text_image_full(text, font_size, text_color, outline_color, outline_w
         fm = QFontMetrics(font)
 
         text = text.replace("$$", "\n")
-        text = wrap_burmese_text(text, fm, width - 60)
+        usable_width = max(120, min(width - 60, int(width * max(0.25, min(float(max_width_percent), 100.0)) / 100.0)))
+        text = wrap_burmese_text(text, fm, usable_width)
         lines = text.split('\n')
 
         max_line_w = int(max(fm.horizontalAdvance(line) for line in lines))
@@ -976,10 +979,13 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
     title_path = None
     if user_title_mode.get(user_id, True) and story_title and story_title.strip():
         title_path = os.path.join(job_dir, f"title_{user_id}.png")
+        title_size = max(18, min(int(user_title_size.get(user_id, 42)), 96))
+        title_width = max(25, min(float(user_title_width.get(user_id, 85)), 100.0))
         title_img = create_text_image_full(
-            text=story_title.strip(), font_size=42, text_color="#00E5FF", outline_color="black", outline_width=8,
+            text=story_title.strip(), font_size=title_size, text_color="#00E5FF", outline_color="black", outline_width=max(2, int(title_size * 0.12)),
             use_box=False, box_color="black", box_alpha="0.0", box_border=0,
-            width=dim_w, height=dim_h, align="top", margin_v=dim_h * 0.08, font_family=selected_font_fam, is_title=True
+            width=dim_w, height=dim_h, align="top", margin_v=dim_h * 0.08, font_family=selected_font_fam, is_title=True,
+            max_width_percent=title_width
         )
         title_img.save(title_path, "PNG")
 
