@@ -56,6 +56,9 @@ TEXT = {
         "wm_text": "Watermark စာသား",
         "wm_pos": "Watermark နေရာ",
         "logo": "🖼️ ကိုယ်ပိုင် Logo",
+        "bg_music": "🎵 Background Music ဖွင့်မည်",
+        "bg_music_file": "Background Music ဖိုင်ထည့်ပါ",
+        "bg_music_volume": "Background Music အသံအတိုးအကျယ်",
         "upload": "Video Upload လုပ်ပါ",
         "youtube": "သို့မဟုတ် YouTube URL ထည့်ပါ",
         "generate": "🚀 Recap ထုတ်မည်",
@@ -106,6 +109,9 @@ TEXT = {
         "wm_text": "Watermark text",
         "wm_pos": "Watermark position",
         "logo": "🖼️ Custom logo",
+        "bg_music": "🎵 Enable background music",
+        "bg_music_file": "Upload background music",
+        "bg_music_volume": "Background music volume",
         "upload": "Upload a video",
         "youtube": "Or paste a YouTube URL",
         "generate": "🚀 Generate recap",
@@ -250,7 +256,7 @@ with st.sidebar:
         color_values = ["yellow", "white", "#00E5FF", "#39FF14", "#FF6EC7"]
         sub_color = st.selectbox(T["subtitle_color"], color_values, format_func=_named_color)
         blur_enabled = st.toggle(T["blur"], value=False)
-        blur_y_percent = _nudge_slider(T["blur_pos"], "blur_y_percent", 45, 88, 82)
+        blur_y_percent = _nudge_slider(T["blur_pos"], "blur_y_percent", 45, 82, 70)
         blur_strength = _nudge_slider(T["blur_strength"], "blur_strength", 1, 20, 5)
         title_enabled = st.toggle(T["title"], value=True)
         bypass_enabled = st.toggle(T["bypass"], value=False)
@@ -261,6 +267,14 @@ with st.sidebar:
         wm_pos_labels = {"bounce": "🔁 Bounce", "topleft": "↖️ Top left", "topright": "↗️ Top right", "bottom": "⬇️ Bottom center"}
         wm_pos = st.selectbox(T["wm_pos"], list(wm_pos_labels), format_func=lambda x: wm_pos_labels[x])
         logo_file = st.file_uploader(T["logo"], type=["png", "jpg", "jpeg"], key="logo_upload")
+        bg_music_enabled = st.toggle(T["bg_music"], value=False, key="bg_music_enabled")
+        bg_music_file = st.file_uploader(
+            T["bg_music_file"], type=["mp3", "wav", "m4a", "aac", "ogg"], key="bg_music_upload"
+        ) if bg_music_enabled else None
+        bg_music_volume = st.slider(
+            T["bg_music_volume"], min_value=0.0, max_value=1.0, value=0.15, step=0.05,
+            key="bg_music_volume"
+        ) if bg_music_enabled else 0.0
         st.caption(T["calibration_help"])
 
     if st.button(T["validate"], use_container_width=True):
@@ -355,7 +369,7 @@ elif youtube_url.strip():
 start = st.button(T["generate"], type="primary", use_container_width=True)
 
 
-async def _run_pipeline(input_video: str, audio_path: str, output_path: str, status_box, progress_bar):
+async def _run_pipeline(input_video: str, audio_path: str, output_path: str, status_box, progress_bar, background_music_path=None, background_music_volume=0.0):
     async def progress(message: str):
         status_box.info(message)
         import re
@@ -389,6 +403,8 @@ async def _run_pipeline(input_video: str, audio_path: str, output_path: str, sta
         user_speed_val=engine.SPEED_MULTIPLIERS[speed_label],
         user_id=USER_ID,
         progress_cb=progress,
+        background_music_path=background_music_path,
+        background_music_volume=background_music_volume,
     )
 
 
@@ -403,6 +419,7 @@ if start:
     job_dir = Path(tempfile.mkdtemp(prefix="recap_", dir=WORK_ROOT))
     input_path = job_dir / (persisted_upload_name if persisted_upload else "source.mp4")
     audio_path = job_dir / "source_audio.mp3"
+    background_music_path = job_dir / "background_music"
     output_path = job_dir / "recap_output.mp4"
     status_box = st.empty()
     progress_bar = st.progress(0)
@@ -416,7 +433,16 @@ if start:
             engine.download_youtube_video(youtube_url.strip(), str(input_path))
         status_box.info("🎧 Extracting source audio...")
         engine.extract_audio_ffmpeg(str(input_path), str(audio_path))
-        asyncio.run(_run_pipeline(str(input_path), str(audio_path), str(output_path), status_box, progress_bar))
+        bg_path_arg = None
+        if bg_music_enabled and bg_music_file is not None:
+            bg_suffix = Path(bg_music_file.name).suffix or ".mp3"
+            background_music_path = background_music_path.with_suffix(bg_suffix)
+            background_music_path.write_bytes(bg_music_file.getvalue())
+            bg_path_arg = str(background_music_path)
+        asyncio.run(_run_pipeline(
+            str(input_path), str(audio_path), str(output_path), status_box, progress_bar,
+            background_music_path=bg_path_arg, background_music_volume=bg_music_volume
+        ))
         progress_bar.progress(100)
         status_box.success(T["ready"])
         st.session_state.result_path = str(output_path)
