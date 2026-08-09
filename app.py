@@ -282,6 +282,11 @@ col1, col2, col3 = st.columns([1.35, 1, 1])
 with col1:
     uploaded = st.file_uploader(T["upload"], type=["mp4", "mov", "mkv", "webm", "avi"])
     youtube_url = st.text_input(T["youtube"])
+    if uploaded is not None:
+        st.session_state.uploaded_name = uploaded.name
+        st.session_state.uploaded_bytes = uploaded.getvalue()
+    persisted_upload = bool(st.session_state.get("uploaded_bytes"))
+    persisted_upload_name = st.session_state.get("uploaded_name", "source.mp4")
 with col2:
     st.subheader(T["workflow"])
     st.markdown(T["workflow_text"])
@@ -313,16 +318,16 @@ def _resolution_code(label: str) -> str:
 
 
 # Calibration preview: show the selected blur and subtitle positions before rendering.
-if uploaded:
+if persisted_upload:
     preview_col, guide_col = st.columns([1.35, 1])
     with preview_col:
         st.subheader(f"🖼️ {T['calibration']}")
-        preview_ext = Path(uploaded.name).suffix or ".mp4"
+        preview_ext = Path(persisted_upload_name).suffix or ".mp4"
         preview_input = WORK_ROOT / f"calibration_source{preview_ext}"
         preview_frame = WORK_ROOT / "calibration_frame.png"
         preview_overlay = WORK_ROOT / "calibration_overlay.png"
         try:
-            preview_input.write_bytes(uploaded.getbuffer())
+            preview_input.write_bytes(st.session_state.uploaded_bytes)
             dim_w, dim_h = engine.get_video_dimensions(_platform_code(platform_label), _resolution_code(resolution_label))
             engine.extract_preview_frame(str(preview_input), str(preview_frame), dim_w, dim_h, percent=0.3)
             engine.render_calibration_preview(str(preview_frame), str(preview_overlay), blur_y_percent, sub_y_percent, blur_enabled)
@@ -379,7 +384,7 @@ async def _run_pipeline(input_video: str, audio_path: str, output_path: str, sta
 
 
 if start:
-    if not uploaded and not youtube_url.strip():
+    if not persisted_upload and not youtube_url.strip():
         st.error(T["missing_video"])
         st.stop()
     if not gemini_keys_text.strip() or not groq_key.strip():
@@ -387,7 +392,7 @@ if start:
         st.stop()
 
     job_dir = Path(tempfile.mkdtemp(prefix="recap_", dir=WORK_ROOT))
-    input_path = job_dir / (uploaded.name if uploaded else "source.mp4")
+    input_path = job_dir / (persisted_upload_name if persisted_upload else "source.mp4")
     audio_path = job_dir / "source_audio.mp3"
     output_path = job_dir / "recap_output.mp4"
     status_box = st.empty()
@@ -395,8 +400,8 @@ if start:
     try:
         if logo_file:
             (TEMP_ROOT / f"logo_{USER_ID}.png").write_bytes(logo_file.getbuffer())
-        if uploaded:
-            input_path.write_bytes(uploaded.getbuffer())
+        if persisted_upload:
+            input_path.write_bytes(st.session_state.uploaded_bytes)
         else:
             status_box.info("⬇️ Downloading source video...")
             engine.download_youtube_video(youtube_url.strip(), str(input_path))
