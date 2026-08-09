@@ -48,6 +48,22 @@ USER_ID = f"streamlit_{SESSION_ID}"
 LOCAL_STORAGE = LocalStorage() if LocalStorage is not None else None
 PREFERENCES_STORAGE_KEY = "ko_tint_free_ai_preferences_v1"
 
+
+def _cleanup_old_job_roots(max_age_hours=24):
+    """Remove abandoned session/job folders while preserving the active session."""
+    cutoff = time.time() - (max_age_hours * 3600)
+    for child in WORK_ROOT.iterdir():
+        if child.name == SESSION_ID or not child.is_dir():
+            continue
+        try:
+            if child.stat().st_mtime < cutoff:
+                shutil.rmtree(child, ignore_errors=True)
+        except OSError:
+            pass
+
+
+_cleanup_old_job_roots()
+
 TEXT = {
     "မြန်မာ": {
         "settings": "⚙️ ဆက်တင်များ",
@@ -529,6 +545,28 @@ elif youtube_url.strip():
 start = st.button(T["generate"], type="primary", use_container_width=True)
 
 
+def _friendly_processing_error(exc):
+    text = str(exc or "").strip()
+    lowered = text.lower()
+    if "out of memory" in lowered or "cannot allocate" in lowered:
+        return "RAM မလုံလောက်ပါ။ Video အရွယ်အစား/Resolution လျှော့ပြီး ပြန်စမ်းပါ။"
+    if "ffmpeg" in lowered or "filter" in lowered:
+        return "Video rendering မအောင်မြင်ပါ။ Resolution, Blur, Title setting ကို လျှော့ပြီး ပြန်စမ်းပါ။"
+    if "yt_dlp" in lowered or "download" in lowered:
+        return "URL video download မအောင်မြင်ပါ။ Public YouTube URL သေချာစစ်ပြီး MP4 upload နဲ့ ပြန်စမ်းပါ။"
+    if "timeout" in lowered or "timed out" in lowered:
+        return "Processing အချိန်ကုန်သွားပါပြီ။ Video တိုအောင် သို့မဟုတ် Resolution လျှော့ပြီး ပြန်စမ်းပါ။"
+    return "Processing မအောင်မြင်ပါ။ Setting များစစ်ပြီး ပြန်စမ်းပါ။"
+
+
+def _redacted_error(exc):
+    text = str(exc or "")
+    for secret in [gemini_keys_text, groq_key]:
+        if secret:
+            text = text.replace(secret, "[REDACTED]")
+    return text[-1600:] or "Unknown error"
+
+
 async def _run_pipeline(input_video: str, audio_path: str, output_path: str, status_box, progress_bar, background_music_path=None, background_music_volume=0.0, work_dir=None):
     async def progress(message: str):
         status_box.info(message)
@@ -589,39 +627,49 @@ if start:
     status_box = st.empty()
     progress_bar = st.progress(0)
     try:
-        if logo_file:
-            (TEMP_ROOT / f"logo_{USER_ID}.png").write_bytes(logo_file.getbuffer())
-        if persisted_upload:
-            shutil.copyfile(persisted_upload_path, input_path)
-        else:
-            status_box.info("⬇️ Downloading source video...")
-            engine.download_youtube_video(youtube_url.strip(), str(input_path))
-        status_box.info("🎧 Extracting source audio...")
-        engine.extract_audio_ffmpeg(str(input_path), str(audio_path))
-        bg_path_arg = None
-        if bg_music_enabled and bg_music_file is not None:
-            bg_suffix = Path(bg_music_file.name).suffix or ".mp3"
-            background_music_path = background_music_path.with_suffix(bg_suffix)
-            background_music_path.write_bytes(bg_music_file.getvalue())
-            bg_path_arg = str(background_music_path)
-        pipeline_result = asyncio.run(_run_pipeline(
-            str(input_path), str(audio_path), str(output_path), status_box, progress_bar,
-            background_music_path=bg_path_arg, background_music_volume=bg_music_volume,
-            work_dir=str(TEMP_ROOT)
-        ))
+        queued_text = "⏳ Your recap is queued because another job is running..." if st.session_state.ui_lang == "English" else "⏳ အခြား video တစ်ခု လုပ်နေသောကြောင့် သင့် recap ကို queue ထဲ ထည့်ထားပါသည်..."
+        started_text = "🎬 Processing started..." if st.session_state.ui_lang == "English" else "🎬 Processing စတင်နေပါသည်..."
+        status_box.info(queued_text)
+        with engine.web_job_slot():
+            status_box.info(started_text)
+            if logo_file:
+                (TEMP_ROOT / f"logo_{USER_ID}.png").write_bytes(logo_file.getbuffer())
+            if persisted_upload:
+                shutil.copyfile(persisted_upload_path, input_path)
+            else:
+                status_box.info("⬇️ Downloading source video...")
+                engine.download_youtube_video(youtube_url.strip(), str(input_path))
+            status_box.info("🎧 Extracting source audio...")
+            engine.extract_audio_ffmpeg(str(input_path), str(audio_path))
+            bg_path_arg = None
+            if bg_music_enabled and bg_music_file is not None:
+                bg_suffix = Path(bg_music_file.name).suffix or ".mp3"
+                background_music_path = background_music_path.with_suffix(bg_suffix)
+                background_music_path.write_bytes(bg_music_file.getvalue())
+                bg_path_arg = str(background_music_path)
+            pipeline_result = asyncio.run(_run_pipeline(
+                str(input_path), str(audio_path), str(output_path), status_box, progress_bar,
+                background_music_path=bg_path_arg, background_music_volume=bg_music_volume,
+                work_dir=str(TEMP_ROOT)
+            ))
         if isinstance(pipeline_result, (tuple, list)) and len(pipeline_result) >= 3:
             st.session_state.generated_caption = pipeline_result[1] or ""
             st.session_state.generated_hashtags = pipeline_result[2] or ""
         else:
             st.session_state.generated_caption = ""
             st.session_state.generated_hashtags = ""
+        final_output = SESSION_ROOT / f"recap_{uuid.uuid4().hex}.mp4"
+        shutil.move(str(output_path), str(final_output))
         progress_bar.progress(100)
         status_box.success(T["ready"])
-        st.session_state.result_path = str(output_path)
+        st.session_state.result_path = str(final_output)
         st.session_state.last_job = str(input_path.name)
     except Exception as exc:
-        status_box.error(f"❌ {exc}")
-        st.exception(exc)
+        status_box.error(f"❌ {_friendly_processing_error(exc)}")
+        with st.expander("Technical details" if st.session_state.ui_lang == "English" else "နည်းပညာအသေးစိတ်"):
+            st.code(_redacted_error(exc), language="text")
+    finally:
+        shutil.rmtree(job_dir, ignore_errors=True)
 
 if st.session_state.result_path and os.path.exists(st.session_state.result_path):
     st.divider()
