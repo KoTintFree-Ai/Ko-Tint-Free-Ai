@@ -275,8 +275,8 @@ with st.sidebar:
         blur_height = _nudge_slider(T["blur_height"], "blur_height", 6, 24, 12)
         blur_width = _nudge_slider(T["blur_width"], "blur_width", 50, 100, 100)
         title_enabled = st.toggle(T["title"], value=True)
-        title_size = _nudge_slider(T["title_size"], "title_size", 24, 64, 42)
-        title_width = _nudge_slider(T["title_width"], "title_width", 45, 100, 85)
+        title_size = _nudge_slider(T["title_size"], "title_size", 24, 64, 30)
+        title_width = _nudge_slider(T["title_width"], "title_width", 45, 100, 65)
         bypass_enabled = st.toggle(T["bypass"], value=False)
         font_files = getattr(engine, "AVAILABLE_FONTS", [])
         font_labels = [str(idx + 1) for idx, _ in enumerate(font_files)]
