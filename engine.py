@@ -440,13 +440,14 @@ def extract_preview_frame(video_path, out_path, dim_w, dim_h, percent=0.3):
     ]
     run_ffmpeg(cmd, label="preview_frame")
 
-def render_calibration_preview(frame_path, out_path, blur_y, sub_y, blur_on):
+def render_calibration_preview(frame_path, out_path, blur_y, sub_y, blur_on, sub_font_size=36):
     parts = []
     if blur_on:
         parts.append(f"drawbox=x=0:y=ih*({blur_y}/100.0):w=iw:h=ih*0.12:color=white@0.55:t=fill")
     # Show a subtitle-like sample instead of a large red guide rectangle.
+    preview_size = max(18, min(int(sub_font_size), 96))
     parts.append(
-        f"drawtext=text='Subtitle Preview':fontcolor=white:fontsize=36:"
+        f"drawtext=text='Subtitle Preview':fontcolor=white:fontsize={preview_size}:"
         f"borderw=2:bordercolor=red:x=(w-text_w)/2:y=h*({sub_y}/100.0)"
     )
     vf = ",".join(parts)
@@ -983,9 +984,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
     blur_strength = user_blur_strength.get(user_id, 5)
     blur_filter_str = ""
     cur_label = "[0:v]"
-    # Diagnostic recovery mode: keep blur disabled until the app baseline is
-    # confirmed stable. The UI and calibration controls remain available.
-    if False and user_blur_mode.get(user_id, False):
+    if user_blur_mode.get(user_id, False):
         blur_filter_str, cur_label = get_blur_mask_filter("[0:v]", y_position_percent=blur_y_percent, blur_strength=blur_strength)
 
     wm_text = user_wm_text.get(user_id, "Recap")
