@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import os
 import shutil
@@ -8,12 +6,18 @@ from pathlib import Path
 
 import streamlit as st
 
-import engine
+try:
+    import psutil
+except Exception:
+    psutil = None
 
+import engine
 
 APP_ROOT = Path(__file__).resolve().parent
 WORK_ROOT = APP_ROOT / "streamlit_jobs"
 WORK_ROOT.mkdir(exist_ok=True)
+TEMP_ROOT = APP_ROOT / "temp"
+TEMP_ROOT.mkdir(exist_ok=True)
 USER_ID = 987654321
 
 st.set_page_config(
@@ -23,69 +27,187 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+TEXT = {
+    "မြန်မာ": {
+        "settings": "⚙️ ဆက်တင်များ",
+        "language": "ဘာသာစကား",
+        "theme": "အလင်း/အမှောင်",
+        "dark": "အမှောင်",
+        "light": "အလင်း",
+        "keys": "Gemini API key များ (ကော်မာခံပြီး)",
+        "groq": "Groq API key",
+        "platform": "Video အရွယ်အစား",
+        "resolution": "Resolution",
+        "voice": "🎙️ အသံ",
+        "speed": "⚡ အသံအမြန်နှုန်း",
+        "subtitle": "📝 မြန်မာစာတန်းထိုး",
+        "subtitle_pos": "📝 စာတန်းနေရာ",
+        "subtitle_size": "📝 စာလုံးအရွယ်အစား",
+        "subtitle_color": "🎨 စာတန်းအရောင်",
+        "blur": "🌫️ Blur Mask",
+        "blur_pos": "🌫️ Blur နေရာ",
+        "blur_strength": "🌫️ Blur အား",
+        "title": "🏷️ Video Title Overlay",
+        "bypass": "🛡️ Edit Bypass",
+        "font": "🔤 မြန်မာ Font",
+        "watermark": "💧 Watermark",
+        "wm_text": "Watermark စာသား",
+        "wm_pos": "Watermark နေရာ",
+        "logo": "🖼️ ကိုယ်ပိုင် Logo",
+        "upload": "Video Upload လုပ်ပါ",
+        "youtube": "သို့မဟုတ် YouTube URL ထည့်ပါ",
+        "generate": "🚀 Recap ထုတ်မည်",
+        "download": "⬇️ MP4 Download",
+        "ready": "✅ Recap အောင်မြင်ပါပြီ",
+        "monitor": "📊 System Monitor",
+        "ram": "RAM အသုံးပြုမှု",
+        "cpu": "CPU အသုံးပြုမှု",
+        "refresh": "Monitor ပြန်စစ်မည်",
+        "workflow": "လုပ်ငန်းစဉ်",
+        "workflow_text": "1. Video Upload/URL ထည့်ပါ\n2. Voice နှင့် Subtitle ရွေးပါ\n3. Blur/Watermark/Logo ချိန်ပါ\n4. Recap ထုတ်ပြီး MP4 Download လုပ်ပါ",
+        "missing_video": "Video သို့မဟုတ် YouTube URL ထည့်ပါ။",
+        "missing_keys": "Gemini key နှင့် Groq key ထည့်ပါ။",
+        "privacy": "API keys များကို GitHub ထဲ မသိမ်းပါ။ Job လုပ်ချိန်မှာသာ အသုံးပြုပါ။",
+        "advanced": "အသေးစိတ် Video Controls",
+        "calibration": "Preview Calibration",
+        "calibration_help": "စာတန်းနှင့် blur နေရာကို slider ဖြင့် ကြိုတင်ချိန်ပါ။",
+    },
+    "English": {
+        "settings": "⚙️ Settings",
+        "language": "Language",
+        "theme": "Appearance",
+        "dark": "Dark",
+        "light": "Light",
+        "keys": "Gemini API keys (comma-separated)",
+        "groq": "Groq API key",
+        "platform": "Video aspect ratio",
+        "resolution": "Resolution",
+        "voice": "🎙️ Voice",
+        "speed": "⚡ Voice speed",
+        "subtitle": "📝 Burmese subtitles",
+        "subtitle_pos": "📝 Subtitle position",
+        "subtitle_size": "📝 Subtitle size",
+        "subtitle_color": "🎨 Subtitle color",
+        "blur": "🌫️ Blur mask",
+        "blur_pos": "🌫️ Blur position",
+        "blur_strength": "🌫️ Blur intensity",
+        "title": "🏷️ Title overlay",
+        "bypass": "🛡️ Edit bypass",
+        "font": "🔤 Myanmar font",
+        "watermark": "💧 Watermark",
+        "wm_text": "Watermark text",
+        "wm_pos": "Watermark position",
+        "logo": "🖼️ Custom logo",
+        "upload": "Upload a video",
+        "youtube": "Or paste a YouTube URL",
+        "generate": "🚀 Generate recap",
+        "download": "⬇️ Download MP4",
+        "ready": "✅ Recap is ready",
+        "monitor": "📊 System monitor",
+        "ram": "RAM usage",
+        "cpu": "CPU usage",
+        "refresh": "Refresh monitor",
+        "workflow": "Workflow",
+        "workflow_text": "1. Upload a video or URL\n2. Choose voice and subtitles\n3. Tune blur, watermark, and logo\n4. Generate and download MP4",
+        "missing_video": "Upload a video or paste a YouTube URL.",
+        "missing_keys": "Enter Gemini key(s) and a Groq key.",
+        "privacy": "Keys are not written to GitHub. They are used only during processing.",
+        "advanced": "Advanced video controls",
+        "calibration": "Preview calibration",
+        "calibration_help": "Use the sliders to position subtitles and blur before rendering.",
+    },
+}
+
+if "ui_lang" not in st.session_state:
+    st.session_state.ui_lang = "မြန်မာ"
+if "theme" not in st.session_state:
+    st.session_state.theme = "dark"
+T = TEXT[st.session_state.ui_lang]
+
+bg = "#0f172a" if st.session_state.theme == "dark" else "#f8fafc"
+fg = "#f8fafc" if st.session_state.theme == "dark" else "#0f172a"
+card = "rgba(30,41,59,.65)" if st.session_state.theme == "dark" else "#ffffff"
 st.markdown(
-    """
+    f"""
     <style>
-    .main { background: #0f172a; }
-    .block-container { max-width: 1180px; padding-top: 2rem; }
-    .hero { padding: 1.4rem 1.6rem; border-radius: 20px; background: linear-gradient(135deg,#172554,#312e81); color: white; margin-bottom: 1.2rem; }
-    .hero h1 { margin: 0; font-size: 2.2rem; }
-    .hero p { margin: .45rem 0 0; color: #dbeafe; }
-    [data-testid="stFileUploader"] { background: rgba(30,41,59,.55); border-radius: 14px; padding: .4rem; }
+    .stApp {{ background: {bg}; color: {fg}; }}
+    .block-container {{ max-width: 1180px; padding-top: 1.5rem; }}
+    .hero {{ padding: 1.4rem 1.6rem; border-radius: 20px; background: linear-gradient(135deg,#172554,#312e81); color: white; margin-bottom: 1.2rem; }}
+    .hero h1 {{ margin: 0; font-size: 2.2rem; }}
+    .hero p {{ margin: .45rem 0 0; color: #dbeafe; }}
+    [data-testid="stFileUploader"] {{ background: {card}; border-radius: 14px; padding: .4rem; }}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.markdown(
-    '<div class="hero"><h1>🎬 Ko Tint Free AI</h1><p>AI Movie Recap · Burmese voiceover · Subtitle · Video export</p></div>',
-    unsafe_allow_html=True,
-)
+with st.sidebar:
+    st.header(T["settings"])
+    st.session_state.ui_lang = st.selectbox(T["language"], ["မြန်မာ", "English"], index=["မြန်မာ", "English"].index(st.session_state.ui_lang))
+    T = TEXT[st.session_state.ui_lang]
+    st.session_state.theme = st.radio(T["theme"], ["dark", "light"], format_func=lambda x: T["dark"] if x == "dark" else T["light"], horizontal=True, index=0 if st.session_state.theme == "dark" else 1)
+    st.caption(T["privacy"])
+    gemini_keys_text = st.text_input(T["keys"], value="", type="password", help="Separate multiple keys with commas.")
+    groq_key = st.text_input(T["groq"], value="", type="password")
+
+    platform_label = st.selectbox(T["platform"], ["YouTube / 16:9", "TikTok / 9:16", "Facebook / 9:16"])
+    resolution_label = st.selectbox(T["resolution"], ["720p", "1080p"])
+    voice_options = {key: value["name"] for key, value in engine.VOICE_MODES.items()}
+    voice_key = st.selectbox(T["voice"], list(voice_options), format_func=lambda key: voice_options[key], index=1 if len(voice_options) > 1 else 0)
+    speed_label = st.selectbox(T["speed"], list(engine.SPEED_MULTIPLIERS), index=0)
+
+    with st.expander(T["advanced"], expanded=True):
+        subtitle_enabled = st.toggle(T["subtitle"], value=True)
+        sub_y_percent = st.slider(T["subtitle_pos"], 45, 88, 82, 1)
+        sub_font_size = st.slider(T["subtitle_size"], 24, 60, 35, 1)
+        sub_color = st.selectbox(T["subtitle_color"], ["yellow", "white", "#00E5FF", "#39FF14", "#FF6EC7"])
+        blur_enabled = st.toggle(T["blur"], value=False)
+        blur_y_percent = st.slider(T["blur_pos"], 45, 88, 82, 1)
+        blur_strength = st.slider(T["blur_strength"], 1, 20, 5, 1)
+        title_enabled = st.toggle(T["title"], value=True)
+        bypass_enabled = st.toggle(T["bypass"], value=False)
+        font_files = getattr(engine, "AVAILABLE_FONTS", [])
+        font_labels = [Path(path).name for path in font_files]
+        font_choice = st.selectbox(T["font"], font_labels or ["Default"])
+        wm_text = st.text_input(T["wm_text"], value="JOKER", max_chars=80)
+        wm_pos_labels = {"bounce": "🔁 Bounce", "topleft": "↖️ Top left", "topright": "↗️ Top right", "bottom": "⬇️ Bottom center"}
+        wm_pos = st.selectbox(T["wm_pos"], list(wm_pos_labels), format_func=lambda x: wm_pos_labels[x])
+        logo_file = st.file_uploader(T["logo"], type=["png", "jpg", "jpeg"], key="logo_upload")
+        st.caption(T["calibration_help"])
 
 if "result_path" not in st.session_state:
     st.session_state.result_path = None
 if "last_job" not in st.session_state:
     st.session_state.last_job = None
 
-with st.sidebar:
-    st.header("⚙️ Settings")
-    gemini_keys_text = st.text_input(
-        "Gemini API keys (comma-separated)",
-        value="",
-        type="password",
-        help="Multiple keys may be separated by commas. Keys are used only for this session.",
-    )
-    groq_key = st.text_input("Groq API key", value="", type="password")
-    platform_label = st.selectbox("Video platform / aspect ratio", ["YouTube / 16:9", "TikTok / 9:16", "Facebook / 9:16"])
-    resolution_label = st.selectbox("Resolution", ["720p", "1080p"])
-    voice_options = {key: value["name"] for key, value in engine.VOICE_MODES.items()}
-    voice_key = st.selectbox("🎙️ Voice", list(voice_options), format_func=lambda key: voice_options[key], index=1)
-    speed_label = st.selectbox("⚡ Voice speed", list(engine.SPEED_MULTIPLIERS), index=0)
-    subtitle_enabled = st.toggle("📝 Burmese subtitles", value=True)
-    blur_enabled = st.toggle("🌫️ Blur mask", value=False)
-    title_enabled = st.toggle("🏷️ Title overlay", value=True)
-    bypass_enabled = st.toggle("🛡️ Edit bypass", value=False)
-    sub_color = st.selectbox("🎨 Subtitle color", ["yellow", "white", "#00E5FF", "#39FF14", "#FF6EC7"])
-    font_files = getattr(engine, "AVAILABLE_FONTS", [])
-    font_labels = [Path(path).name for path in font_files]
-    font_choice = st.selectbox("🔤 Myanmar font", font_labels or ["Default"])
-    st.caption("For fastest processing: 720p · subtitles off · blur off · speed 1.0x")
+st.markdown('<div class="hero"><h1>🎬 Ko Tint Free AI</h1><p>AI Movie Recap · Burmese voiceover · Subtitle · Video export</p></div>', unsafe_allow_html=True)
 
-col1, col2 = st.columns([1.35, 1])
+col1, col2, col3 = st.columns([1.35, 1, 1])
 with col1:
-    uploaded = st.file_uploader("Upload a video", type=["mp4", "mov", "mkv", "webm", "avi"])
-    youtube_url = st.text_input("Or paste a YouTube URL (optional)")
+    uploaded = st.file_uploader(T["upload"], type=["mp4", "mov", "mkv", "webm", "avi"])
+    youtube_url = st.text_input(T["youtube"])
 with col2:
-    st.info("Your API keys are not written to GitHub by this app. Enter them only when processing a job.")
-    st.markdown("**Workflow**\n\n1. Upload or paste a video\n2. Choose voice and subtitle settings\n3. Click **Generate recap**\n4. Download the finished MP4")
+    st.subheader(T["workflow"])
+    st.markdown(T["workflow_text"])
+with col3:
+    st.subheader(T["monitor"])
+    if psutil:
+        ram = psutil.virtual_memory().percent
+        cpu = psutil.cpu_percent(interval=0.15)
+        st.metric(T["ram"], f"{ram:.0f}%")
+        st.progress(int(ram) / 100)
+        st.metric(T["cpu"], f"{cpu:.0f}%")
+        st.progress(int(cpu) / 100)
+    else:
+        st.caption("psutil is not installed")
+    if st.button(T["refresh"], use_container_width=True):
+        st.rerun()
 
-start = st.button("🚀 Generate recap", type="primary", use_container_width=True)
+start = st.button(T["generate"], type="primary", use_container_width=True)
 
 
 def _platform_code(label: str) -> str:
-    if label.startswith("TikTok") or label.startswith("Facebook"):
-        return "tiktok"
-    return "yt"
+    return "tiktok" if label.startswith(("TikTok", "Facebook")) else "yt"
 
 
 def _resolution_code(label: str) -> str:
@@ -104,12 +226,17 @@ async def _run_pipeline(input_video: str, audio_path: str, output_path: str, sta
     engine.user_res[USER_ID] = _resolution_code(resolution_label)
     engine.user_sub_mode[USER_ID] = subtitle_enabled
     engine.user_blur_mode[USER_ID] = blur_enabled
+    engine.user_blur_y[USER_ID] = blur_y_percent
+    engine.user_blur_strength[USER_ID] = blur_strength
+    engine.user_sub_y[USER_ID] = sub_y_percent
+    engine.user_sub_size[USER_ID] = sub_font_size
     engine.user_title_mode[USER_ID] = title_enabled
     engine.user_bypass_mode[USER_ID] = bypass_enabled
     engine.user_sub_color[USER_ID] = sub_color
+    engine.user_wm_text[USER_ID] = wm_text or "JOKER"
+    engine.user_wm_pos[USER_ID] = wm_pos
     if font_files and font_choice != "Default":
-        selected = next((p for p in font_files if Path(p).name == font_choice), font_files[0])
-        engine.user_font[USER_ID] = selected
+        engine.user_font[USER_ID] = next((p for p in font_files if Path(p).name == font_choice), font_files[0])
     await engine.advanced_sync_pipeline(
         audio_path=audio_path,
         gemini_keys_str=gemini_keys_text,
@@ -125,10 +252,10 @@ async def _run_pipeline(input_video: str, audio_path: str, output_path: str, sta
 
 if start:
     if not uploaded and not youtube_url.strip():
-        st.error("Please upload a video or paste a YouTube URL.")
+        st.error(T["missing_video"])
         st.stop()
     if not gemini_keys_text.strip() or not groq_key.strip():
-        st.error("Please enter Gemini key(s) and a Groq key in the sidebar.")
+        st.error(T["missing_keys"])
         st.stop()
 
     job_dir = Path(tempfile.mkdtemp(prefix="recap_", dir=WORK_ROOT))
@@ -138,6 +265,8 @@ if start:
     status_box = st.empty()
     progress_bar = st.progress(0)
     try:
+        if logo_file:
+            (TEMP_ROOT / f"logo_{USER_ID}.png").write_bytes(logo_file.getbuffer())
         if uploaded:
             input_path.write_bytes(uploaded.getbuffer())
         else:
@@ -147,29 +276,21 @@ if start:
         engine.extract_audio_ffmpeg(str(input_path), str(audio_path))
         asyncio.run(_run_pipeline(str(input_path), str(audio_path), str(output_path), status_box, progress_bar))
         progress_bar.progress(100)
-        status_box.success("✅ Recap finished successfully.")
+        status_box.success(T["ready"])
         st.session_state.result_path = str(output_path)
         st.session_state.last_job = str(input_path.name)
     except Exception as exc:
-        status_box.error(f"❌ Processing failed: {exc}")
+        status_box.error(f"❌ {exc}")
         st.exception(exc)
 
 if st.session_state.result_path and os.path.exists(st.session_state.result_path):
     st.divider()
-    st.subheader("✅ Your recap is ready")
+    st.subheader(T["ready"])
     st.video(st.session_state.result_path)
     with open(st.session_state.result_path, "rb") as f:
-        st.download_button(
-            "⬇️ Download MP4",
-            data=f,
-            file_name="ko_tint_free_ai_recap.mp4",
-            mime="video/mp4",
-            type="primary",
-        )
+        st.download_button(T["download"], data=f, file_name="ko_tint_free_ai_recap.mp4", mime="video/mp4", type="primary")
 
 st.caption("Ko Tint Free AI · Keep API keys private and do not commit them to GitHub.")
 
-# Needed by Streamlit Cloud / local execution.
 if __name__ == "__main__":
     pass
-
