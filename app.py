@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -69,6 +70,7 @@ TEXT = {
         "watermark": "💧 Watermark",
         "wm_text": "Watermark စာသား",
         "wm_pos": "Watermark နေရာ",
+        "download_name": "Download ဖိုင်အမည်",
         "logo": "🖼️ ကိုယ်ပိုင် Logo",
         "bg_music": "🎵 Background Music ဖွင့်မည်",
         "bg_music_file": "Background Music ဖိုင်ထည့်ပါ",
@@ -126,6 +128,7 @@ TEXT = {
         "watermark": "💧 Watermark",
         "wm_text": "Watermark text",
         "wm_pos": "Watermark position",
+        "download_name": "Download file name",
         "logo": "🖼️ Custom logo",
         "bg_music": "🎵 Enable background music",
         "bg_music_file": "Upload background music",
@@ -162,6 +165,29 @@ if "theme" not in st.session_state:
     st.session_state.theme = "dark"
 T = TEXT[st.session_state.ui_lang]
 
+# Keep video preferences for this browser session. Each user gets a separate
+# Streamlit session_state, so these values do not leak between users.
+_REMEMBERED_DEFAULTS = {
+    "platform_label": "YouTube / 16:9",
+    "resolution_label": "720p",
+    "voice_key": None,
+    "speed_label": None,
+    "subtitle_enabled": True,
+    "sub_color": "yellow",
+    "blur_enabled": False,
+    "title_enabled": True,
+    "bypass_enabled": False,
+    "font_choice": "Default",
+    "wm_text": "Recap",
+    "wm_pos": "bounce",
+    "bg_music_enabled": False,
+    "bg_music_volume": 0.15,
+    "download_name": "ko_tint_free_ai_recap",
+}
+for _pref_key, _pref_value in _REMEMBERED_DEFAULTS.items():
+    if _pref_key not in st.session_state and _pref_value is not None:
+        st.session_state[_pref_key] = _pref_value
+
 bg = "#0f172a" if st.session_state.theme == "dark" else "#f8fafc"
 fg = "#f8fafc" if st.session_state.theme == "dark" else "#0f172a"
 card = "rgba(30,41,59,.65)" if st.session_state.theme == "dark" else "#ffffff"
@@ -178,6 +204,13 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+def _safe_download_filename(name):
+    cleaned = re.sub(r"[^\w .-]+", "", str(name or ""), flags=re.UNICODE).strip()
+    cleaned = re.sub(r"\s+", "_", cleaned)
+    cleaned = cleaned.strip("._-")
+    return (cleaned[:90] or "ko_tint_free_ai_recap") + ".mp4"
+
 
 def _nudge_state(key, delta, lower, upper):
     current = int(st.session_state.get(key, lower))
@@ -261,46 +294,62 @@ with st.sidebar:
     gemini_keys_text = st.text_input(T["keys"], value="", type="password", help="Separate multiple keys with commas.")
     groq_key = st.text_input(T["groq"], value="", type="password")
 
-    platform_label = st.selectbox(T["platform"], ["YouTube / 16:9", "TikTok / 9:16", "Facebook / 9:16"])
-    resolution_label = st.selectbox(T["resolution"], ["720p", "1080p"])
+    platform_options = ["YouTube / 16:9", "TikTok / 9:16", "Facebook / 9:16"]
+    if st.session_state.get("platform_label") not in platform_options:
+        st.session_state.platform_label = platform_options[0]
+    platform_label = st.selectbox(T["platform"], platform_options, key="platform_label")
+    resolution_options = ["720p", "1080p"]
+    if st.session_state.get("resolution_label") not in resolution_options:
+        st.session_state.resolution_label = resolution_options[0]
+    resolution_label = st.selectbox(T["resolution"], resolution_options, key="resolution_label")
     voice_keys = list(engine.VOICE_MODES)
+    if voice_keys and st.session_state.get("voice_key") not in voice_keys:
+        st.session_state.voice_key = voice_keys[1] if len(voice_keys) > 1 else voice_keys[0]
     def _voice_number_label(key):
         number = voice_keys.index(key) + 1
         raw_name = str(engine.VOICE_MODES[key].get("name", ""))
         # Keep only the parenthesized style text, e.g. 15 (Standard).
         suffix = raw_name[raw_name.find("("):].strip() if "(" in raw_name else ""
         return f"{number} {suffix}".strip()
-    voice_key = st.selectbox(T["voice"], voice_keys, format_func=_voice_number_label, index=1 if len(voice_keys) > 1 else 0)
-    speed_label = st.selectbox(T["speed"], list(engine.SPEED_MULTIPLIERS), index=0)
+    voice_key = st.selectbox(T["voice"], voice_keys, format_func=_voice_number_label, key="voice_key")
+    speed_options = list(engine.SPEED_MULTIPLIERS)
+    if st.session_state.get("speed_label") not in speed_options:
+        st.session_state.speed_label = speed_options[0]
+    speed_label = st.selectbox(T["speed"], speed_options, key="speed_label")
 
     with st.expander(T["advanced"], expanded=True):
-        subtitle_enabled = st.toggle(T["subtitle"], value=True)
+        subtitle_enabled = st.toggle(T["subtitle"], key="subtitle_enabled")
         sub_y_percent = _nudge_slider(T["subtitle_pos"], "sub_y_percent", 45, 88, 82)
         sub_font_size = _nudge_slider(T["subtitle_size"], "sub_font_size", 24, 60, 35)
         color_values = ["yellow", "white", "#00E5FF", "#39FF14", "#FF6EC7"]
-        sub_color = st.selectbox(T["subtitle_color"], color_values, format_func=_named_color)
-        blur_enabled = st.toggle(T["blur"], value=False)
+        sub_color = st.selectbox(T["subtitle_color"], color_values, format_func=_named_color, key="sub_color")
+        blur_enabled = st.toggle(T["blur"], key="blur_enabled")
         blur_y_percent = _nudge_slider(T["blur_pos"], "blur_y_percent", 45, 88, 82)
         blur_strength = _nudge_slider(T["blur_strength"], "blur_strength", 1, 20, 5)
         blur_height = _nudge_slider(T["blur_height"], "blur_height", 6, 24, 12)
         blur_width = _nudge_slider(T["blur_width"], "blur_width", 50, 100, 100)
-        title_enabled = st.toggle(T["title"], value=True)
+        title_enabled = st.toggle(T["title"], key="title_enabled")
         title_size = _nudge_slider(T["title_size"], "title_size", 24, 64, 30)
         title_width = _nudge_slider(T["title_width"], "title_width", 45, 100, 65)
-        bypass_enabled = st.toggle(T["bypass"], value=False)
+        bypass_enabled = st.toggle(T["bypass"], key="bypass_enabled")
         font_files = getattr(engine, "AVAILABLE_FONTS", [])
-        font_labels = [str(idx + 1) for idx, _ in enumerate(font_files)]
-        font_choice = st.selectbox(T["font"], font_labels or ["Default"])
-        wm_text = st.text_input(T["wm_text"], value="Recap", max_chars=80)
+        font_labels = [str(idx + 1) for idx, _ in enumerate(font_files)] or ["Default"]
+        if st.session_state.get("font_choice") not in font_labels:
+            st.session_state.font_choice = font_labels[0]
+        font_choice = st.selectbox(T["font"], font_labels, key="font_choice")
+        wm_text = st.text_input(T["wm_text"], key="wm_text", max_chars=80)
         wm_pos_labels = {"bounce": "🔁 Bounce", "topleft": "↖️ Top left", "topright": "↗️ Top right", "bottom": "⬇️ Bottom center"}
-        wm_pos = st.selectbox(T["wm_pos"], list(wm_pos_labels), format_func=lambda x: wm_pos_labels[x])
+        if st.session_state.get("wm_pos") not in wm_pos_labels:
+            st.session_state.wm_pos = "bounce"
+        wm_pos = st.selectbox(T["wm_pos"], list(wm_pos_labels), format_func=lambda x: wm_pos_labels[x], key="wm_pos")
+        st.text_input(T["download_name"], key="download_name", max_chars=100, help="Letters, Burmese text, numbers, spaces, _ and - are allowed.")
         logo_file = st.file_uploader(T["logo"], type=["png", "jpg", "jpeg"], key="logo_upload")
-        bg_music_enabled = st.toggle(T["bg_music"], value=False, key="bg_music_enabled")
+        bg_music_enabled = st.toggle(T["bg_music"], key="bg_music_enabled")
         bg_music_file = st.file_uploader(
             T["bg_music_file"], type=["mp3", "wav", "m4a", "aac", "ogg"], key="bg_music_upload"
         ) if bg_music_enabled else None
         bg_music_volume = st.slider(
-            T["bg_music_volume"], min_value=0.0, max_value=1.0, value=0.15, step=0.05,
+            T["bg_music_volume"], min_value=0.0, max_value=1.0, step=0.05,
             key="bg_music_volume"
         ) if bg_music_enabled else 0.0
         st.caption(T["calibration_help"])
@@ -518,7 +567,11 @@ if st.session_state.result_path and os.path.exists(st.session_state.result_path)
         if telegram_caption:
             st.code(telegram_caption, language=None)
     with open(st.session_state.result_path, "rb") as f:
-        st.download_button(T["download"], data=f, file_name="ko_tint_free_ai_recap.mp4", mime="video/mp4", type="primary")
+        st.download_button(
+            T["download"], data=f,
+            file_name=_safe_download_filename(st.session_state.get("download_name", "ko_tint_free_ai_recap")),
+            mime="video/mp4", type="primary"
+        )
 
 st.caption("Ko Tint Free AI · Keep API keys private and do not commit them to GitHub.")
 
