@@ -256,7 +256,7 @@ with st.sidebar:
         color_values = ["yellow", "white", "#00E5FF", "#39FF14", "#FF6EC7"]
         sub_color = st.selectbox(T["subtitle_color"], color_values, format_func=_named_color)
         blur_enabled = st.toggle(T["blur"], value=False)
-        blur_y_percent = _nudge_slider(T["blur_pos"], "blur_y_percent", 45, 82, 70)
+        blur_y_percent = _nudge_slider(T["blur_pos"], "blur_y_percent", 45, 88, 82)
         blur_strength = _nudge_slider(T["blur_strength"], "blur_strength", 1, 20, 5)
         title_enabled = st.toggle(T["title"], value=True)
         bypass_enabled = st.toggle(T["bypass"], value=False)
