@@ -2,8 +2,10 @@ import asyncio
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
+import httpx
 import streamlit as st
 
 try:
@@ -62,7 +64,13 @@ TEXT = {
         "monitor": "📊 System Monitor",
         "ram": "RAM အသုံးပြုမှု",
         "cpu": "CPU အသုံးပြုမှု",
+        "network": "Internet speed",
         "refresh": "Monitor ပြန်စစ်မည်",
+        "validate": "API key စစ်မည်",
+        "validation_ready": "API key အလုပ်လုပ်ပါသည်",
+        "validation_failed": "API key စစ်မရပါ",
+        "minus": "လျှော့",
+        "plus": "တိုး",
         "workflow": "လုပ်ငန်းစဉ်",
         "workflow_text": "1. Video Upload/URL ထည့်ပါ\n2. Voice နှင့် Subtitle ရွေးပါ\n3. Blur/Watermark/Logo ချိန်ပါ\n4. Recap ထုတ်ပြီး MP4 Download လုပ်ပါ",
         "missing_video": "Video သို့မဟုတ် YouTube URL ထည့်ပါ။",
@@ -106,7 +114,13 @@ TEXT = {
         "monitor": "📊 System monitor",
         "ram": "RAM usage",
         "cpu": "CPU usage",
+        "network": "Internet speed",
         "refresh": "Refresh monitor",
+        "validate": "Validate API keys",
+        "validation_ready": "API key is working",
+        "validation_failed": "API key validation failed",
+        "minus": "Decrease",
+        "plus": "Increase",
         "workflow": "Workflow",
         "workflow_text": "1. Upload a video or URL\n2. Choose voice and subtitles\n3. Tune blur, watermark, and logo\n4. Generate and download MP4",
         "missing_video": "Upload a video or paste a YouTube URL.",
@@ -141,6 +155,72 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+def _nudge_state(key, delta, lower, upper):
+    current = int(st.session_state.get(key, lower))
+    st.session_state[key] = max(lower, min(upper, current + delta))
+
+
+def _nudge_slider(label, key, lower, upper, default, step=1):
+    if key not in st.session_state:
+        st.session_state[key] = default
+    st.write(label)
+    left, middle, right = st.columns([0.18, 0.64, 0.18])
+    with left:
+        if st.button("−", key=f"{key}_minus", help=T["minus"], use_container_width=True):
+            _nudge_state(key, -step, lower, upper)
+            st.rerun()
+    with middle:
+        value = st.slider("", lower, upper, step=step, key=key, label_visibility="collapsed")
+    with right:
+        if st.button("+", key=f"{key}_plus", help=T["plus"], use_container_width=True):
+            _nudge_state(key, step, lower, upper)
+            st.rerun()
+    return value
+
+
+def _named_color(value):
+    return {
+        "yellow": "Yellow / အဝါ",
+        "white": "White / အဖြူ",
+        "#00E5FF": "Cyan / စိမ်းပြာ",
+        "#39FF14": "Lime / စိမ်းစို",
+        "#FF6EC7": "Pink / ပန်းရောင်",
+    }.get(value, value)
+
+
+def _measure_network_speed():
+    started = time.perf_counter()
+    try:
+        response = httpx.get("https://speed.cloudflare.com/__down?bytes=500000", timeout=8.0)
+        elapsed = max(time.perf_counter() - started, 0.001)
+        mbps = (len(response.content) * 8 / elapsed) / 1_000_000
+        return f"{mbps:.1f} Mbps"
+    except Exception:
+        return "Unavailable"
+
+
+def _validate_api_keys(gemini_text, groq_text):
+    gemini_keys = [key.strip() for key in gemini_text.split(",") if key.strip()]
+    groq = groq_text.strip()
+    results = []
+    for key in gemini_keys[:5]:
+        try:
+            r = httpx.get("https://generativelanguage.googleapis.com/v1beta/models", params={"key": key}, timeout=8.0)
+            results.append(r.status_code == 200)
+        except Exception:
+            results.append(False)
+    gemini_ok = bool(results) and any(results)
+    try:
+        groq_ok = bool(groq) and httpx.get(
+            "https://api.groq.com/openai/v1/models",
+            headers={"Authorization": f"Bearer {groq}"},
+            timeout=8.0,
+        ).status_code == 200
+    except Exception:
+        groq_ok = False
+    return gemini_ok, groq_ok
+
+
 with st.sidebar:
     st.header(T["settings"])
     st.session_state.ui_lang = st.selectbox(T["language"], ["မြန်မာ", "English"], index=["မြန်မာ", "English"].index(st.session_state.ui_lang))
@@ -158,22 +238,31 @@ with st.sidebar:
 
     with st.expander(T["advanced"], expanded=True):
         subtitle_enabled = st.toggle(T["subtitle"], value=True)
-        sub_y_percent = st.slider(T["subtitle_pos"], 45, 88, 82, 1)
-        sub_font_size = st.slider(T["subtitle_size"], 24, 60, 35, 1)
-        sub_color = st.selectbox(T["subtitle_color"], ["yellow", "white", "#00E5FF", "#39FF14", "#FF6EC7"])
+        sub_y_percent = _nudge_slider(T["subtitle_pos"], "sub_y_percent", 45, 88, 82)
+        sub_font_size = _nudge_slider(T["subtitle_size"], "sub_font_size", 24, 60, 35)
+        color_values = ["yellow", "white", "#00E5FF", "#39FF14", "#FF6EC7"]
+        sub_color = st.selectbox(T["subtitle_color"], color_values, format_func=_named_color)
         blur_enabled = st.toggle(T["blur"], value=False)
-        blur_y_percent = st.slider(T["blur_pos"], 45, 88, 82, 1)
-        blur_strength = st.slider(T["blur_strength"], 1, 20, 5, 1)
+        blur_y_percent = _nudge_slider(T["blur_pos"], "blur_y_percent", 45, 88, 82)
+        blur_strength = _nudge_slider(T["blur_strength"], "blur_strength", 1, 20, 5)
         title_enabled = st.toggle(T["title"], value=True)
         bypass_enabled = st.toggle(T["bypass"], value=False)
         font_files = getattr(engine, "AVAILABLE_FONTS", [])
-        font_labels = [Path(path).name for path in font_files]
+        font_labels = [f"{idx + 1}. {Path(path).stem}" for idx, path in enumerate(font_files)]
         font_choice = st.selectbox(T["font"], font_labels or ["Default"])
         wm_text = st.text_input(T["wm_text"], value="JOKER", max_chars=80)
         wm_pos_labels = {"bounce": "🔁 Bounce", "topleft": "↖️ Top left", "topright": "↗️ Top right", "bottom": "⬇️ Bottom center"}
         wm_pos = st.selectbox(T["wm_pos"], list(wm_pos_labels), format_func=lambda x: wm_pos_labels[x])
         logo_file = st.file_uploader(T["logo"], type=["png", "jpg", "jpeg"], key="logo_upload")
         st.caption(T["calibration_help"])
+
+    if st.button(T["validate"], use_container_width=True):
+        with st.spinner("Checking..." if st.session_state.ui_lang == "English" else "စစ်ဆေးနေပါသည်..."):
+            gemini_ok, groq_ok = _validate_api_keys(gemini_keys_text, groq_key)
+        if gemini_ok and groq_ok:
+            st.success(T["validation_ready"])
+        else:
+            st.error(f"{T['validation_failed']}: Gemini={'OK' if gemini_ok else 'FAIL'}, Groq={'OK' if groq_ok else 'FAIL'}")
 
 if "result_path" not in st.session_state:
     st.session_state.result_path = None
@@ -198,6 +287,7 @@ with col3:
         st.progress(int(ram) / 100)
         st.metric(T["cpu"], f"{cpu:.0f}%")
         st.progress(int(cpu) / 100)
+        st.metric(T["network"], _measure_network_speed())
     else:
         st.caption("psutil is not installed")
     if st.button(T["refresh"], use_container_width=True):
@@ -231,7 +321,7 @@ if uploaded:
             engine.render_calibration_preview(str(preview_frame), str(preview_overlay), blur_y_percent, sub_y_percent, blur_enabled)
             if preview_overlay.exists():
                 st.image(str(preview_overlay), use_container_width=True)
-                st.caption("🔴 Blur band   🟡 Subtitle band")
+                st.caption("⚪ Blur band   🔴 Subtitle band")
         except Exception as preview_error:
             st.warning(f"Preview unavailable: {preview_error}")
     with guide_col:
@@ -266,7 +356,8 @@ async def _run_pipeline(input_video: str, audio_path: str, output_path: str, sta
     engine.user_wm_text[USER_ID] = wm_text or "JOKER"
     engine.user_wm_pos[USER_ID] = wm_pos
     if font_files and font_choice != "Default":
-        engine.user_font[USER_ID] = next((p for p in font_files if Path(p).name == font_choice), font_files[0])
+        selected_index = int(font_choice.split(".", 1)[0]) - 1
+        engine.user_font[USER_ID] = font_files[max(0, min(selected_index, len(font_files) - 1))]
     await engine.advanced_sync_pipeline(
         audio_path=audio_path,
         gemini_keys_str=gemini_keys_text,
