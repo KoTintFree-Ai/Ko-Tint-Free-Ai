@@ -15,6 +15,7 @@ import base64
 import glob
 from concurrent.futures import ThreadPoolExecutor
 import itertools
+from contextlib import contextmanager
 
 import httpx
 import nest_asyncio
@@ -40,6 +41,17 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=lo
 FFMPEG_THREADS = max(1, int(os.getenv("RECAP_FFMPEG_THREADS", "1")))
 CHUNK_WORKERS = max(1, min(int(os.getenv("RECAP_CHUNK_WORKERS", "1")), 4))
 TTS_WORKERS = max(1, min(int(os.getenv("RECAP_TTS_WORKERS", "3")), 5))
+MAX_WEB_JOBS = max(1, int(os.getenv("RECAP_MAX_CONCURRENT_JOBS", "1")))
+_WEB_JOB_SEMAPHORE = threading.BoundedSemaphore(MAX_WEB_JOBS)
+
+@contextmanager
+def web_job_slot():
+    """Bound Streamlit jobs so concurrent users queue instead of exhausting RAM."""
+    _WEB_JOB_SEMAPHORE.acquire()
+    try:
+        yield
+    finally:
+        _WEB_JOB_SEMAPHORE.release()
 
 API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))
 API_HASH = os.getenv("TELEGRAM_API_HASH", "")
