@@ -467,15 +467,6 @@ def render_calibration_preview(frame_path, out_path, blur_y, sub_y, blur_on, sub
     )
     title_size = max(18, min(int(title_size), 96))
     title_width = max(25.0, min(float(title_width), 100.0))
-    title_x = (100.0 - title_width) / 2.0
-    # The production renderer constrains the title image to title_width. Draw
-    # the same centered boundary in the calibration preview so the control is
-    # visible even when the sample title itself is short.
-    title_h = max(6.0, min(18.0, float(title_size) / 4.0))
-    parts.append(
-        f"drawbox=x=iw*({title_x}/100.0):y=ih*0.05:w=iw*({title_width}/100.0):"
-        f"h=ih*({title_h}/100.0):color=cyan@0.75:t=3"
-    )
     safe_title = str(title_text).replace("'", "\\\\'")
     parts.append(
         f"drawtext=text='{safe_title}':fontcolor=cyan:fontsize={title_size}:"
@@ -1004,8 +995,8 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
     title_path = None
     if user_title_mode.get(user_id, True) and story_title and story_title.strip():
         title_path = os.path.join(job_dir, f"title_{user_id}.png")
-        title_size = max(18, min(int(user_title_size.get(user_id, 42)), 96))
-        title_width = max(25, min(float(user_title_width.get(user_id, 85)), 100.0))
+        title_size = max(18, min(int(user_title_size.get(user_id, 30)), 64))
+        title_width = max(25, min(float(user_title_width.get(user_id, 65)), 100.0))
         title_img = create_text_image_full(
             text=story_title.strip(), font_size=title_size, text_color="#00E5FF", outline_color="black", outline_width=max(2, int(title_size * 0.12)),
             use_box=False, box_color="black", box_alpha="0.0", box_border=0,
