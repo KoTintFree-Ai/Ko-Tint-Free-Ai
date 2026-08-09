@@ -257,7 +257,7 @@ with st.sidebar:
         font_files = getattr(engine, "AVAILABLE_FONTS", [])
         font_labels = [str(idx + 1) for idx, _ in enumerate(font_files)]
         font_choice = st.selectbox(T["font"], font_labels or ["Default"])
-        wm_text = st.text_input(T["wm_text"], value="JOKER", max_chars=80)
+        wm_text = st.text_input(T["wm_text"], value="Recap", max_chars=80)
         wm_pos_labels = {"bounce": "🔁 Bounce", "topleft": "↖️ Top left", "topright": "↗️ Top right", "bottom": "⬇️ Bottom center"}
         wm_pos = st.selectbox(T["wm_pos"], list(wm_pos_labels), format_func=lambda x: wm_pos_labels[x])
         logo_file = st.file_uploader(T["logo"], type=["png", "jpg", "jpeg"], key="logo_upload")
@@ -342,7 +342,7 @@ if persisted_upload:
             engine.render_calibration_preview(str(preview_frame), str(preview_overlay), blur_y_percent, sub_y_percent, blur_enabled)
             if preview_overlay.exists():
                 st.image(str(preview_overlay), use_container_width=True)
-                st.caption("⚪ Blur band   🔴 Subtitle band")
+                st.caption("⚪ Blur guide   🔤 Subtitle Preview text")
         except Exception as preview_error:
             st.warning(f"Preview unavailable: {preview_error}")
     with guide_col:
@@ -374,7 +374,7 @@ async def _run_pipeline(input_video: str, audio_path: str, output_path: str, sta
     engine.user_title_mode[USER_ID] = title_enabled
     engine.user_bypass_mode[USER_ID] = bypass_enabled
     engine.user_sub_color[USER_ID] = sub_color
-    engine.user_wm_text[USER_ID] = wm_text or "JOKER"
+    engine.user_wm_text[USER_ID] = wm_text or "Recap"
     engine.user_wm_pos[USER_ID] = wm_pos
     if font_files and font_choice != "Default":
         selected_index = int(font_choice) - 1
