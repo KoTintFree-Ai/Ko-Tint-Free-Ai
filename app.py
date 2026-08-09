@@ -203,6 +203,18 @@ with col3:
     if st.button(T["refresh"], use_container_width=True):
         st.rerun()
 
+def _platform_code(label: str) -> str:
+    if label.startswith("TikTok"):
+        return "tt"
+    if label.startswith("Facebook"):
+        return "fb"
+    return "yt"
+
+
+def _resolution_code(label: str) -> str:
+    return "1080" if label.startswith("1080") else "720"
+
+
 # Calibration preview: show the selected blur and subtitle positions before rendering.
 if uploaded:
     preview_col, guide_col = st.columns([1.35, 1])
@@ -230,18 +242,6 @@ elif youtube_url.strip():
     st.info("📥 Download the YouTube source first to see its calibration preview." if st.session_state.ui_lang == "မြန်မာ" else "📥 The YouTube source must be downloaded before a calibration preview can be shown.")
 
 start = st.button(T["generate"], type="primary", use_container_width=True)
-
-
-def _platform_code(label: str) -> str:
-    if label.startswith("TikTok"):
-        return "tt"
-    if label.startswith("Facebook"):
-        return "fb"
-    return "yt"
-
-
-def _resolution_code(label: str) -> str:
-    return "1080" if label.startswith("1080") else "720"
 
 
 async def _run_pipeline(input_video: str, audio_path: str, output_path: str, status_box, progress_bar):
