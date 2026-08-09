@@ -1,9 +1,0 @@
-__pycache__/
-*.py[cod]
-.venv/
-.env
-.streamlit/secrets.toml
-streamlit_jobs/
-temp/
-*.mp4
-.DS_Store
