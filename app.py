@@ -49,12 +49,11 @@ if "last_job" not in st.session_state:
 
 with st.sidebar:
     st.header("⚙️ Settings")
-    gemini_keys_text = st.text_area(
-        "Gemini API keys",
+    gemini_keys_text = st.text_input(
+        "Gemini API keys (comma-separated)",
         value="",
         type="password",
         help="Multiple keys may be separated by commas. Keys are used only for this session.",
-        height=90,
     )
     groq_key = st.text_input("Groq API key", value="", type="password")
     platform_label = st.selectbox("Video platform / aspect ratio", ["YouTube / 16:9", "TikTok / 9:16", "Facebook / 9:16"])
