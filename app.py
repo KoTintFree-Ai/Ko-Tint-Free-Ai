@@ -155,36 +155,30 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-def _request_slider_change(pending_key, delta):
-    # Store only a request in the callback. The actual slider widget value is
-    # applied at the start of the next script pass, before the widget exists.
-    st.session_state[pending_key] = delta
+def _nudge_state(key, delta, lower, upper):
+    current = int(st.session_state.get(key, lower))
+    st.session_state[key] = max(lower, min(upper, current + delta))
 
 
 def _nudge_slider(label, key, lower, upper, default, step=1):
-    widget_key = f"{key}_widget"
-    pending_key = f"{key}_pending"
-    if widget_key not in st.session_state:
-        st.session_state[widget_key] = default
-    if pending_key in st.session_state:
-        current = int(st.session_state[widget_key])
-        delta = int(st.session_state.pop(pending_key))
-        st.session_state[widget_key] = max(lower, min(upper, current + delta))
+    if key not in st.session_state:
+        st.session_state[key] = default
     st.write(label)
     left, middle, right = st.columns([0.18, 0.64, 0.18])
     with left:
-        st.button(
-            "−", key=f"{key}_minus", help=T["minus"], use_container_width=True,
-            on_click=_request_slider_change, args=(pending_key, -step)
-        )
+        if st.button("−", key=f"{key}_minus", help=T["minus"], use_container_width=True):
+            _nudge_state(key, -step, lower, upper)
+            st.rerun()
     with middle:
-        st.slider("", lower, upper, step=step, key=widget_key, label_visibility="collapsed")
-    with right:
-        st.button(
-            "+", key=f"{key}_plus", help=T["plus"], use_container_width=True,
-            on_click=_request_slider_change, args=(pending_key, step)
+        value = st.slider(
+            "", lower, upper, value=int(st.session_state[key]), step=step,
+            key=f"{key}_widget", label_visibility="collapsed"
         )
-    return int(st.session_state[widget_key])
+    with right:
+        if st.button("+", key=f"{key}_plus", help=T["plus"], use_container_width=True):
+            _nudge_state(key, step, lower, upper)
+            st.rerun()
+    return value
 
 
 def _named_color(value):
