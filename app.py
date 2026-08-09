@@ -283,8 +283,12 @@ with col1:
     uploaded = st.file_uploader(T["upload"], type=["mp4", "mov", "mkv", "webm", "avi"])
     youtube_url = st.text_input(T["youtube"])
     if uploaded is not None:
-        st.session_state.uploaded_name = uploaded.name
-        st.session_state.uploaded_bytes = uploaded.getvalue()
+        upload_sig = (uploaded.name, int(getattr(uploaded, "size", 0)))
+        if st.session_state.get("uploaded_sig") != upload_sig:
+            st.session_state.uploaded_name = uploaded.name
+            st.session_state.uploaded_bytes = uploaded.getvalue()
+            st.session_state.uploaded_sig = upload_sig
+            st.session_state.preview_frame_sig = None
     persisted_upload = bool(st.session_state.get("uploaded_bytes"))
     persisted_upload_name = st.session_state.get("uploaded_name", "source.mp4")
 with col2:
@@ -327,9 +331,14 @@ if persisted_upload:
         preview_frame = WORK_ROOT / "calibration_frame.png"
         preview_overlay = WORK_ROOT / "calibration_overlay.png"
         try:
-            preview_input.write_bytes(st.session_state.uploaded_bytes)
+            if not preview_input.exists() or st.session_state.get("preview_source_sig") != st.session_state.get("uploaded_sig"):
+                preview_input.write_bytes(st.session_state.uploaded_bytes)
+                st.session_state.preview_source_sig = st.session_state.get("uploaded_sig")
             dim_w, dim_h = engine.get_video_dimensions(_platform_code(platform_label), _resolution_code(resolution_label))
-            engine.extract_preview_frame(str(preview_input), str(preview_frame), dim_w, dim_h, percent=0.3)
+            frame_sig = (st.session_state.get("uploaded_sig"), dim_w, dim_h)
+            if not preview_frame.exists() or st.session_state.get("preview_frame_sig") != frame_sig:
+                engine.extract_preview_frame(str(preview_input), str(preview_frame), dim_w, dim_h, percent=0.3)
+                st.session_state.preview_frame_sig = frame_sig
             engine.render_calibration_preview(str(preview_frame), str(preview_overlay), blur_y_percent, sub_y_percent, blur_enabled)
             if preview_overlay.exists():
                 st.image(str(preview_overlay), use_container_width=True)
