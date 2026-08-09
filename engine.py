@@ -467,6 +467,15 @@ def render_calibration_preview(frame_path, out_path, blur_y, sub_y, blur_on, sub
     )
     title_size = max(18, min(int(title_size), 96))
     title_width = max(25.0, min(float(title_width), 100.0))
+    title_x = (100.0 - title_width) / 2.0
+    # The production renderer constrains the title image to title_width. Draw
+    # the same centered boundary in the calibration preview so the control is
+    # visible even when the sample title itself is short.
+    title_h = max(6.0, min(18.0, float(title_size) / 4.0))
+    parts.append(
+        f"drawbox=x=iw*({title_x}/100.0):y=ih*0.05:w=iw*({title_width}/100.0):"
+        f"h=ih*({title_h}/100.0):color=cyan@0.75:t=3"
+    )
     safe_title = str(title_text).replace("'", "\\\\'")
     parts.append(
         f"drawtext=text='{safe_title}':fontcolor=cyan:fontsize={title_size}:"
