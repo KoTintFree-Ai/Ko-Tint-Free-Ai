@@ -161,6 +161,8 @@ def _nudge_state(key, delta, lower, upper):
 
 
 def _nudge_slider(label, key, lower, upper, default, step=1):
+    # The slider deliberately has no explicit session-state key. Its persistent
+    # value lives in key, so the buttons can safely update key and rerun.
     if key not in st.session_state:
         st.session_state[key] = default
     st.write(label)
@@ -172,12 +174,13 @@ def _nudge_slider(label, key, lower, upper, default, step=1):
     with middle:
         value = st.slider(
             "", lower, upper, value=int(st.session_state[key]), step=step,
-            key=f"{key}_widget", label_visibility="collapsed"
+            label_visibility="collapsed"
         )
     with right:
         if st.button("+", key=f"{key}_plus", help=T["plus"], use_container_width=True):
             _nudge_state(key, step, lower, upper)
             st.rerun()
+    st.session_state[key] = value
     return value
 
 
