@@ -3,6 +3,7 @@ import os
 import shutil
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 import httpx
@@ -18,9 +19,18 @@ import engine
 APP_ROOT = Path(__file__).resolve().parent
 WORK_ROOT = APP_ROOT / "streamlit_jobs"
 WORK_ROOT.mkdir(exist_ok=True)
-TEMP_ROOT = APP_ROOT / "temp"
-TEMP_ROOT.mkdir(exist_ok=True)
-USER_ID = 987654321
+
+# Streamlit creates a separate session state per browser session. Use a stable
+# per-session directory so two users never share previews, uploads, logos, or
+# rendered output files.
+if "session_id" not in st.session_state:
+    st.session_state.session_id = uuid.uuid4().hex
+SESSION_ID = st.session_state.session_id
+SESSION_ROOT = WORK_ROOT / SESSION_ID
+SESSION_ROOT.mkdir(parents=True, exist_ok=True)
+TEMP_ROOT = SESSION_ROOT / "temp"
+TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+USER_ID = f"streamlit_{SESSION_ID}"
 
 st.set_page_config(
     page_title="Ko Tint Free AI",
@@ -359,9 +369,9 @@ if persisted_upload:
     with preview_col:
         st.subheader(f"🖼️ {T['calibration']}")
         preview_ext = Path(persisted_upload_name).suffix or ".mp4"
-        preview_input = WORK_ROOT / f"calibration_source{preview_ext}"
-        preview_frame = WORK_ROOT / "calibration_frame.png"
-        preview_overlay = WORK_ROOT / "calibration_overlay.png"
+        preview_input = SESSION_ROOT / f"calibration_source{preview_ext}"
+        preview_frame = SESSION_ROOT / "calibration_frame.png"
+        preview_overlay = SESSION_ROOT / "calibration_overlay.png"
         try:
             if not preview_input.exists() or st.session_state.get("preview_source_sig") != st.session_state.get("uploaded_sig"):
                 preview_input.write_bytes(st.session_state.uploaded_bytes)
@@ -402,7 +412,7 @@ elif youtube_url.strip():
 start = st.button(T["generate"], type="primary", use_container_width=True)
 
 
-async def _run_pipeline(input_video: str, audio_path: str, output_path: str, status_box, progress_bar, background_music_path=None, background_music_volume=0.0):
+async def _run_pipeline(input_video: str, audio_path: str, output_path: str, status_box, progress_bar, background_music_path=None, background_music_volume=0.0, work_dir=None):
     async def progress(message: str):
         status_box.info(message)
         import re
@@ -442,6 +452,7 @@ async def _run_pipeline(input_video: str, audio_path: str, output_path: str, sta
         progress_cb=progress,
         background_music_path=background_music_path,
         background_music_volume=background_music_volume,
+        work_dir=work_dir,
     )
 
 
@@ -453,7 +464,7 @@ if start:
         st.error(T["missing_keys"])
         st.stop()
 
-    job_dir = Path(tempfile.mkdtemp(prefix="recap_", dir=WORK_ROOT))
+    job_dir = Path(tempfile.mkdtemp(prefix="recap_", dir=SESSION_ROOT))
     input_path = job_dir / (persisted_upload_name if persisted_upload else "source.mp4")
     audio_path = job_dir / "source_audio.mp3"
     background_music_path = job_dir / "background_music"
@@ -478,7 +489,8 @@ if start:
             bg_path_arg = str(background_music_path)
         pipeline_result = asyncio.run(_run_pipeline(
             str(input_path), str(audio_path), str(output_path), status_box, progress_bar,
-            background_music_path=bg_path_arg, background_music_volume=bg_music_volume
+            background_music_path=bg_path_arg, background_music_volume=bg_music_volume,
+            work_dir=str(TEMP_ROOT)
         ))
         if isinstance(pipeline_result, (tuple, list)) and len(pipeline_result) >= 3:
             st.session_state.generated_caption = pipeline_result[1] or ""
