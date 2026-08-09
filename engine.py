@@ -182,12 +182,14 @@ def get_blur_mask_filter(current_video_label="[0:v]", y_position_percent=82, bor
     band_h = f"trunc(ih*{band_percent/100.0}/2)*2"
     # The overlay Y coordinate is relative to the full original frame. Using
     # the blurred crop height (H) here kept the mask near the same position.
-    overlay_y = f"main_h*({y_position_percent}/100.0)"
+    overlay_y = f"trunc(main_h*({y_position_percent}/100.0)/2)*2"
     crop_x = f"trunc(iw*(1-{width_percent/100.0})/2/2)*2"
     crop_w = f"trunc(iw*{width_percent/100.0}/2)*2"
+    # overlay expressions use main_w/main_h; iw/ih are not valid for the overlay x input.
+    overlay_x = f"trunc(main_w*(1-{width_percent/100.0})/2/2)*2"
     filter_string = f"{current_video_label}split=2[orig_for_blur][blur_crop];"
     filter_string += f"[blur_crop]crop={crop_w}:{band_h}:{crop_x}:{crop_y},boxblur={blur_strength}:2[blurred_bot];"
-    filter_string += f"[orig_for_blur][blurred_bot]overlay={crop_x}:{overlay_y}[vid_sub_blurred]"
+    filter_string += f"[orig_for_blur][blurred_bot]overlay={overlay_x}:{overlay_y}[vid_sub_blurred]"
     return filter_string, "[vid_sub_blurred]"
 
 # =====================================================================
