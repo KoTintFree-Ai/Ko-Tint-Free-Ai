@@ -339,7 +339,7 @@ if persisted_upload:
             if not preview_frame.exists() or st.session_state.get("preview_frame_sig") != frame_sig:
                 engine.extract_preview_frame(str(preview_input), str(preview_frame), dim_w, dim_h, percent=0.3)
                 st.session_state.preview_frame_sig = frame_sig
-            engine.render_calibration_preview(str(preview_frame), str(preview_overlay), blur_y_percent, sub_y_percent, blur_enabled)
+            engine.render_calibration_preview(str(preview_frame), str(preview_overlay), blur_y_percent, sub_y_percent, blur_enabled, sub_font_size)
             if preview_overlay.exists():
                 st.image(str(preview_overlay), use_container_width=True)
                 st.caption("⚪ Blur guide   🔤 Subtitle Preview text")
