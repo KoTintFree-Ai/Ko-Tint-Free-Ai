@@ -395,7 +395,7 @@ if persisted_upload:
     with guide_col:
         st.info(T["calibration_help"])
         st.write(f"Subtitle: **{sub_y_percent}%** · **{sub_font_size}px**")
-        st.write(f"Blur: **{'On' if blur_enabled else 'Off'}** · **{blur_y_percent}%** · strength **{blur_strength}**")
+        st.write(f"Blur: **{'On' if blur_enabled else 'Off'}** · Y **{blur_y_percent}%** · height **{blur_height}%** · width **{blur_width}%** · strength **{blur_strength}**")
 elif youtube_url.strip():
     st.info("📥 Download the YouTube source first to see its calibration preview." if st.session_state.ui_lang == "မြန်မာ" else "📥 The YouTube source must be downloaded before a calibration preview can be shown.")
 
@@ -430,7 +430,7 @@ async def _run_pipeline(input_video: str, audio_path: str, output_path: str, sta
     if font_files and font_choice != "Default":
         selected_index = int(font_choice) - 1
         engine.user_font[USER_ID] = font_files[max(0, min(selected_index, len(font_files) - 1))]
-    await engine.advanced_sync_pipeline(
+    return await engine.advanced_sync_pipeline(
         audio_path=audio_path,
         gemini_keys_str=gemini_keys_text,
         groq_key=groq_key,
@@ -476,10 +476,16 @@ if start:
             background_music_path = background_music_path.with_suffix(bg_suffix)
             background_music_path.write_bytes(bg_music_file.getvalue())
             bg_path_arg = str(background_music_path)
-        asyncio.run(_run_pipeline(
+        pipeline_result = asyncio.run(_run_pipeline(
             str(input_path), str(audio_path), str(output_path), status_box, progress_bar,
             background_music_path=bg_path_arg, background_music_volume=bg_music_volume
         ))
+        if isinstance(pipeline_result, (tuple, list)) and len(pipeline_result) >= 3:
+            st.session_state.generated_caption = pipeline_result[1] or ""
+            st.session_state.generated_hashtags = pipeline_result[2] or ""
+        else:
+            st.session_state.generated_caption = ""
+            st.session_state.generated_hashtags = ""
         progress_bar.progress(100)
         status_box.success(T["ready"])
         st.session_state.result_path = str(output_path)
@@ -492,6 +498,13 @@ if st.session_state.result_path and os.path.exists(st.session_state.result_path)
     st.divider()
     st.subheader(T["ready"])
     st.video(st.session_state.result_path)
+    generated_caption = st.session_state.get("generated_caption", "")
+    generated_hashtags = st.session_state.get("generated_hashtags", "")
+    if generated_caption or generated_hashtags:
+        st.subheader("📣 Caption & Hashtags" if st.session_state.ui_lang == "English" else "📣 Caption နှင့် Hashtags")
+        telegram_caption = "\n\n".join(part for part in (generated_caption, generated_hashtags) if part)
+        if telegram_caption:
+            st.code(telegram_caption, language=None)
     with open(st.session_state.result_path, "rb") as f:
         st.download_button(T["download"], data=f, file_name="ko_tint_free_ai_recap.mp4", mime="video/mp4", type="primary")
 
