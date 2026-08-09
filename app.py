@@ -57,6 +57,7 @@ TEXT = {
         "light": "အလင်း",
         "keys": "Gemini API key များ (ကော်မာခံပြီး)",
         "groq": "Groq API key",
+        "remember_keys": "ဒီ Browser မှာ API keys မှတ်ထားမည်",
         "platform": "Video အရွယ်အစား",
         "resolution": "Resolution",
         "voice": "🎙️ အသံ",
@@ -115,6 +116,7 @@ TEXT = {
         "light": "Light",
         "keys": "Gemini API keys (comma-separated)",
         "groq": "Groq API key",
+        "remember_keys": "Remember API keys on this browser",
         "platform": "Video aspect ratio",
         "resolution": "Resolution",
         "voice": "🎙️ Voice",
@@ -189,6 +191,7 @@ _REMEMBERED_DEFAULTS = {
     "bg_music_enabled": False,
     "bg_music_volume": 0.15,
     "download_name": "ko_tint_free_ai_recap",
+    "remember_api_keys": False,
 }
 for _pref_key, _pref_value in _REMEMBERED_DEFAULTS.items():
     if _pref_key not in st.session_state and _pref_value is not None:
@@ -211,7 +214,15 @@ if LOCAL_STORAGE is not None and not st.session_state.get("_preferences_loaded",
             for _pref_key in PREFERENCE_KEYS:
                 if _pref_key in _stored_pref and _stored_pref[_pref_key] is not None:
                     st.session_state[_pref_key] = _stored_pref[_pref_key]
-        st.session_state["_preferences_loaded"] = True
+            if st.session_state.get("remember_api_keys"):
+                st.session_state["gemini_keys_input"] = str(_stored_pref.get("gemini_keys", ""))
+                st.session_state["groq_key_input"] = str(_stored_pref.get("groq_key", ""))
+            st.session_state["_preferences_loaded"] = True
+        elif st.session_state.get("_preferences_load_attempts", 0) < 1:
+            st.session_state["_preferences_load_attempts"] = 1
+            st.rerun()
+        else:
+            st.session_state["_preferences_loaded"] = True
     except Exception:
         # The app remains usable if the optional browser component is blocked.
         st.session_state["_preferences_loaded"] = True
@@ -224,6 +235,9 @@ def _save_preferences():
     if LOCAL_STORAGE is None:
         return
     _payload = {key: st.session_state.get(key) for key in PREFERENCE_KEYS if key in st.session_state}
+    if st.session_state.get("remember_api_keys"):
+        _payload["gemini_keys"] = st.session_state.get("gemini_keys_input", "")
+        _payload["groq_key"] = st.session_state.get("groq_key_input", "")
     try:
         LOCAL_STORAGE.setItem(PREFERENCES_STORAGE_KEY, json.dumps(_payload, ensure_ascii=False))
     except Exception:
@@ -333,8 +347,12 @@ with st.sidebar:
     T = TEXT[st.session_state.ui_lang]
     st.session_state.theme = st.radio(T["theme"], ["dark", "light"], format_func=lambda x: T["dark"] if x == "dark" else T["light"], horizontal=True, index=0 if st.session_state.theme == "dark" else 1)
     st.caption(T["privacy"])
-    gemini_keys_text = st.text_input(T["keys"], value="", type="password", help="Separate multiple keys with commas.")
-    groq_key = st.text_input(T["groq"], value="", type="password")
+    remember_api_keys = st.checkbox(
+        T["remember_keys"], key="remember_api_keys",
+        help="Stores keys in this browser's local storage. Do not enable on shared/public computers.",
+    )
+    gemini_keys_text = st.text_input(T["keys"], type="password", key="gemini_keys_input", help="Separate multiple keys with commas.")
+    groq_key = st.text_input(T["groq"], type="password", key="groq_key_input")
 
     platform_options = ["YouTube / 16:9", "TikTok / 9:16", "Facebook / 9:16"]
     if st.session_state.get("platform_label") not in platform_options:
