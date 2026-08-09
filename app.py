@@ -214,7 +214,7 @@ if uploaded:
         preview_overlay = WORK_ROOT / "calibration_overlay.png"
         try:
             preview_input.write_bytes(uploaded.getbuffer())
-            dim_w, dim_h = engine.get_dimensions(_resolution_code(resolution_label))
+            dim_w, dim_h = engine.get_video_dimensions(_platform_code(platform_label), _resolution_code(resolution_label))
             engine.extract_preview_frame(str(preview_input), str(preview_frame), dim_w, dim_h, percent=0.3)
             engine.render_calibration_preview(str(preview_frame), str(preview_overlay), blur_y_percent, sub_y_percent, blur_enabled)
             if preview_overlay.exists():
@@ -233,7 +233,11 @@ start = st.button(T["generate"], type="primary", use_container_width=True)
 
 
 def _platform_code(label: str) -> str:
-    return "tiktok" if label.startswith(("TikTok", "Facebook")) else "yt"
+    if label.startswith("TikTok"):
+        return "tt"
+    if label.startswith("Facebook"):
+        return "fb"
+    return "yt"
 
 
 def _resolution_code(label: str) -> str:
