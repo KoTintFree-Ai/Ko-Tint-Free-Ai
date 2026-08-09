@@ -173,7 +173,7 @@ def _nudge_slider(label, key, lower, upper, default, step=1):
             st.rerun()
     with middle:
         value = st.slider(
-            "", lower, upper, value=int(st.session_state[key]), step=step,
+            label, lower, upper, value=int(st.session_state[key]), step=step,
             label_visibility="collapsed"
         )
     with right:
