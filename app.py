@@ -50,6 +50,8 @@ TEXT = {
         "blur_pos": "🌫️ Blur နေရာ",
         "blur_strength": "🌫️ Blur အား",
         "title": "🏷️ Video Title Overlay",
+        "title_size": "🏷️ Title အမြင့် / စာလုံးအရွယ်",
+        "title_width": "🏷️ Title အကျယ်",
         "bypass": "🛡️ Edit Bypass",
         "font": "🔤 မြန်မာ Font",
         "watermark": "💧 Watermark",
@@ -103,6 +105,8 @@ TEXT = {
         "blur_pos": "🌫️ Blur position",
         "blur_strength": "🌫️ Blur intensity",
         "title": "🏷️ Title overlay",
+        "title_size": "🏷️ Title height / font size",
+        "title_width": "🏷️ Title width",
         "bypass": "🛡️ Edit bypass",
         "font": "🔤 Myanmar font",
         "watermark": "💧 Watermark",
@@ -259,6 +263,8 @@ with st.sidebar:
         blur_y_percent = _nudge_slider(T["blur_pos"], "blur_y_percent", 45, 88, 82)
         blur_strength = _nudge_slider(T["blur_strength"], "blur_strength", 1, 20, 5)
         title_enabled = st.toggle(T["title"], value=True)
+        title_size = _nudge_slider(T["title_size"], "title_size", 24, 64, 42)
+        title_width = _nudge_slider(T["title_width"], "title_width", 45, 100, 85)
         bypass_enabled = st.toggle(T["bypass"], value=False)
         font_files = getattr(engine, "AVAILABLE_FONTS", [])
         font_labels = [str(idx + 1) for idx, _ in enumerate(font_files)]
@@ -386,6 +392,8 @@ async def _run_pipeline(input_video: str, audio_path: str, output_path: str, sta
     engine.user_sub_y[USER_ID] = sub_y_percent
     engine.user_sub_size[USER_ID] = sub_font_size
     engine.user_title_mode[USER_ID] = title_enabled
+    engine.user_title_size[USER_ID] = title_size
+    engine.user_title_width[USER_ID] = title_width
     engine.user_bypass_mode[USER_ID] = bypass_enabled
     engine.user_sub_color[USER_ID] = sub_color
     engine.user_wm_text[USER_ID] = wm_text or "Recap"
