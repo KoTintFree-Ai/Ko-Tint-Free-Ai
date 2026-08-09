@@ -203,6 +203,32 @@ with col3:
     if st.button(T["refresh"], use_container_width=True):
         st.rerun()
 
+# Calibration preview: show the selected blur and subtitle positions before rendering.
+if uploaded:
+    preview_col, guide_col = st.columns([1.35, 1])
+    with preview_col:
+        st.subheader(f"🖼️ {T['calibration']}")
+        preview_ext = Path(uploaded.name).suffix or ".mp4"
+        preview_input = WORK_ROOT / f"calibration_source{preview_ext}"
+        preview_frame = WORK_ROOT / "calibration_frame.png"
+        preview_overlay = WORK_ROOT / "calibration_overlay.png"
+        try:
+            preview_input.write_bytes(uploaded.getbuffer())
+            dim_w, dim_h = engine.get_dimensions(_resolution_code(resolution_label))
+            engine.extract_preview_frame(str(preview_input), str(preview_frame), dim_w, dim_h, percent=0.3)
+            engine.render_calibration_preview(str(preview_frame), str(preview_overlay), blur_y_percent, sub_y_percent, blur_enabled)
+            if preview_overlay.exists():
+                st.image(str(preview_overlay), use_container_width=True)
+                st.caption("🔴 Blur band   🟡 Subtitle band")
+        except Exception as preview_error:
+            st.warning(f"Preview unavailable: {preview_error}")
+    with guide_col:
+        st.info(T["calibration_help"])
+        st.write(f"Subtitle: **{sub_y_percent}%** · **{sub_font_size}px**")
+        st.write(f"Blur: **{'On' if blur_enabled else 'Off'}** · **{blur_y_percent}%** · strength **{blur_strength}**")
+elif youtube_url.strip():
+    st.info("📥 Download the YouTube source first to see its calibration preview." if st.session_state.ui_lang == "မြန်မာ" else "📥 The YouTube source must be downloaded before a calibration preview can be shown.")
+
 start = st.button(T["generate"], type="primary", use_container_width=True)
 
 
