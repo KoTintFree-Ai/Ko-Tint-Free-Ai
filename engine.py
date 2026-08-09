@@ -978,7 +978,9 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
     blur_strength = user_blur_strength.get(user_id, 5)
     blur_filter_str = ""
     cur_label = "[0:v]"
-    if user_blur_mode.get(user_id, False):
+    # Diagnostic recovery mode: keep blur disabled until the app baseline is
+    # confirmed stable. The UI and calibration controls remain available.
+    if False and user_blur_mode.get(user_id, False):
         blur_filter_str, cur_label = get_blur_mask_filter("[0:v]", y_position_percent=blur_y_percent, blur_strength=blur_strength)
 
     wm_text = user_wm_text.get(user_id, "JOKER")
