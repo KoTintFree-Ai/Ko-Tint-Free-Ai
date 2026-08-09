@@ -35,6 +35,12 @@ nest_asyncio.apply()
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 
+# Conservative defaults for two concurrent Streamlit users. Operators can raise
+# these with environment variables when more CPU/RAM is available.
+FFMPEG_THREADS = max(1, int(os.getenv("RECAP_FFMPEG_THREADS", "1")))
+CHUNK_WORKERS = max(1, min(int(os.getenv("RECAP_CHUNK_WORKERS", "1")), 4))
+TTS_WORKERS = max(1, min(int(os.getenv("RECAP_TTS_WORKERS", "3")), 5))
+
 API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))
 API_HASH = os.getenv("TELEGRAM_API_HASH", "")
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -404,6 +410,10 @@ def run_health_check_server():
     server.serve_forever()
 
 def run_ffmpeg(cmd, label="ffmpeg"):
+    cmd = list(cmd)
+    if cmd and os.path.basename(str(cmd[0])) == "ffmpeg" and "-threads" not in cmd:
+        insert_at = 2 if len(cmd) > 1 and cmd[1] == "-y" else 1
+        cmd[insert_at:insert_at] = ["-threads", str(FFMPEG_THREADS)]
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if result.returncode != 0:
         tail = (result.stderr or "").strip()
@@ -913,7 +923,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
         await progress_cb("🎙️ အဆင့် ၄/၇ — မြန်မာအသံဖိုင်များကို ထုတ်လုပ်နေပါသည်...")
     story_title, story_hook, story_hashtags = await generate_title_hook_hashtags(full_translated_text, gemini_pool)
     audio_files_map = {}
-    tts_semaphore = asyncio.Semaphore(5)
+    tts_semaphore = asyncio.Semaphore(TTS_WORKERS)
     selected_rate = voice_config.get("rate", "+15%")
 
     async def generate_audio_chunk(idx, seg):
@@ -960,7 +970,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
             translated_text = translated_dict.get(idx, "")
             ffmpeg_args.append((idx, float(seg["start"]), float(seg["end"]), input_video, audio_files_map[idx], seg["is_speech"], translated_text, p_form, p_res, bypass_enabled, work_dir))
 
-    with ThreadPoolExecutor(max_workers=min(os.cpu_count() or 4, 8)) as executor:
+    with ThreadPoolExecutor(max_workers=CHUNK_WORKERS) as executor:
         chunk_results = list(executor.map(process_single_chunk, ffmpeg_args))
     chunk_results.sort(key=lambda x: x[0])
     ffmpeg_inputs = [res[1] for res in chunk_results if res[1] is not None]
