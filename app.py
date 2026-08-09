@@ -365,7 +365,22 @@ if persisted_upload:
             if not preview_frame.exists() or st.session_state.get("preview_frame_sig") != frame_sig:
                 engine.extract_preview_frame(str(preview_input), str(preview_frame), dim_w, dim_h, percent=0.3)
                 st.session_state.preview_frame_sig = frame_sig
-            engine.render_calibration_preview(str(preview_frame), str(preview_overlay), blur_y_percent, sub_y_percent, blur_enabled, sub_font_size, title_text=("Preview Title" if title_enabled else ""), title_size=title_size, title_width=title_width, blur_height=blur_height, blur_width=blur_width)
+            try:
+                engine.render_calibration_preview(
+                    str(preview_frame), str(preview_overlay), blur_y_percent,
+                    sub_y_percent, blur_enabled, sub_font_size,
+                    title_text=("Preview Title" if title_enabled else ""),
+                    title_size=title_size, title_width=title_width,
+                    blur_height=blur_height, blur_width=blur_width,
+                )
+            except TypeError as preview_api_error:
+                # Keep preview usable if Streamlit Cloud temporarily has an older engine.py.
+                if "unexpected keyword argument" not in str(preview_api_error):
+                    raise
+                engine.render_calibration_preview(
+                    str(preview_frame), str(preview_overlay), blur_y_percent,
+                    sub_y_percent, blur_enabled, sub_font_size,
+                )
             if preview_overlay.exists():
                 st.image(str(preview_overlay), use_container_width=True)
                 st.caption("⚪ Blur guide   🔤 Subtitle Preview text")
