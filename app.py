@@ -253,8 +253,14 @@ with st.sidebar:
 
     platform_label = st.selectbox(T["platform"], ["YouTube / 16:9", "TikTok / 9:16", "Facebook / 9:16"])
     resolution_label = st.selectbox(T["resolution"], ["720p", "1080p"])
-    voice_options = {key: value["name"] for key, value in engine.VOICE_MODES.items()}
-    voice_key = st.selectbox(T["voice"], list(voice_options), format_func=lambda key: voice_options[key], index=1 if len(voice_options) > 1 else 0)
+    voice_keys = list(engine.VOICE_MODES)
+    def _voice_number_label(key):
+        number = voice_keys.index(key) + 1
+        raw_name = str(engine.VOICE_MODES[key].get("name", ""))
+        # Keep only the parenthesized style text, e.g. 15 (Standard).
+        suffix = raw_name[raw_name.find("("):].strip() if "(" in raw_name else ""
+        return f"{number} {suffix}".strip()
+    voice_key = st.selectbox(T["voice"], voice_keys, format_func=_voice_number_label, index=1 if len(voice_keys) > 1 else 0)
     speed_label = st.selectbox(T["speed"], list(engine.SPEED_MULTIPLIERS), index=0)
 
     with st.expander(T["advanced"], expanded=True):
