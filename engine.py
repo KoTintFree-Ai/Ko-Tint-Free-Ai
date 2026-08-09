@@ -52,7 +52,9 @@ user_sub_color = {}
 user_title_mode = {}     
 user_blur_mode = {}      
 user_blur_y = {}         
+user_blur_strength = {}  
 user_sub_y = {}          
+user_sub_size = {}       
 user_pending_calib = {}  
 user_wm_text = {}
 user_wm_pos = {}
@@ -164,13 +166,16 @@ SUB_COLOR_CHOICES = [("yellow", "အဝါရောင်"), ("white", "အဖ�
 # =====================================================================
 # 🌫️ BLUR MASK 
 # =====================================================================
-def get_blur_mask_filter(current_video_label="[0:v]", y_position_percent=82, border_thick=0):
-    if y_position_percent > 88: y_position_percent = 88
-    crop_y = f"ih*({y_position_percent}/100.0)"
+def get_blur_mask_filter(current_video_label="[0:v]", y_position_percent=82, border_thick=0, blur_strength=5):
+    # Keep the blur band inside the frame and use even dimensions for FFmpeg filters.
+    y_position_percent = max(0.0, min(float(y_position_percent), 88.0))
+    blur_strength = max(1, min(int(blur_strength), 20))
+    crop_y = f"trunc(ih*({y_position_percent}/100.0)/2)*2"
+    band_h = "trunc(ih*0.12/2)*2"
     overlay_y = f"H*({y_position_percent}/100.0)"
-    h_expr = "ih*0.12"  
+    crop_w = f"iw-{border_thick * 2}"
     filter_string = f"{current_video_label}split=2[orig_for_blur][blur_crop];"
-    filter_string += f"[blur_crop]crop=iw-{border_thick*2}:{h_expr}:{border_thick}:{crop_y},scale=iw/4:ih/4,boxblur=5:2,scale=iw*4:ih*4:flags=fast_bilinear[blurred_bot];"
+    filter_string += f"[blur_crop]crop={crop_w}:{band_h}:{border_thick}:{crop_y},boxblur={blur_strength}:2[blurred_bot];"
     filter_string += f"[orig_for_blur][blurred_bot]overlay={border_thick}:{overlay_y}[vid_sub_blurred]"
     return filter_string, "[vid_sub_blurred]"
 
@@ -312,7 +317,7 @@ def create_text_image_full(text, font_size, text_color, outline_color, outline_w
         if painter.isActive(): painter.end()
     return img
 
-def generate_subtitle_overlay_filter(json_path, audio_length, job_dir, TW=1080, TH=1920, sub_y_percent=82, sub_color="yellow", font_fam="Arial"):
+def generate_subtitle_overlay_filter(json_path, audio_length, job_dir, TW=1080, TH=1920, sub_y_percent=82, sub_color="yellow", font_fam="Arial", sub_font_size=35):
     with open(json_path, "r", encoding="utf-8") as f:
         segments = json.load(f)
 
@@ -343,7 +348,7 @@ def generate_subtitle_overlay_filter(json_path, audio_length, job_dir, TW=1080, 
             sub_abs_path = os.path.join(job_dir, sub_png_filename)
 
             sub_img = create_text_image_full(
-                text=txt, font_size=35, text_color=sub_color, outline_color="black", outline_width=3,
+                text=txt, font_size=sub_font_size, text_color=sub_color, outline_color="black", outline_width=3,
                 use_box=True, box_color="black", box_alpha="0.50", box_border=22,
                 width=TW, height=TH, align="top", margin_v=TH * (sub_y_percent / 100.0), font_family=font_fam, is_title=False
             )
@@ -965,6 +970,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
     total_final_duration = cursor
 
     sub_y_percent = user_sub_y.get(user_id, 82)
+    sub_font_size = user_sub_size.get(user_id, 35)
     sub_color = user_sub_color.get(user_id, "yellow")
     job_dir = f"temp/subjob_{user_id}_{int(time.time())}"
     os.makedirs(job_dir, exist_ok=True)
@@ -973,7 +979,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
         subs_json_path = os.path.join(job_dir, "subs.json")
         with open(subs_json_path, "w", encoding="utf-8") as f:
             json.dump(sub_segments, f, ensure_ascii=False)
-        subs_concat_path = generate_subtitle_overlay_filter(subs_json_path, total_final_duration, job_dir, TW=dim_w, TH=dim_h, sub_y_percent=sub_y_percent, sub_color=sub_color, font_fam=selected_font_fam)
+        subs_concat_path = generate_subtitle_overlay_filter(subs_json_path, total_final_duration, job_dir, TW=dim_w, TH=dim_h, sub_y_percent=sub_y_percent, sub_color=sub_color, font_fam=selected_font_fam, sub_font_size=sub_font_size)
 
     title_path = None
     if user_title_mode.get(user_id, True) and story_title and story_title.strip():
@@ -986,10 +992,11 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
         title_img.save(title_path, "PNG")
 
     blur_y_percent = user_blur_y.get(user_id, 82)
+    blur_strength = user_blur_strength.get(user_id, 5)
     blur_filter_str = ""
     cur_label = "[0:v]"
     if user_blur_mode.get(user_id, False):
-        blur_filter_str, cur_label = get_blur_mask_filter("[0:v]", y_position_percent=blur_y_percent)
+        blur_filter_str, cur_label = get_blur_mask_filter("[0:v]", y_position_percent=blur_y_percent, blur_strength=blur_strength)
 
     wm_text = user_wm_text.get(user_id, "JOKER")
     wm_pos = user_wm_pos.get(user_id, "bounce")
