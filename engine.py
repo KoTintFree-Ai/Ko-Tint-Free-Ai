@@ -54,8 +54,10 @@ user_title_size = {}
 user_title_width = {}
 user_blur_mode = {}
 user_blur_y = {}         
-user_blur_strength = {}  
-user_sub_y = {}          
+user_blur_strength = {}
+user_blur_height = {}
+user_blur_width = {}
+user_sub_y = {}
 user_sub_size = {}       
 user_pending_calib = {}  
 user_wm_text = {}
@@ -168,11 +170,12 @@ SUB_COLOR_CHOICES = [("yellow", "အဝါရောင်"), ("white", "အဖ�
 # =====================================================================
 # 🌫️ BLUR MASK 
 # =====================================================================
-def get_blur_mask_filter(current_video_label="[0:v]", y_position_percent=82, border_thick=0, blur_strength=5):
+def get_blur_mask_filter(current_video_label="[0:v]", y_position_percent=82, border_thick=0, blur_strength=5, blur_height_percent=12, blur_width_percent=100):
     # Keep the blur band inside the frame and use even dimensions for FFmpeg filters.
     # Use a wider band so subtitles are fully covered, while keeping the crop
     # inside the frame even near the bottom edge.
-    band_percent = 12.0
+    band_percent = max(2.0, min(float(blur_height_percent), 40.0))
+    width_percent = max(25.0, min(float(blur_width_percent), 100.0))
     y_position_percent = max(0.0, min(float(y_position_percent), 100.0 - band_percent))
     blur_strength = max(1, min(int(blur_strength), 20))
     crop_y = f"trunc(ih*({y_position_percent}/100.0)/2)*2"
@@ -180,10 +183,11 @@ def get_blur_mask_filter(current_video_label="[0:v]", y_position_percent=82, bor
     # The overlay Y coordinate is relative to the full original frame. Using
     # the blurred crop height (H) here kept the mask near the same position.
     overlay_y = f"main_h*({y_position_percent}/100.0)"
-    crop_w = f"iw-{border_thick * 2}"
+    crop_x = f"trunc(iw*(1-{width_percent/100.0})/2/2)*2"
+    crop_w = f"trunc(iw*{width_percent/100.0}/2)*2"
     filter_string = f"{current_video_label}split=2[orig_for_blur][blur_crop];"
-    filter_string += f"[blur_crop]crop={crop_w}:{band_h}:{border_thick}:{crop_y},boxblur={blur_strength}:2[blurred_bot];"
-    filter_string += f"[orig_for_blur][blurred_bot]overlay={border_thick}:{overlay_y}[vid_sub_blurred]"
+    filter_string += f"[blur_crop]crop={crop_w}:{band_h}:{crop_x}:{crop_y},boxblur={blur_strength}:2[blurred_bot];"
+    filter_string += f"[orig_for_blur][blurred_bot]overlay={crop_x}:{overlay_y}[vid_sub_blurred]"
     return filter_string, "[vid_sub_blurred]"
 
 # =====================================================================
@@ -446,15 +450,25 @@ def extract_preview_frame(video_path, out_path, dim_w, dim_h, percent=0.3):
     ]
     run_ffmpeg(cmd, label="preview_frame")
 
-def render_calibration_preview(frame_path, out_path, blur_y, sub_y, blur_on, sub_font_size=36):
+def render_calibration_preview(frame_path, out_path, blur_y, sub_y, blur_on, sub_font_size=36, title_text="Preview Title", title_size=42, title_width=85, blur_height=12, blur_width=100):
     parts = []
     if blur_on:
-        parts.append(f"drawbox=x=0:y=ih*({blur_y}/100.0):w=iw:h=ih*0.12:color=white@0.55:t=fill")
+        blur_h = max(2.0, min(float(blur_height), 40.0))
+        blur_w = max(25.0, min(float(blur_width), 100.0))
+        blur_x = (100.0 - blur_w) / 2.0
+        parts.append(f"drawbox=x=iw*({blur_x}/100.0):y=ih*({blur_y}/100.0):w=iw*({blur_w}/100.0):h=ih*({blur_h}/100.0):color=white@0.55:t=fill")
     # Show a subtitle-like sample instead of a large red guide rectangle.
     preview_size = max(18, min(int(sub_font_size), 96))
     parts.append(
         f"drawtext=text='Subtitle Preview':fontcolor=white:fontsize={preview_size}:"
         f"borderw=2:bordercolor=red:x=(w-text_w)/2:y=h*({sub_y}/100.0)"
+    )
+    title_size = max(18, min(int(title_size), 96))
+    title_width = max(25.0, min(float(title_width), 100.0))
+    safe_title = str(title_text).replace("'", "\\\\'")
+    parts.append(
+        f"drawtext=text='{safe_title}':fontcolor=cyan:fontsize={title_size}:"
+        f"borderw=3:bordercolor=black:x=(w-text_w)/2:y=h*0.08"
     )
     vf = ",".join(parts)
     cmd = ['ffmpeg', '-y', '-i', frame_path, '-vf', vf, out_path]
@@ -991,10 +1005,12 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
 
     blur_y_percent = user_blur_y.get(user_id, 82)
     blur_strength = user_blur_strength.get(user_id, 5)
+    blur_height = user_blur_height.get(user_id, 12)
+    blur_width = user_blur_width.get(user_id, 100)
     blur_filter_str = ""
     cur_label = "[0:v]"
     if user_blur_mode.get(user_id, False):
-        blur_filter_str, cur_label = get_blur_mask_filter("[0:v]", y_position_percent=blur_y_percent, blur_strength=blur_strength)
+        blur_filter_str, cur_label = get_blur_mask_filter("[0:v]", y_position_percent=blur_y_percent, blur_strength=blur_strength, blur_height_percent=blur_height, blur_width_percent=blur_width)
 
     wm_text = user_wm_text.get(user_id, "Recap")
     wm_pos = user_wm_pos.get(user_id, "bounce")
