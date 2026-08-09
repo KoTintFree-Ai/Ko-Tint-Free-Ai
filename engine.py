@@ -170,7 +170,7 @@ def get_blur_mask_filter(current_video_label="[0:v]", y_position_percent=82, bor
     # Keep the blur band inside the frame and use even dimensions for FFmpeg filters.
     # Use a wider band so subtitles are fully covered, while keeping the crop
     # inside the frame even near the bottom edge.
-    band_percent = 18.0
+    band_percent = 12.0
     y_position_percent = max(0.0, min(float(y_position_percent), 100.0 - band_percent))
     blur_strength = max(1, min(int(blur_strength), 20))
     crop_y = f"trunc(ih*({y_position_percent}/100.0)/2)*2"
@@ -446,7 +446,7 @@ def extract_preview_frame(video_path, out_path, dim_w, dim_h, percent=0.3):
 def render_calibration_preview(frame_path, out_path, blur_y, sub_y, blur_on, sub_font_size=36):
     parts = []
     if blur_on:
-        parts.append(f"drawbox=x=0:y=ih*({blur_y}/100.0):w=iw:h=ih*0.18:color=white@0.55:t=fill")
+        parts.append(f"drawbox=x=0:y=ih*({blur_y}/100.0):w=iw:h=ih*0.12:color=white@0.55:t=fill")
     # Show a subtitle-like sample instead of a large red guide rectangle.
     preview_size = max(18, min(int(sub_font_size), 96))
     parts.append(
