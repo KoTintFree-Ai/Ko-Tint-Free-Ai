@@ -155,33 +155,31 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-def _nudge_state(key, delta, lower, upper):
+def _change_slider_value(key, delta, lower, upper):
     current = int(st.session_state.get(key, lower))
     st.session_state[key] = max(lower, min(upper, current + delta))
 
 
 def _nudge_slider(label, key, lower, upper, default, step=1):
-    # Keep the value in a non-widget session key. Streamlit forbids changing
-    # st.session_state[key] after that same key has been claimed by a slider.
+    # The callbacks run before the next script pass, which is the safe way to
+    # change a value that is also owned by a Streamlit slider widget.
     if key not in st.session_state:
         st.session_state[key] = default
     st.write(label)
     left, middle, right = st.columns([0.18, 0.64, 0.18])
-    with left:
-        if st.button("−", key=f"{key}_minus", help=T["minus"], use_container_width=True):
-            _nudge_state(key, -step, lower, upper)
-            st.rerun()
     with middle:
-        value = st.slider(
-            "", lower, upper, value=int(st.session_state[key]), step=step,
-            key=f"{key}_widget", label_visibility="collapsed"
+        st.slider("", lower, upper, step=step, key=key, label_visibility="collapsed")
+    with left:
+        st.button(
+            "−", key=f"{key}_minus", help=T["minus"], use_container_width=True,
+            on_click=_change_slider_value, args=(key, -step, lower, upper)
         )
-        st.session_state[key] = value
     with right:
-        if st.button("+", key=f"{key}_plus", help=T["plus"], use_container_width=True):
-            _nudge_state(key, step, lower, upper)
-            st.rerun()
-    return value
+        st.button(
+            "+", key=f"{key}_plus", help=T["plus"], use_container_width=True,
+            on_click=_change_slider_value, args=(key, step, lower, upper)
+        )
+    return int(st.session_state[key])
 
 
 def _named_color(value):
