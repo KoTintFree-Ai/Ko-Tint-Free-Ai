@@ -440,8 +440,8 @@ def extract_preview_frame(video_path, out_path, dim_w, dim_h, percent=0.3):
 
 def render_calibration_preview(frame_path, out_path, blur_y, sub_y, blur_on):
     parts = []
-    if blur_on: parts.append(f"drawbox=x=0:y=ih*({blur_y}/100.0):w=iw:h=ih*0.12:color=red@0.45:t=fill")
-    parts.append(f"drawbox=x=0:y=ih*({sub_y}/100.0):w=iw:h=ih*0.10:color=yellow@0.45:t=fill")
+    if blur_on: parts.append(f"drawbox=x=0:y=ih*({blur_y}/100.0):w=iw:h=ih*0.12:color=white@0.55:t=fill")
+    parts.append(f"drawbox=x=0:y=ih*({sub_y}/100.0):w=iw:h=ih*0.10:color=red@0.55:t=fill")
     vf = ",".join(parts)
     cmd = ['ffmpeg', '-y', '-i', frame_path, '-vf', vf, out_path]
     run_ffmpeg(cmd, label="calibration_preview")
@@ -511,26 +511,7 @@ def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920)
         painter.setBrush(Qt.NoBrush)
         painter.drawRoundedRect(ix, iy, center_w, center_h, 40, 40)
 
-    # 4. Premium Top Badge (Gold Gradient)
-    badge_y = 60
-    badge_h = 70
-    badge_w = 400
-    badge_x = int((w - badge_w) / 2)
-    
-    badge_grad = QLinearGradient(badge_x, badge_y, badge_x + badge_w, badge_y)
-    badge_grad.setColorAt(0.0, QColor("#FFDF00"))
-    badge_grad.setColorAt(1.0, QColor("#D4AF37"))
-    
-    painter.setBrush(QBrush(badge_grad))
-    painter.setPen(QPen(QColor(255, 255, 255), 3))
-    painter.drawRoundedRect(badge_x, badge_y, badge_w, badge_h, 35, 35)
-    
-    painter.setPen(QColor("black"))
-    tag_font = QFont("Arial", 28, QFont.Bold)
-    painter.setFont(tag_font)
-    painter.drawText(badge_x, badge_y, badge_w, badge_h, Qt.AlignCenter, "🔥 TOP MOVIE RECAP")
-
-    # 5. Bold & Clean Title Area (White to Yellow Gradient)
+    # 4. Bold & Clean Title Area (White to Yellow Gradient)
     title_box_y = iy + center_h + 40 if os.path.exists(insert_path) else h - 400
     title_box_h = h - title_box_y - 40
     if title_box_h < 200: 
