@@ -1080,7 +1080,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
         title_img = create_text_image_full(
             text=story_title.strip(), font_size=title_size, text_color="#00E5FF", outline_color="black", outline_width=max(2, int(title_size * 0.12)),
             use_box=False, box_color="black", box_alpha="0.0", box_border=0,
-            width=dim_w, height=dim_h, align="bottom", margin_v=dim_h * 0.08, font_family=selected_font_fam, is_title=True,
+            width=dim_w, height=dim_h, align="top", margin_v=dim_h * 0.08, font_family=selected_font_fam, is_title=True,
             max_width_percent=title_width
         )
         title_img.save(title_path, "PNG")
@@ -1132,7 +1132,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
         cur_label = "[vid_with_subs]"
 
     if title_input_idx is not None:
-        filter_parts.append(f"{cur_label}[{title_input_idx}:v]overlay=0:H-h[vid_with_title]")
+        filter_parts.append(f"{cur_label}[{title_input_idx}:v]overlay=0:0[vid_with_title]")
         cur_label = "[vid_with_title]"
 
     filter_parts.append(f"{cur_label}{wm_filter}[vid_final]")
