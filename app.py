@@ -427,8 +427,56 @@ for qk in QUERY_PARAMS_KEYS:
         elif val.lower() == "false": val = False
         st.session_state[qk] = val
 
+# 3. Apply saved preferences from query params (after Load button press)
+if st.session_state.get("_apply_from_query", False):
+    _apply_query_params_to_session()
+    # Also apply extra keys not in QUERY_PARAMS_KEYS
+    _stored = _load_from_backend_file()
+    if isinstance(_stored, dict):
+        for _pk in PREFERENCE_KEYS:
+            if _pk in _stored and _stored[_pk] is not None and _pk not in QUERY_PARAMS_KEYS:
+                st.session_state[_pk] = _stored[_pk]
+    st.session_state.pop("_apply_from_query", None)
+    st.rerun()
+
 
 T = TEXT[st.session_state.ui_lang]
+
+
+def _load_preferences_via_query():
+    """Load preferences from backend file via query params (avoids widget write-after-creation error)."""
+    _stored_pref = _load_from_backend_file()
+    if not _stored_pref or not isinstance(_stored_pref, dict):
+        return False
+    
+    # Encode all preference values into query params
+    new_query_params = {}
+    for _pk in PREFERENCE_KEYS:
+        if _pk in _stored_pref and _stored_pref[_pk] is not None:
+            val = _stored_pref[_pk]
+            if isinstance(val, bool):
+                new_query_params[_pk] = "true" if val else "false"
+            else:
+                new_query_params[_pk] = str(val)
+    
+    if not new_query_params:
+        return False
+    
+    # Set query params and trigger a rerun - widgets will pick up values on next pass
+    st.query_params.update(new_query_params)
+    # Mark that we need to apply from query params
+    st.session_state["_apply_from_query"] = True
+    return True
+
+
+def _apply_query_params_to_session():
+    """Apply query params to session_state BEFORE widgets are created."""
+    for qk in QUERY_PARAMS_KEYS:
+        if qk in st.query_params:
+            val = st.query_params[qk]
+            if val.lower() == "true": val = True
+            elif val.lower() == "false": val = False
+            st.session_state[qk] = val
 
 
 def _save_preferences():
@@ -783,16 +831,11 @@ with st.sidebar:
             time.sleep(0.3)
             st.rerun()  # Rerun to ensure localStorage completes
     with col_load:
-        if st.button("🔄 Load", use_container_width=True, help="Browser မှ ဆက်တင်များကို ပြန်လည်ဆွဲတင်မည်။"):
-            # Try loading with a small delay to allow localStorage to complete
-            loaded = _load_preferences_from_storage()
-            if not loaded:
-                # Retry once after a brief pause
-                time.sleep(0.5)
-                loaded = _load_preferences_from_storage()
+        if st.button("🔄 Load", use_container_width=True, help="Server မှ ဆက့်တင့်များကို ပြန့်လည့်ဆွဲတင့်မည့်။"):
+            # Load from backend file using query params (avoids StreamlitAPIException)
+            loaded = _load_preferences_via_query()
             if loaded:
                 st.toast("✅ Settings Loaded!", icon="🔄")
-                time.sleep(0.3)
                 st.rerun()
             else:
                 st.toast("❌ No settings found. Please Save first.", icon="⚠️")
