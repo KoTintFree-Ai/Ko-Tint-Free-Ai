@@ -25,8 +25,17 @@ import hashlib
 _STORAGE_DIR = Path(os.path.join(tempfile.gettempdir(), "ko_tint_storage"))
 _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
-# Single shared file - Streamlit session_state is already per-user isolated on Cloud
-STORAGE_FILE = _STORAGE_DIR / "ko_tint_preferences.json"
+# Per-user storage - uses a unique browser-generated key stored in session_state
+# This key persists across reruns within the same browser tab
+def _get_user_key():
+    """Get a unique key per user. Uses session_state UUID that persists across reruns."""
+    if "_pref_uid" not in st.session_state:
+        import uuid as _uuid
+        # Use hostname + random to generate unique key per browser tab
+        st.session_state["_pref_uid"] = _uuid.uuid4().hex[:8]
+    return st.session_state["_pref_uid"]
+
+STORAGE_FILE = _STORAGE_DIR / f"ko_tint_preferences_{_get_user_key()}.json"
 
 def _save_to_backend_file(payload_dict):
     """Save preferences to a JSON file on the server (backend)."""
