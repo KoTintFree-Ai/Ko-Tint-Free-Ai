@@ -19,10 +19,33 @@ except Exception:
 import engine
 import threading
 
-try:
-    from streamlit_local_storage import LocalStorage
-except Exception:
-    LocalStorage = None
+# Backend file-based storage for settings persistence
+import os as _os
+_STORAGE_DIR = Path(os.path.join(tempfile.gettempdir(), "ko_tint_storage"))
+_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+STORAGE_FILE = _STORAGE_DIR / "ko_tint_preferences.json"
+
+def _save_to_backend_file(payload_dict):
+    """Save preferences to a JSON file on the server (backend)."""
+    try:
+        with open(STORAGE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(payload_dict, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception:
+        return False
+
+def _load_from_backend_file():
+    """Load preferences from a JSON file on the server (backend)."""
+    try:
+        if os.path.exists(STORAGE_FILE):
+            with open(STORAGE_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        return None
+    except Exception:
+        return None
+
+# Remove old localStorage component (not reliable on Streamlit Cloud)
+LocalStorage = None
 
 APP_ROOT = Path(__file__).resolve().parent
 WORK_ROOT = APP_ROOT / "streamlit_jobs"
@@ -48,7 +71,6 @@ SESSION_ROOT.mkdir(parents=True, exist_ok=True)
 TEMP_ROOT = SESSION_ROOT / "temp"
 TEMP_ROOT.mkdir(parents=True, exist_ok=True)
 USER_ID = f"streamlit_{SESSION_ID}"
-LOCAL_STORAGE = LocalStorage() if LocalStorage is not None else None
 PREFERENCES_STORAGE_KEY = "ko_tint_free_ai_preferences_v1"
 
 
@@ -329,24 +351,18 @@ PREFERENCE_KEYS = tuple(_REMEMBERED_DEFAULTS.keys()) + (
 )
 
 def _load_preferences_from_storage():
-    if LOCAL_STORAGE is None:
+    """Load preferences from backend file storage."""
+    _stored_pref = _load_from_backend_file()
+    if not _stored_pref:
         return False
-    try:
-        _stored_pref = LOCAL_STORAGE.getItem(PREFERENCES_STORAGE_KEY, key="ls_manual_load")
-        if not _stored_pref:
-            return False
-        if isinstance(_stored_pref, str):
-            _stored_pref = json.loads(_stored_pref)
-        if isinstance(_stored_pref, dict):
-            for _pref_key in PREFERENCE_KEYS:
-                if _pref_key in _stored_pref and _stored_pref[_pref_key] is not None:
-                    st.session_state[_pref_key] = _stored_pref[_pref_key]
-            if st.session_state.get("remember_api_keys"):
-                st.session_state["gemini_keys_input"] = str(_stored_pref.get("gemini_keys", ""))
-                st.session_state["groq_key_input"] = str(_stored_pref.get("groq_key", ""))
-            return True
-    except Exception:
-        pass
+    if isinstance(_stored_pref, dict):
+        for _pref_key in PREFERENCE_KEYS:
+            if _pref_key in _stored_pref and _stored_pref[_pref_key] is not None:
+                st.session_state[_pref_key] = _stored_pref[_pref_key]
+        if st.session_state.get("remember_api_keys"):
+            st.session_state["gemini_keys_input"] = str(_stored_pref.get("gemini_keys", ""))
+            st.session_state["groq_key_input"] = str(_stored_pref.get("groq_key", ""))
+        return True
     return False
 
 # Auto-load on first run (Optimized to avoid excessive reruns)
@@ -385,22 +401,6 @@ def _save_preferences():
             new_query_params[qk] = str(st.session_state[qk])
     st.query_params.update(new_query_params)
 
-    # 2. Save all to Local Storage
-    if LOCAL_STORAGE is not None:
-        _payload = {key: st.session_state.get(key) for key in PREFERENCE_KEYS if key in st.session_state}
-        _payload["remember_api_keys"] = st.session_state.get("remember_api_keys", False)
-        
-        if st.session_state.get("remember_api_keys"):
-            _payload["gemini_keys"] = st.session_state.get("gemini_keys_input", "")
-            _payload["groq_key"] = st.session_state.get("groq_key_input", "")
-        else:
-            _payload["gemini_keys"] = ""
-            _payload["groq_key"] = ""
-            
-        try:
-            LOCAL_STORAGE.setItem(PREFERENCES_STORAGE_KEY, json.dumps(_payload, ensure_ascii=False))
-        except Exception:
-            pass
 
 def _on_pref_change():
     # Only save when a value actually changes via widget interaction
