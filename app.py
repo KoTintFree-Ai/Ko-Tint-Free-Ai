@@ -53,6 +53,37 @@ WORK_ROOT.mkdir(exist_ok=True)
 PRESENCE_ROOT = WORK_ROOT / "presence"
 PRESENCE_ROOT.mkdir(exist_ok=True)
 
+# ===== Built-in Music (Auto-download from Incompetech) =====
+# Music folder: APP_ROOT / "music"
+# If music files don't exist locally, auto-download from Incompetech CDN
+MUSIC_DIR = APP_ROOT / "music"
+MUSIC_DIR.mkdir(exist_ok=True)
+
+# Incompetech CDN URLs (royalty-free, CC BY 4.0)
+_MUSIC_SOURCES = {
+    "music_impact_prelude.mp3": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Impact%20Prelude.mp3",
+    "music_dark_times.mp3": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Dark%20Times.mp3",
+    "music_gymnopedie.mp3": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Gymnopedie%20No%201.mp3",
+    "music_five_armies.mp3": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Five%20Armies.mp3",
+    "music_ghost_dance.mp3": "https://incompetech.com/music/royalty-free/mp3-royaltyfree/Ghost%20Dance.mp3",
+}
+
+def _ensure_music_files():
+    """Auto-download built-in music files from Incompetech if not present locally."""
+    for fname, url in _MUSIC_SOURCES.items():
+        fpath = MUSIC_DIR / fname
+        if not fpath.exists() or fpath.stat().st_size < 100000:  # < 100KB = corrupt
+            try:
+                resp = httpx.get(url, timeout=30, follow_redirects=True,
+                                 headers={"User-Agent": "Mozilla/5.0"})
+                if resp.status_code == 200 and len(resp.content) > 100000:
+                    fpath.write_bytes(resp.content)
+            except Exception:
+                pass  # Music unavailable - preset won't work but app still runs
+
+# Run once at startup
+_ensure_music_files()
+
 st.set_page_config(
     page_title="Ko Tint Free AI",
     page_icon="🎬",
@@ -974,9 +1005,8 @@ if start:
                     background_music_path.write_bytes(bg_music_file.getvalue())
                     bg_path_arg = str(background_music_path)
                 elif bg_music_preset and bg_music_preset != "none":
-                    # Look for built-in music in app root /music folder
-                    music_dir = APP_ROOT / "music"
-                    music_file = music_dir / bg_music_preset
+                    # Look for built-in music in MUSIC_DIR
+                    music_file = MUSIC_DIR / bg_music_preset
                     if music_file.exists():
                         # Copy to job dir for FFmpeg access
                         shutil.copyfile(str(music_file), str(background_music_path.with_suffix(".mp3")))
