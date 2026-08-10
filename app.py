@@ -24,13 +24,11 @@ try:
 except Exception:
     LocalStorage = None
 
-# Global state for tracking online users
-if not hasattr(st, "_global_user_tracking"):
-    st._global_user_tracking = {"sessions": {}, "lock": threading.Lock()}
-
 APP_ROOT = Path(__file__).resolve().parent
 WORK_ROOT = APP_ROOT / "streamlit_jobs"
 WORK_ROOT.mkdir(exist_ok=True)
+PRESENCE_ROOT = WORK_ROOT / "presence"
+PRESENCE_ROOT.mkdir(exist_ok=True)
 
 st.set_page_config(
     page_title="Ko Tint Free AI",
@@ -55,18 +53,23 @@ PREFERENCES_STORAGE_KEY = "ko_tint_free_ai_preferences_v1"
 
 
 def _update_online_status():
-    """Track current user as online."""
-    now = time.time()
-    with st._global_user_tracking["lock"]:
-        st._global_user_tracking["sessions"][SESSION_ID] = now
-        # Clean up sessions older than 5 minutes
-        expired = [sid for sid, last_seen in st._global_user_tracking["sessions"].items() if now - last_seen > 300]
-        for sid in expired:
-            del st._global_user_tracking["sessions"][sid]
+    """Track current user as online using file-based heartbeat."""
+    presence_file = PRESENCE_ROOT / f"{SESSION_ID}.presence"
+    presence_file.touch()
 
 def _get_online_count():
-    with st._global_user_tracking["lock"]:
-        return len(st._global_user_tracking["sessions"])
+    """Count users active in the last 60 seconds."""
+    now = time.time()
+    count = 0
+    try:
+        for p_file in PRESENCE_ROOT.glob("*.presence"):
+            if now - p_file.stat().st_mtime < 60:
+                count += 1
+            elif now - p_file.stat().st_mtime > 300:
+                try: p_file.unlink()
+                except: pass
+    except: pass
+    return max(1, count)
 
 _update_online_status()
 
@@ -154,6 +157,13 @@ TEXT = {
         "tip_platform": "ဗီဒီယိုတင်မည့်နေရာအလိုက် အရွယ်အစားရွေးပါ။",
         "tip_voice": "နောက်ခံစကားပြောအသံကို ရွေးပါ။",
         "tip_speed": "စကားပြောအမြန်နှုန်းကို ချိန်ပါ။",
+        "tip_subtitle": "မြန်မာစာတန်းထိုး ထည့်မထည့် ရွေးပါ။",
+        "tip_sub_pos": "စာတန်းထိုးပြမည့် အမြင့်ကို ချိန်ပါ။",
+        "tip_sub_size": "စာတန်းစာလုံး အရွယ်အစားကို ချိန်ပါ။",
+        "tip_blur": "ဗီဒီယို၏ အပေါ်/အောက် အနားသတ်များကို Blur လုပ်ပါ။",
+        "tip_title": "ဗီဒီယိုအပေါ်တွင် ခေါင်းစဉ်စာသား ထည့်ပါ။",
+        "tip_wm": "ဗီဒီယိုတွင် ကိုယ်ပိုင်အမှတ်အသား (Watermark) ထည့်ပါ။",
+        "tip_bgm": "နောက်ခံသီချင်း ထည့်သွင်းအသုံးပြုပါ။",
         "guide": "❓ အသုံးပြုပုံ လမ်းညွှန်",
         "guide_text": """
 ### **အဆင့်ဆင့် အသုံးပြုပုံ**
@@ -238,6 +248,13 @@ TEXT = {
         "tip_platform": "Select target aspect ratio.",
         "tip_voice": "Select AI voiceover.",
         "tip_speed": "Adjust talking speed.",
+        "tip_subtitle": "Enable or disable Burmese subtitles.",
+        "tip_sub_pos": "Adjust vertical position of subtitles.",
+        "tip_sub_size": "Adjust font size of subtitles.",
+        "tip_blur": "Apply blur masks to top/bottom edges.",
+        "tip_title": "Overlay a title text on the video.",
+        "tip_wm": "Add a custom watermark text to the video.",
+        "tip_bgm": "Enable and configure background music.",
         "guide": "❓ User Guide",
         "guide_text": """
 ### **Step-by-Step Guide**
@@ -284,39 +301,49 @@ for _pref_key, _pref_value in _REMEMBERED_DEFAULTS.items():
     if _pref_key not in st.session_state and _pref_value is not None:
         st.session_state[_pref_key] = _pref_value
 
-# 1. Browser-local storage (Load FIRST to initialize session state)
+# 1. Browser-local storage (Persistence Logic)
 PREFERENCE_KEYS = tuple(_REMEMBERED_DEFAULTS.keys()) + (
     "ui_lang", "theme", "sub_y_percent", "sub_font_size", "blur_y_percent",
     "blur_strength", "blur_height", "blur_width", "title_size", "title_width",
 )
 
-if LOCAL_STORAGE is not None and not st.session_state.get("_preferences_loaded", False):
+def _load_preferences_from_storage():
+    if LOCAL_STORAGE is None:
+        return False
     try:
-        _stored_pref = LOCAL_STORAGE.getItem(PREFERENCES_STORAGE_KEY, key="ls_init_load")
-        if _stored_pref:
-            if isinstance(_stored_pref, str):
-                _stored_pref = json.loads(_stored_pref)
-            if isinstance(_stored_pref, dict):
-                for _pref_key in PREFERENCE_KEYS:
-                    if _pref_key in _stored_pref and _stored_pref[_pref_key] is not None:
-                        st.session_state[_pref_key] = _stored_pref[_pref_key]
-                if st.session_state.get("remember_api_keys"):
-                    st.session_state["gemini_keys_input"] = str(_stored_pref.get("gemini_keys", ""))
-                    st.session_state["groq_key_input"] = str(_stored_pref.get("groq_key", ""))
-                st.session_state["_preferences_loaded"] = True
-        
-        # Retry logic with longer delay for cloud stability
-        if not st.session_state.get("_preferences_loaded", False):
-            if st.session_state.get("_preferences_load_attempts", 0) < 5:
-                st.session_state["_preferences_load_attempts"] = st.session_state.get("_preferences_load_attempts", 0) + 1
-                time.sleep(0.3)
-                st.rerun()
-            else:
-                st.session_state["_preferences_loaded"] = True
+        _stored_pref = LOCAL_STORAGE.getItem(PREFERENCES_STORAGE_KEY, key="ls_manual_load")
+        if not _stored_pref:
+            return False
+        if isinstance(_stored_pref, str):
+            _stored_pref = json.loads(_stored_pref)
+        if isinstance(_stored_pref, dict):
+            for _pref_key in PREFERENCE_KEYS:
+                if _pref_key in _stored_pref and _stored_pref[_pref_key] is not None:
+                    st.session_state[_pref_key] = _stored_pref[_pref_key]
+            if st.session_state.get("remember_api_keys"):
+                st.session_state["gemini_keys_input"] = str(_stored_pref.get("gemini_keys", ""))
+                st.session_state["groq_key_input"] = str(_stored_pref.get("groq_key", ""))
+            return True
     except Exception:
-        st.session_state["_preferences_loaded"] = True
+        pass
+    return False
 
-# 2. Load from Query Params (Overwrite storage if present, robust for links/refreshes)
+# Auto-load on first run (Optimized to avoid excessive reruns)
+if not st.session_state.get("_preferences_loaded", False):
+    if _load_preferences_from_storage():
+        st.session_state["_preferences_loaded"] = True
+        st.rerun()
+    else:
+        # If no data yet, wait a bit for the component to initialize, but don't loop forever
+        attempts = st.session_state.get("_preferences_load_attempts", 0)
+        if attempts < 2: # Reduced attempts to 2 for better UX
+            st.session_state["_preferences_load_attempts"] = attempts + 1
+            time.sleep(0.3)
+            st.rerun()
+        else:
+            st.session_state["_preferences_loaded"] = True
+
+# 2. Load from Query Params (Deep Linking)
 QUERY_PARAMS_KEYS = ("ui_lang", "theme", "platform_label", "resolution_label", "voice_key", "speed_label")
 for qk in QUERY_PARAMS_KEYS:
     if qk in st.query_params:
@@ -355,6 +382,7 @@ def _save_preferences():
             pass
 
 def _on_pref_change():
+    # Only save when a value actually changes via widget interaction
     _save_preferences()
 
 
@@ -557,33 +585,43 @@ with st.sidebar:
 
     # Group 3: Advanced Controls
     with st.expander(T["advanced"], expanded=False):
-        subtitle_enabled = st.toggle(T["subtitle"], key="subtitle_enabled", on_change=_on_pref_change)
+        subtitle_enabled = st.toggle(T["subtitle"], key="subtitle_enabled", on_change=_on_pref_change, help=T["tip_subtitle"])
         sub_y_percent = _nudge_slider(T["subtitle_pos"], "sub_y_percent", 45, 88, 82)
         sub_font_size = _nudge_slider(T["subtitle_size"], "sub_font_size", 24, 60, 35)
         color_values = ["yellow", "white", "#00E5FF", "#39FF14", "#FF6EC7"]
         sub_color = st.selectbox(T["subtitle_color"], color_values, format_func=_named_color, key="sub_color", on_change=_on_pref_change)
-        blur_enabled = st.toggle(T["blur"], key="blur_enabled", on_change=_on_pref_change)
+        
+        st.divider()
+        blur_enabled = st.toggle(T["blur"], key="blur_enabled", on_change=_on_pref_change, help=T["tip_blur"])
         blur_y_percent = _nudge_slider(T["blur_pos"], "blur_y_percent", 45, 88, 82)
         blur_strength = _nudge_slider(T["blur_strength"], "blur_strength", 1, 20, 5)
         blur_height = _nudge_slider(T["blur_height"], "blur_height", 6, 24, 12)
         blur_width = _nudge_slider(T["blur_width"], "blur_width", 50, 100, 100)
-        title_enabled = st.toggle(T["title"], key="title_enabled", on_change=_on_pref_change)
+        
+        st.divider()
+        title_enabled = st.toggle(T["title"], key="title_enabled", on_change=_on_pref_change, help=T["tip_title"])
         title_size = _nudge_slider(T["title_size"], "title_size", 24, 64, 30)
         title_width = _nudge_slider(T["title_width"], "title_width", 45, 100, 65)
+        
+        st.divider()
         bypass_enabled = st.toggle(T["bypass"], key="bypass_enabled", on_change=_on_pref_change)
         font_files = getattr(engine, "AVAILABLE_FONTS", [])
         font_labels = [str(idx + 1) for idx, _ in enumerate(font_files)] or ["Default"]
         if st.session_state.get("font_choice") not in font_labels:
             st.session_state.font_choice = font_labels[0]
         font_choice = st.selectbox(T["font"], font_labels, key="font_choice", on_change=_on_pref_change)
-        wm_text = st.text_input(T["wm_text"], key="wm_text", max_chars=80, on_change=_on_pref_change)
+        
+        st.divider()
+        wm_text = st.text_input(T["wm_text"], key="wm_text", max_chars=80, on_change=_on_pref_change, help=T["tip_wm"])
         wm_pos_labels = {"bounce": "🔁 Bounce", "topleft": "↖️ Top left", "topright": "↗️ Top right", "bottom": "⬇️ Bottom center"}
         if st.session_state.get("wm_pos") not in wm_pos_labels:
             st.session_state.wm_pos = "bounce"
         wm_pos = st.selectbox(T["wm_pos"], list(wm_pos_labels), format_func=lambda x: wm_pos_labels[x], key="wm_pos", on_change=_on_pref_change)
         st.text_input(T["download_name"], key="download_name", max_chars=100, on_change=_on_pref_change, help="Letters, Burmese text, numbers, spaces, _ and - are allowed.")
         logo_file = st.file_uploader(T["logo"], type=["png", "jpg", "jpeg"], key="logo_upload")
-        bg_music_enabled = st.toggle(T["bg_music"], key="bg_music_enabled", on_change=_on_pref_change)
+        
+        st.divider()
+        bg_music_enabled = st.toggle(T["bg_music"], key="bg_music_enabled", on_change=_on_pref_change, help=T["tip_bgm"])
         bg_music_file = st.file_uploader(
             T["bg_music_file"], type=["mp3", "wav", "m4a", "aac", "ogg"], key="bg_music_upload"
         ) if bg_music_enabled else None
@@ -593,14 +631,24 @@ with st.sidebar:
         ) if bg_music_enabled else 0.0
         st.caption(T["calibration_help"])
 
-    # Manual Save Fallback
-    if st.button("💾 Save All Settings Now", use_container_width=True, help="ဆက်တင်များကို အခုချက်ချင်း သိမ်းဆည်းမည်။"):
-        _save_preferences()
-        st.toast("✅ Settings saved successfully!", icon="💾")
+    # Manual Persistence Controls
+    col_save, col_load = st.columns(2)
+    with col_save:
+        if st.button("💾 Save", use_container_width=True, help="ဆက်တင်များကို အခုချက်ချင်း သိမ်းဆည်းမည်။"):
+            _save_preferences()
+            st.toast("✅ Saved!", icon="💾")
+    with col_load:
+        if st.button("🔄 Load", use_container_width=True, help="Browser မှ ဆက်တင်များကို ပြန်လည်ဆွဲတင်မည်။"):
+            if _load_preferences_from_storage():
+                st.toast("✅ Settings Loaded!", icon="🔄")
+                time.sleep(0.5)
+                st.rerun()
+            else:
+                st.toast("❌ No settings found in browser.", icon="⚠️")
 
-_save_preferences()
-
-if "result_path" not in st.session_state:
+# _save_preferences() # REMOVED: Saving should only happen on change, not on every rerun
+	
+	if "result_path" not in st.session_state:
     st.session_state.result_path = None
 if "last_job" not in st.session_state:
     st.session_state.last_job = None
