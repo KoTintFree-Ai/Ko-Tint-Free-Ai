@@ -578,7 +578,9 @@ def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920,
         title_box_h = 250
         title_box_y = h - title_box_h - 40
 
-    title_font = QFont(font_fam, 50, QFont.Black)
+    # Dynamic font size: scale based on title box height
+    title_font_size = max(16, min(int(title_box_h * 0.55), 72))
+    title_font = QFont(font_fam, title_font_size, QFont.Black)
     painter.setFont(title_font)
     
     # Shadow/Outline
