@@ -272,13 +272,6 @@ st.markdown(
     .hero h1 {{ margin: 0; font-size: 2.2rem; }}
     .hero p {{ margin: .45rem 0 0; color: #dbeafe; }}
     [data-testid="stFileUploader"] {{ background: {card}; border-radius: 14px; padding: .4rem; }}
-    /* Fix sidebar scrolling issue */
-    [data-testid="stSidebar"] > div:first-child {{
-        overflow-y: auto !important;
-    }}
-    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{
-        padding-bottom: 5rem !important;
-    }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -365,66 +358,85 @@ def _validate_api_keys(gemini_text, groq_text):
 
 
 with st.sidebar:
-    st.header(T["settings"])
+    st.header("Ko Tint Free AI")
     st.session_state.ui_lang = st.selectbox(T["language"], ["မြန်မာ", "English"], index=["မြန်မာ", "English"].index(st.session_state.ui_lang))
     T = TEXT[st.session_state.ui_lang]
-    st.session_state.theme = st.radio(T["theme"], ["dark", "light"], format_func=lambda x: T["dark"] if x == "dark" else T["light"], horizontal=True, index=0 if st.session_state.theme == "dark" else 1)
-    st.caption(T["privacy"])
-    remember_api_keys = st.checkbox(
-        T["remember_keys"], key="remember_api_keys",
-        help="Stores keys in this browser's local storage. Do not enable on shared/public computers.",
-    )
-    gemini_keys_text = st.text_input(T["keys"], type="password", key="gemini_keys_input", help="Separate multiple keys with commas.")
-    groq_key = st.text_input(T["groq"], type="password", key="groq_key_input")
-
-    # Hybrid Key Management: Merge Secrets and UI input
-    secrets_gemini = st.secrets.get("GEMINI_KEYS", "")
-    secrets_groq = st.secrets.get("GROQ_API_KEY", "")
     
-    # Emergency Controls
-    with st.expander("🚨 Emergency Control Center", expanded=False):
-        st.warning("အရေးပေါ်အခြေအနေမှသာ အသုံးပြုရန်")
+    # Group 1: API Keys & Security
+    with st.expander("🔑 API Keys & Security", expanded=True):
+        st.caption(T["privacy"])
+        remember_api_keys = st.checkbox(
+            T["remember_keys"], key="remember_api_keys",
+            help="Stores keys in this browser's local storage. Do not enable on shared/public computers.",
+        )
+        gemini_keys_text = st.text_input(T["keys"], type="password", key="gemini_keys_input", help="Separate multiple keys with commas.")
+        groq_key = st.text_input(T["groq"], type="password", key="groq_key_input")
+        
+        # Hybrid Key Management: Merge Secrets and UI input
+        secrets_gemini = st.secrets.get("GEMINI_KEYS", "")
+        secrets_groq = st.secrets.get("GROQ_API_KEY", "")
+        
+        # Emergency Controls (Inside Security)
+        st.divider()
+        st.subheader("🚨 Emergency Fallback")
         emergency_fallback = st.toggle("အရေးပေါ် Secrets ကို အသုံးပြုမည်", value=False, help="သင်၏ UI key များ အလုပ်မလုပ်တော့မှသာ Secrets ထဲမှ key များကို Fallback အဖြစ် အသုံးပြုပါမည်။")
         if st.button("Reset All Cooldowns", use_container_width=True, help="Key များ အားလုံးကို Active ပြန်ဖြစ်အောင် လုပ်မည်။"):
             engine.reset_global_cooldowns()
             st.toast("🚨 Cooldowns reset successfully!", icon="🔥")
 
-    # Tiered Key Logic: UI keys are Primary, Secrets are Fallback (only if enabled)
-    primary_gemini = gemini_keys_text
-    fallback_gemini = secrets_gemini if emergency_fallback else ""
-    merged_groq = groq_key if groq_key.strip() else secrets_groq
+        # Tiered Key Logic
+        primary_gemini = gemini_keys_text
+        fallback_gemini = secrets_gemini if emergency_fallback else ""
+        merged_groq = groq_key if groq_key.strip() else secrets_groq
 
-    if primary_gemini or fallback_gemini:
-        with st.expander("🔑 API Key Status Monitor", expanded=False):
-            st.caption("Status: " + ("Emergency Fallback Enabled" if emergency_fallback else "UI Keys Only"))
+        if primary_gemini or fallback_gemini:
+            st.divider()
+            st.caption("Key Status Monitor (" + ("Fallback Enabled" if emergency_fallback else "UI Only") + ")")
             try:
                 st.table(engine.GeminiKeyPool(primary_gemini, fallback_gemini).get_status())
             except Exception:
                 st.write("Key status monitor unavailable.")
 
-    platform_options = ["YouTube / 16:9", "TikTok / 9:16", "Facebook / 9:16"]
-    if st.session_state.get("platform_label") not in platform_options:
-        st.session_state.platform_label = platform_options[0]
-    platform_label = st.selectbox(T["platform"], platform_options, key="platform_label")
-    resolution_options = ["720p", "1080p"]
-    if st.session_state.get("resolution_label") not in resolution_options:
-        st.session_state.resolution_label = resolution_options[0]
-    resolution_label = st.selectbox(T["resolution"], resolution_options, key="resolution_label")
-    voice_keys = list(engine.VOICE_MODES)
-    if voice_keys and st.session_state.get("voice_key") not in voice_keys:
-        st.session_state.voice_key = voice_keys[1] if len(voice_keys) > 1 else voice_keys[0]
-    def _voice_number_label(key):
-        number = voice_keys.index(key) + 1
-        raw_name = str(engine.VOICE_MODES[key].get("name", ""))
-        # Keep only the parenthesized style text, e.g. 15 (Standard).
-        suffix = raw_name[raw_name.find("("):].strip() if "(" in raw_name else ""
-        return f"{number} {suffix}".strip()
-    voice_key = st.selectbox(T["voice"], voice_keys, format_func=_voice_number_label, key="voice_key")
-    speed_options = list(engine.SPEED_MULTIPLIERS)
-    if st.session_state.get("speed_label") not in speed_options:
-        st.session_state.speed_label = speed_options[0]
-    speed_label = st.selectbox(T["speed"], speed_options, key="speed_label")
+        if st.button(T["validate"], use_container_width=True):
+            with st.spinner("Checking..."):
+                gemini_ok, groq_ok = _validate_api_keys(primary_gemini or fallback_gemini, merged_groq)
+            if gemini_ok and groq_ok:
+                st.success(T["validation_ready"])
+            else:
+                st.error(f"{T['validation_failed']}")
 
+    # Group 2: General Settings
+    with st.expander("⚙️ General Settings", expanded=True):
+        st.session_state.theme = st.radio(T["theme"], ["dark", "light"], format_func=lambda x: T["dark"] if x == "dark" else T["light"], horizontal=True, index=0 if st.session_state.theme == "dark" else 1)
+        
+        platform_options = ["YouTube / 16:9", "TikTok / 9:16", "Facebook / 9:16"]
+        if st.session_state.get("platform_label") not in platform_options:
+            st.session_state.platform_label = platform_options[0]
+        platform_label = st.selectbox(T["platform"], platform_options, key="platform_label")
+        
+        resolution_options = ["720p", "1080p"]
+        if st.session_state.get("resolution_label") not in resolution_options:
+            st.session_state.resolution_label = resolution_options[0]
+        resolution_label = st.selectbox(T["resolution"], resolution_options, key="resolution_label")
+        
+        voice_keys = list(engine.VOICE_MODES)
+        if voice_keys and st.session_state.get("voice_key") not in voice_keys:
+            st.session_state.voice_key = voice_keys[1] if len(voice_keys) > 1 else voice_keys[0]
+        
+        def _voice_number_label(key):
+            number = voice_keys.index(key) + 1
+            raw_name = str(engine.VOICE_MODES[key].get("name", ""))
+            suffix = raw_name[raw_name.find("("):].strip() if "(" in raw_name else ""
+            return f"{number} {suffix}".strip()
+            
+        voice_key = st.selectbox(T["voice"], voice_keys, format_func=_voice_number_label, key="voice_key")
+        
+        speed_options = list(engine.SPEED_MULTIPLIERS)
+        if st.session_state.get("speed_label") not in speed_options:
+            st.session_state.speed_label = speed_options[0]
+        speed_label = st.selectbox(T["speed"], speed_options, key="speed_label")
+
+    # Group 3: Advanced Controls
     with st.expander(T["advanced"], expanded=False):
         subtitle_enabled = st.toggle(T["subtitle"], key="subtitle_enabled")
         sub_y_percent = _nudge_slider(T["subtitle_pos"], "sub_y_percent", 45, 88, 82)
@@ -462,14 +474,8 @@ with st.sidebar:
         ) if bg_music_enabled else 0.0
         st.caption(T["calibration_help"])
 
-    if st.button(T["validate"], use_container_width=True):
-        with st.spinner("Checking..." if st.session_state.ui_lang == "English" else "စစ်ဆေးနေပါသည်..."):
-            # Validate with both to be sure
-            gemini_ok, groq_ok = _validate_api_keys(primary_gemini or fallback_gemini, merged_groq)
-        if gemini_ok and groq_ok:
-            st.success(T["validation_ready"])
-        else:
-            st.error(f"{T['validation_failed']}: Gemini={'OK' if gemini_ok else 'FAIL'}, Groq={'OK' if groq_ok else 'FAIL'}")
+    # (Validation moved into expander)
+    pass
 
 _save_preferences()
 
