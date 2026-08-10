@@ -272,6 +272,13 @@ st.markdown(
     .hero h1 {{ margin: 0; font-size: 2.2rem; }}
     .hero p {{ margin: .45rem 0 0; color: #dbeafe; }}
     [data-testid="stFileUploader"] {{ background: {card}; border-radius: 14px; padding: .4rem; }}
+    /* Fix sidebar scrolling issue */
+    [data-testid="stSidebar"] > div:first-child {{
+        overflow-y: auto !important;
+    }}
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{
+        padding-bottom: 5rem !important;
+    }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -418,7 +425,7 @@ with st.sidebar:
         st.session_state.speed_label = speed_options[0]
     speed_label = st.selectbox(T["speed"], speed_options, key="speed_label")
 
-    with st.expander(T["advanced"], expanded=True):
+    with st.expander(T["advanced"], expanded=False):
         subtitle_enabled = st.toggle(T["subtitle"], key="subtitle_enabled")
         sub_y_percent = _nudge_slider(T["subtitle_pos"], "sub_y_percent", 45, 88, 82)
         sub_font_size = _nudge_slider(T["subtitle_size"], "sub_font_size", 24, 60, 35)
