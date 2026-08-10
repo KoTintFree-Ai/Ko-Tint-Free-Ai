@@ -699,25 +699,27 @@ class GeminiKeyPool:
 
     def all_cooling_down(self):
         now = time.time()
-        return all(self.cooldowns.get(k, 0) > now for k in self.keys)
+        return all(self.cooldowns.get(k, 0) > now for k in self.all_keys)
 
     def seconds_until_next_available(self):
         now = time.time()
-        remaining = [self.cooldowns.get(k, 0) - now for k in self.keys]
+        remaining = [self.cooldowns.get(k, 0) - now for k in self.all_keys]
         return max(0.5, min(remaining)) if remaining else 0.5
 
     def get_status(self):
         """Return a list of status dicts for the UI to display."""
         now = time.time()
         status = []
-        for k in self.keys:
+        for k in self.all_keys:
             cd = self.cooldowns.get(k, 0)
             is_active = cd <= now
             remaining = max(0, cd - now)
+            tier = "UI (Primary)" if k in self.primary_keys else "Secrets (Fallback)"
             status.append({
-                "key": k[:6] + "..." + k[-4:] if len(k) > 10 else "****",
-                "status": "✅ Active" if is_active else "⏳ Cooling Down",
-                "cooldown": f"{int(remaining)}s" if remaining > 0 else "-"
+                "Key": k[:6] + "..." + k[-4:] if len(k) > 10 else "****",
+                "Tier": tier,
+                "Status": "✅ Active" if is_active else "⏳ Cooling Down",
+                "Cooldown": f"{int(remaining)}s" if remaining > 0 else "-"
             })
         return status
 
@@ -783,7 +785,7 @@ async def generate_title_hook_hashtags(story_text, gemini_pool):
         "hashtags": "#MovieRecap #TikTokMovie #AIStory"
     }}
     """
-    attempts = len(gemini_pool.keys) * 3
+    attempts = len(gemini_pool.all_keys) * 3
     for _ in range(attempts):
         if gemini_pool.all_cooling_down():
             wait_s = gemini_pool.seconds_until_next_available()
@@ -941,7 +943,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
 ၆။ (အရေးကြီးသည်) စာကြောင်းတစ်ကြောင်းလျှင် စကားလုံး ၁၅ လုံးမှ ၂၀ လုံးထက် မပိုစေရ။ (မြန်မာစာလုံးများကို Space ခြား၍ ရေးပေးပါ)
 """
         success = False
-        max_retries = max(len(gemini_pool.keys) * 3, 6)
+        max_retries = max(len(gemini_pool.all_keys) * 3, 6)
 
         for attempt in range(max_retries):
             if gemini_pool.all_cooling_down():
