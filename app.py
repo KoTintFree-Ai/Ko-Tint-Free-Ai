@@ -21,21 +21,9 @@ import threading
 
 # Backend file-based storage for settings persistence
 import os as _os
-import hashlib
 _STORAGE_DIR = Path(os.path.join(tempfile.gettempdir(), "ko_tint_storage"))
 _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-
-# Per-user storage - uses a unique browser-generated key stored in session_state
-# This key persists across reruns within the same browser tab
-def _get_user_key():
-    """Get a unique key per user. Uses session_state UUID that persists across reruns."""
-    if "_pref_uid" not in st.session_state:
-        import uuid as _uuid
-        # Use hostname + random to generate unique key per browser tab
-        st.session_state["_pref_uid"] = _uuid.uuid4().hex[:8]
-    return st.session_state["_pref_uid"]
-
-STORAGE_FILE = _STORAGE_DIR / f"ko_tint_preferences_{_get_user_key()}.json"
+STORAGE_FILE = _STORAGE_DIR / "ko_tint_preferences.json"
 
 def _save_to_backend_file(payload_dict):
     """Save preferences to a JSON file on the server (backend)."""
@@ -401,18 +389,6 @@ PREFERENCE_KEYS = tuple(_REMEMBERED_DEFAULTS.keys()) + (
     "blur_strength", "blur_height", "blur_width", "title_size", "title_width",
 )
 
-# Persistence Logic
-QUERY_PARAMS_KEYS = ("ui_lang", "theme", "platform_label", "resolution_label", "voice_key", "speed_label")
-
-# Load from Query Params (Deep Linking)
-for qk in QUERY_PARAMS_KEYS:
-    if qk in st.query_params:
-        val = st.query_params[qk]
-        if val.lower() == "true": val = True
-        elif val.lower() == "false": val = False
-        st.session_state[qk] = val
-
-# Sync Load preferences from backend file (before widgets are created)
 def _load_preferences_from_storage():
     """Load preferences from backend file storage."""
     _stored_pref = _load_from_backend_file()
@@ -428,17 +404,85 @@ def _load_preferences_from_storage():
         return True
     return False
 
-# Auto-load on first run (single sync load, no rerun needed)
+# Auto-load on first run (Optimized to avoid excessive reruns)
 if not st.session_state.get("_preferences_loaded", False):
-    _load_preferences_from_storage()
-    st.session_state["_preferences_loaded"] = True
+    if _load_preferences_from_storage():
+        st.session_state["_preferences_loaded"] = True
+        st.rerun()
+    else:
+        # If no data yet, wait a bit for the component to initialize, but don't loop forever
+        attempts = st.session_state.get("_preferences_load_attempts", 0)
+        if attempts < 2: # Reduced attempts to 2 for better UX
+            st.session_state["_preferences_load_attempts"] = attempts + 1
+            time.sleep(0.3)
+            st.rerun()
+        else:
+            st.session_state["_preferences_loaded"] = True
+
+# 2. Load from Query Params (Deep Linking)
+QUERY_PARAMS_KEYS = ("ui_lang", "theme", "platform_label", "resolution_label", "voice_key", "speed_label")
+for qk in QUERY_PARAMS_KEYS:
+    if qk in st.query_params:
+        val = st.query_params[qk]
+        if val.lower() == "true": val = True
+        elif val.lower() == "false": val = False
+        st.session_state[qk] = val
+
+
+def _load_preferences_via_query():
+    """Load preferences from backend file via query params (avoids widget write-after-creation error)."""
+    _stored_pref = _load_from_backend_file()
+    if not _stored_pref or not isinstance(_stored_pref, dict):
+        return False
+    
+    # Encode all preference values into query params
+    new_query_params = {}
+    for _pk in PREFERENCE_KEYS:
+        if _pk in _stored_pref and _stored_pref[_pk] is not None:
+            val = _stored_pref[_pk]
+            if isinstance(val, bool):
+                new_query_params[_pk] = "true" if val else "false"
+            else:
+                new_query_params[_pk] = str(val)
+    
+    if not new_query_params:
+        return False
+    
+    # Set query params and trigger a rerun - widgets will pick up values on next pass
+    st.query_params.update(new_query_params)
+    # Mark that we need to apply from query params
+    st.session_state["_apply_from_query"] = True
+    return True
+
+
+def _apply_query_params_to_session():
+    """Apply query params to session_state BEFORE widgets are created."""
+    for qk in QUERY_PARAMS_KEYS:
+        if qk in st.query_params:
+            val = st.query_params[qk]
+            if val.lower() == "true": val = True
+            elif val.lower() == "false": val = False
+            st.session_state[qk] = val
+
+
+# 3. Apply saved preferences from query params (after Load button press)
+if st.session_state.get("_apply_from_query", False):
+    _apply_query_params_to_session()
+    # Also apply extra keys not in QUERY_PARAMS_KEYS
+    _stored = _load_from_backend_file()
+    if isinstance(_stored, dict):
+        for _pk in PREFERENCE_KEYS:
+            if _pk in _stored and _stored[_pk] is not None and _pk not in QUERY_PARAMS_KEYS:
+                st.session_state[_pk] = _stored[_pk]
+    st.session_state.pop("_apply_from_query", None)
+    st.rerun()
 
 
 T = TEXT[st.session_state.ui_lang]
 
 
 def _save_preferences():
-    """Save preferences to backend file (server-side persistence). No rerun needed."""
+    # 1. Save to backend file (server-side persistence)
     _payload = {}
     for _pk in PREFERENCE_KEYS:
         if _pk in st.session_state:
@@ -448,7 +492,8 @@ def _save_preferences():
         _payload["gemini_keys"] = st.session_state.get("gemini_keys_input", "")
         _payload["groq_key"] = st.session_state.get("groq_key_input", "")
     _save_to_backend_file(_payload)
-    # Also save non-sensitive to Query Params (URL) for deep linking
+    
+    # 2. Save non-sensitive to Query Params (URL)
     new_query_params = {}
     for qk in QUERY_PARAMS_KEYS:
         if qk in st.session_state:
@@ -457,25 +502,8 @@ def _save_preferences():
 
 
 def _on_pref_change():
-    """Called when a widget value changes - saves immediately."""
+    # Only save when a value actually changes via widget interaction
     _save_preferences()
-
-
-def _manual_load_preferences():
-    """Load preferences from backend file - called by Load button."""
-    _stored_pref = _load_from_backend_file()
-    if not _stored_pref or not isinstance(_stored_pref, dict):
-        return False
-    # Apply all stored preferences to session_state
-    for _pk in PREFERENCE_KEYS:
-        if _pk in _stored_pref and _stored_pref[_pk] is not None:
-            st.session_state[_pk] = _stored_pref[_pk]
-    # Apply API keys if present
-    if "gemini_keys" in _stored_pref:
-        st.session_state["gemini_keys_input"] = str(_stored_pref.get("gemini_keys", ""))
-    if "groq_key" in _stored_pref:
-        st.session_state["groq_key_input"] = str(_stored_pref.get("groq_key", ""))
-    return True
 
 
 bg = "#0f172a" if st.session_state.theme == "dark" else "#f8fafc"
@@ -802,10 +830,12 @@ with st.sidebar:
         if st.button("💾 Save", use_container_width=True, help="ဆက်တင်များကို အခုချက်ချင်း သိမ်းဆည်းမည်။"):
             _save_preferences()
             st.toast("✅ Saved!", icon="💾")
-            # No rerun needed - values already in session_state
+            time.sleep(0.3)
+            st.rerun()  # Rerun to ensure localStorage completes
     with col_load:
         if st.button("🔄 Load", use_container_width=True, help="Server မှ ဆက့်တင့်များကို ပြန့်လည့်ဆွဲတင့်မည့်။"):
-            loaded = _manual_load_preferences()
+            # Load from backend file using query params (avoids StreamlitAPIException)
+            loaded = _load_preferences_via_query()
             if loaded:
                 st.toast("✅ Settings Loaded!", icon="🔄")
                 st.rerun()
