@@ -234,8 +234,8 @@ if LOCAL_STORAGE is not None and not st.session_state.get("_preferences_loaded",
                 st.session_state["gemini_keys_input"] = str(_stored_pref.get("gemini_keys", ""))
                 st.session_state["groq_key_input"] = str(_stored_pref.get("groq_key", ""))
             st.session_state["_preferences_loaded"] = True
-        elif st.session_state.get("_preferences_load_attempts", 0) < 1:
-            st.session_state["_preferences_load_attempts"] = 1
+        elif st.session_state.get("_preferences_load_attempts", 0) < 2:
+            st.session_state["_preferences_load_attempts"] = st.session_state.get("_preferences_load_attempts", 0) + 1
             st.rerun()
         else:
             st.session_state["_preferences_loaded"] = True
@@ -251,13 +251,24 @@ def _save_preferences():
     if LOCAL_STORAGE is None:
         return
     _payload = {key: st.session_state.get(key) for key in PREFERENCE_KEYS if key in st.session_state}
+    # Always try to save the remember_api_keys state itself
+    _payload["remember_api_keys"] = st.session_state.get("remember_api_keys", False)
+    
     if st.session_state.get("remember_api_keys"):
         _payload["gemini_keys"] = st.session_state.get("gemini_keys_input", "")
         _payload["groq_key"] = st.session_state.get("groq_key_input", "")
+    else:
+        # If not remembering, clear them from storage
+        _payload["gemini_keys"] = ""
+        _payload["groq_key"] = ""
+        
     try:
         LOCAL_STORAGE.setItem(PREFERENCES_STORAGE_KEY, json.dumps(_payload, ensure_ascii=False))
     except Exception:
         pass
+
+def _on_pref_change():
+    _save_preferences()
 
 
 bg = "#0f172a" if st.session_state.theme == "dark" else "#f8fafc"
@@ -322,7 +333,9 @@ def _nudge_slider(label, key, lower, upper, default, step=1):
         if st.button("+", key=f"{key}_plus", help=T["plus"], use_container_width=True):
             _nudge_state(key, step, lower, upper)
             st.rerun()
-    st.session_state[key] = value
+    if st.session_state[key] != value:
+        st.session_state[key] = value
+        _on_pref_change()
     return value
 
 
@@ -372,7 +385,7 @@ def _validate_api_keys(gemini_text, groq_text):
 
 with st.sidebar:
     st.header("Ko Tint Free AI")
-    st.session_state.ui_lang = st.selectbox(T["language"], ["မြန်မာ", "English"], index=["မြန်မာ", "English"].index(st.session_state.ui_lang))
+    st.session_state.ui_lang = st.selectbox(T["language"], ["မြန်မာ", "English"], index=["မြန်မာ", "English"].index(st.session_state.ui_lang), on_change=_on_pref_change)
     T = TEXT[st.session_state.ui_lang]
     
     # Group 1: API Keys & Security
@@ -380,10 +393,11 @@ with st.sidebar:
         st.caption(T["privacy"])
         remember_api_keys = st.checkbox(
             T["remember_keys"], key="remember_api_keys",
+            on_change=_on_pref_change,
             help="Stores keys in this browser's local storage. Do not enable on shared/public computers.",
         )
-        gemini_keys_text = st.text_input(T["keys"], type="password", key="gemini_keys_input", help="Separate multiple keys with commas.")
-        groq_key = st.text_input(T["groq"], type="password", key="groq_key_input")
+        gemini_keys_text = st.text_input(T["keys"], type="password", key="gemini_keys_input", on_change=_on_pref_change, help="Separate multiple keys with commas.")
+        groq_key = st.text_input(T["groq"], type="password", key="groq_key_input", on_change=_on_pref_change)
         
         # Hybrid Key Management: Merge Secrets and UI input
         secrets_gemini = st.secrets.get("GEMINI_KEYS", "")
@@ -420,17 +434,17 @@ with st.sidebar:
 
     # Group 2: General Settings
     with st.expander("⚙️ General Settings", expanded=True):
-        st.session_state.theme = st.radio(T["theme"], ["dark", "light"], format_func=lambda x: T["dark"] if x == "dark" else T["light"], horizontal=True, index=0 if st.session_state.theme == "dark" else 1)
+        st.session_state.theme = st.radio(T["theme"], ["dark", "light"], format_func=lambda x: T["dark"] if x == "dark" else T["light"], horizontal=True, index=0 if st.session_state.theme == "dark" else 1, on_change=_on_pref_change)
         
         platform_options = ["YouTube / 16:9", "TikTok / 9:16", "Facebook / 9:16"]
         if st.session_state.get("platform_label") not in platform_options:
             st.session_state.platform_label = platform_options[0]
-        platform_label = st.selectbox(T["platform"], platform_options, key="platform_label")
+        platform_label = st.selectbox(T["platform"], platform_options, key="platform_label", on_change=_on_pref_change)
         
         resolution_options = ["720p", "1080p"]
         if st.session_state.get("resolution_label") not in resolution_options:
             st.session_state.resolution_label = resolution_options[0]
-        resolution_label = st.selectbox(T["resolution"], resolution_options, key="resolution_label")
+        resolution_label = st.selectbox(T["resolution"], resolution_options, key="resolution_label", on_change=_on_pref_change)
         
         voice_keys = list(engine.VOICE_MODES)
         if voice_keys and st.session_state.get("voice_key") not in voice_keys:
@@ -442,53 +456,55 @@ with st.sidebar:
             suffix = raw_name[raw_name.find("("):].strip() if "(" in raw_name else ""
             return f"{number} {suffix}".strip()
             
-        voice_key = st.selectbox(T["voice"], voice_keys, format_func=_voice_number_label, key="voice_key")
+        voice_key = st.selectbox(T["voice"], voice_keys, format_func=_voice_number_label, key="voice_key", on_change=_on_pref_change)
         
         speed_options = list(engine.SPEED_MULTIPLIERS)
         if st.session_state.get("speed_label") not in speed_options:
             st.session_state.speed_label = speed_options[0]
-        speed_label = st.selectbox(T["speed"], speed_options, key="speed_label")
+        speed_label = st.selectbox(T["speed"], speed_options, key="speed_label", on_change=_on_pref_change)
 
     # Group 3: Advanced Controls
     with st.expander(T["advanced"], expanded=False):
-        subtitle_enabled = st.toggle(T["subtitle"], key="subtitle_enabled")
+        subtitle_enabled = st.toggle(T["subtitle"], key="subtitle_enabled", on_change=_on_pref_change)
         sub_y_percent = _nudge_slider(T["subtitle_pos"], "sub_y_percent", 45, 88, 82)
         sub_font_size = _nudge_slider(T["subtitle_size"], "sub_font_size", 24, 60, 35)
         color_values = ["yellow", "white", "#00E5FF", "#39FF14", "#FF6EC7"]
-        sub_color = st.selectbox(T["subtitle_color"], color_values, format_func=_named_color, key="sub_color")
-        blur_enabled = st.toggle(T["blur"], key="blur_enabled")
+        sub_color = st.selectbox(T["subtitle_color"], color_values, format_func=_named_color, key="sub_color", on_change=_on_pref_change)
+        blur_enabled = st.toggle(T["blur"], key="blur_enabled", on_change=_on_pref_change)
         blur_y_percent = _nudge_slider(T["blur_pos"], "blur_y_percent", 45, 88, 82)
         blur_strength = _nudge_slider(T["blur_strength"], "blur_strength", 1, 20, 5)
         blur_height = _nudge_slider(T["blur_height"], "blur_height", 6, 24, 12)
         blur_width = _nudge_slider(T["blur_width"], "blur_width", 50, 100, 100)
-        title_enabled = st.toggle(T["title"], key="title_enabled")
+        title_enabled = st.toggle(T["title"], key="title_enabled", on_change=_on_pref_change)
         title_size = _nudge_slider(T["title_size"], "title_size", 24, 64, 30)
         title_width = _nudge_slider(T["title_width"], "title_width", 45, 100, 65)
-        bypass_enabled = st.toggle(T["bypass"], key="bypass_enabled")
+        bypass_enabled = st.toggle(T["bypass"], key="bypass_enabled", on_change=_on_pref_change)
         font_files = getattr(engine, "AVAILABLE_FONTS", [])
         font_labels = [str(idx + 1) for idx, _ in enumerate(font_files)] or ["Default"]
         if st.session_state.get("font_choice") not in font_labels:
             st.session_state.font_choice = font_labels[0]
-        font_choice = st.selectbox(T["font"], font_labels, key="font_choice")
-        wm_text = st.text_input(T["wm_text"], key="wm_text", max_chars=80)
+        font_choice = st.selectbox(T["font"], font_labels, key="font_choice", on_change=_on_pref_change)
+        wm_text = st.text_input(T["wm_text"], key="wm_text", max_chars=80, on_change=_on_pref_change)
         wm_pos_labels = {"bounce": "🔁 Bounce", "topleft": "↖️ Top left", "topright": "↗️ Top right", "bottom": "⬇️ Bottom center"}
         if st.session_state.get("wm_pos") not in wm_pos_labels:
             st.session_state.wm_pos = "bounce"
-        wm_pos = st.selectbox(T["wm_pos"], list(wm_pos_labels), format_func=lambda x: wm_pos_labels[x], key="wm_pos")
-        st.text_input(T["download_name"], key="download_name", max_chars=100, help="Letters, Burmese text, numbers, spaces, _ and - are allowed.")
+        wm_pos = st.selectbox(T["wm_pos"], list(wm_pos_labels), format_func=lambda x: wm_pos_labels[x], key="wm_pos", on_change=_on_pref_change)
+        st.text_input(T["download_name"], key="download_name", max_chars=100, on_change=_on_pref_change, help="Letters, Burmese text, numbers, spaces, _ and - are allowed.")
         logo_file = st.file_uploader(T["logo"], type=["png", "jpg", "jpeg"], key="logo_upload")
-        bg_music_enabled = st.toggle(T["bg_music"], key="bg_music_enabled")
+        bg_music_enabled = st.toggle(T["bg_music"], key="bg_music_enabled", on_change=_on_pref_change)
         bg_music_file = st.file_uploader(
             T["bg_music_file"], type=["mp3", "wav", "m4a", "aac", "ogg"], key="bg_music_upload"
         ) if bg_music_enabled else None
         bg_music_volume = st.slider(
             T["bg_music_volume"], min_value=0.0, max_value=1.0, step=0.05,
-            key="bg_music_volume"
+            key="bg_music_volume", on_change=_on_pref_change
         ) if bg_music_enabled else 0.0
         st.caption(T["calibration_help"])
 
-    # (Validation moved into expander)
-    pass
+    # Manual Save Fallback
+    if st.button("💾 Save All Settings Now", use_container_width=True, help="ဆက်တင်များကို အခုချက်ချင်း သိမ်းဆည်းမည်။"):
+        _save_preferences()
+        st.toast("✅ Settings saved successfully!", icon="💾")
 
 _save_preferences()
 
