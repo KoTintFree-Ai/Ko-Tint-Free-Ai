@@ -370,6 +370,31 @@ with st.sidebar:
     gemini_keys_text = st.text_input(T["keys"], type="password", key="gemini_keys_input", help="Separate multiple keys with commas.")
     groq_key = st.text_input(T["groq"], type="password", key="groq_key_input")
 
+    # Hybrid Key Management: Merge Secrets and UI input
+    secrets_gemini = st.secrets.get("GEMINI_KEYS", "")
+    secrets_groq = st.secrets.get("GROQ_API_KEY", "")
+    
+    # Emergency Controls
+    with st.expander("🚨 Emergency Control Center", expanded=False):
+        st.warning("အရေးပေါ်အခြေအနေမှသာ အသုံးပြုရန်")
+        emergency_fallback = st.toggle("အရေးပေါ် Secrets ကို အသုံးပြုမည်", value=False, help="သင်၏ UI key များ အလုပ်မလုပ်တော့မှသာ Secrets ထဲမှ key များကို Fallback အဖြစ် အသုံးပြုပါမည်။")
+        if st.button("Reset All Cooldowns", use_container_width=True, help="Key များ အားလုံးကို Active ပြန်ဖြစ်အောင် လုပ်မည်။"):
+            engine.reset_global_cooldowns()
+            st.toast("🚨 Cooldowns reset successfully!", icon="🔥")
+
+    # Tiered Key Logic: UI keys are Primary, Secrets are Fallback (only if enabled)
+    primary_gemini = gemini_keys_text
+    fallback_gemini = secrets_gemini if emergency_fallback else ""
+    merged_groq = groq_key if groq_key.strip() else secrets_groq
+
+    if primary_gemini or fallback_gemini:
+        with st.expander("🔑 API Key Status Monitor", expanded=False):
+            st.caption("Status: " + ("Emergency Fallback Enabled" if emergency_fallback else "UI Keys Only"))
+            try:
+                st.table(engine.GeminiKeyPool(primary_gemini, fallback_gemini).get_status())
+            except Exception:
+                st.write("Key status monitor unavailable.")
+
     platform_options = ["YouTube / 16:9", "TikTok / 9:16", "Facebook / 9:16"]
     if st.session_state.get("platform_label") not in platform_options:
         st.session_state.platform_label = platform_options[0]
@@ -432,7 +457,8 @@ with st.sidebar:
 
     if st.button(T["validate"], use_container_width=True):
         with st.spinner("Checking..." if st.session_state.ui_lang == "English" else "စစ်ဆေးနေပါသည်..."):
-            gemini_ok, groq_ok = _validate_api_keys(gemini_keys_text, groq_key)
+            # Validate with both to be sure
+            gemini_ok, groq_ok = _validate_api_keys(primary_gemini or fallback_gemini, merged_groq)
         if gemini_ok and groq_ok:
             st.success(T["validation_ready"])
         else:
@@ -597,8 +623,8 @@ async def _run_pipeline(input_video: str, audio_path: str, output_path: str, sta
         engine.user_font[USER_ID] = font_files[max(0, min(selected_index, len(font_files) - 1))]
     return await engine.advanced_sync_pipeline(
         audio_path=audio_path,
-        gemini_keys_str=gemini_keys_text,
-        groq_key=groq_key,
+        gemini_keys_str=primary_gemini,
+        groq_key=merged_groq,
         input_video=input_video,
         output_video_path=output_path,
         voice_config=engine.VOICE_MODES[voice_key],
@@ -608,6 +634,7 @@ async def _run_pipeline(input_video: str, audio_path: str, output_path: str, sta
         background_music_path=background_music_path,
         background_music_volume=background_music_volume,
         work_dir=work_dir,
+        fallback_gemini_keys_str=fallback_gemini,
     )
 
 
