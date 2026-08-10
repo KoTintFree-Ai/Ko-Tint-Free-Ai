@@ -272,6 +272,19 @@ st.markdown(
     .hero h1 {{ margin: 0; font-size: 2.2rem; }}
     .hero p {{ margin: .45rem 0 0; color: #dbeafe; }}
     [data-testid="stFileUploader"] {{ background: {card}; border-radius: 14px; padding: .4rem; }}
+    
+    /* Ensure sidebar is always visible and handles zoom better */
+    [data-testid="stSidebar"] {{
+        min-width: 320px !important;
+        max-width: 350px !important;
+    }}
+    
+    /* Responsive adjustment: prevent sidebar from disappearing on wide screens with zoom */
+    @media (min-width: 1200px) {{
+        [data-testid="stSidebar"] {{
+            margin-left: 0px !important;
+        }}
+    }}
     </style>
     """,
     unsafe_allow_html=True,
