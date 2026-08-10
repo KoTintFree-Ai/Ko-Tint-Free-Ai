@@ -21,24 +21,37 @@ import threading
 
 # Backend file-based storage for settings persistence
 import os as _os
+import hashlib
 _STORAGE_DIR = Path(os.path.join(tempfile.gettempdir(), "ko_tint_storage"))
 _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-STORAGE_FILE = _STORAGE_DIR / "ko_tint_preferences.json"
+
+def _get_user_key():
+    """Generate a unique key per user session using Streamlit's built-in session ID."""
+    return st.session_id[:8] if st.session_id else "default"
+
+def _get_storage_file():
+    """Get per-user storage file path."""
+    _uid = _get_user_key()
+    return _STORAGE_DIR / f"ko_tint_preferences_{_uid}.json"
+
+STORAGE_FILE = _get_storage_file()
 
 def _save_to_backend_file(payload_dict):
-    """Save preferences to a JSON file on the server (backend)."""
+    """Save preferences to a JSON file on the server (backend), per-user."""
     try:
-        with open(STORAGE_FILE, 'w', encoding='utf-8') as f:
+        _file = _get_storage_file()
+        with open(_file, 'w', encoding='utf-8') as f:
             json.dump(payload_dict, f, ensure_ascii=False, indent=2)
         return True
     except Exception:
         return False
 
 def _load_from_backend_file():
-    """Load preferences from a JSON file on the server (backend)."""
+    """Load preferences from a JSON file on the server (backend), per-user."""
     try:
-        if os.path.exists(STORAGE_FILE):
-            with open(STORAGE_FILE, 'r', encoding='utf-8') as f:
+        _file = _get_storage_file()
+        if os.path.exists(_file):
+            with open(_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         return None
     except Exception:
