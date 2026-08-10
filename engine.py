@@ -639,37 +639,63 @@ def build_complete_timeline(segments_data, total_duration, max_dur=15.0, max_gap
 # =====================================================================
 # SMART GEMINI KEY POOL & DYNAMIC MODEL SELECTION
 # =====================================================================
+# Global cooldown registry to avoid collisions between concurrent users/sessions.
+_GLOBAL_GEMINI_COOLDOWNS = {}
+_GLOBAL_COOLDOWN_LOCK = threading.Lock()
+
 class GeminiKeyPool:
-    def __init__(self, keys_string):
-        self.keys = [k.strip() for k in re.split(r'[, ]+', str(keys_string)) if k.strip()]
-        if not self.keys: self.keys = [str(keys_string).strip()]
-        self.pool = itertools.cycle(self.keys)
-        self.cooldowns = {}
+    def __init__(self, primary_keys_str, fallback_keys_str=""):
+        self.primary_keys = [k.strip() for k in re.split(r'[, ]+', str(primary_keys_str)) if k.strip()]
+        self.fallback_keys = [k.strip() for k in re.split(r'[, ]+', str(fallback_keys_str)) if k.strip()]
+        
+        self.all_keys = self.primary_keys + self.fallback_keys
+        if not self.all_keys: self.all_keys = ["NO_KEY_PROVIDED"]
+        
+        self.primary_pool = itertools.cycle(self.primary_keys) if self.primary_keys else None
+        self.fallback_pool = itertools.cycle(self.fallback_keys) if self.fallback_keys else None
+        
+        self.cooldowns = _GLOBAL_GEMINI_COOLDOWNS
         self.last_error = None
 
-    def _available_keys(self):
+    def _get_available(self, keys):
         now = time.time()
-        return [k for k in self.keys if self.cooldowns.get(k, 0) <= now]
+        return [k for k in keys if self.cooldowns.get(k, 0) <= now]
 
     def get_key(self):
-        avail = self._available_keys()
-        if avail:
-            for _ in range(len(self.keys)):
-                k = next(self.pool)
-                if k in avail: return k
-            return avail[0]
-        return min(self.keys, key=lambda k: self.cooldowns.get(k, 0))
+        # 1. Try Primary Keys (UI Keys) first
+        if self.primary_keys:
+            avail_primary = [k for k in self.primary_keys if self.cooldowns.get(k, 0) <= time.time()]
+            if avail_primary:
+                for _ in range(len(self.primary_keys)):
+                    k = next(self.primary_pool)
+                    if k in avail_primary: return k
+                return avail_primary[0]
+        
+        # 2. If no Primary keys are available, try Fallback Keys (Secrets)
+        if self.fallback_keys:
+            avail_fallback = [k for k in self.fallback_keys if self.cooldowns.get(k, 0) <= time.time()]
+            if avail_fallback:
+                for _ in range(len(self.fallback_keys)):
+                    k = next(self.fallback_pool)
+                    if k in avail_fallback: return k
+                return avail_fallback[0]
+        
+        # 3. If everything is cooling down, return the one with the shortest remaining cooldown
+        return min(self.all_keys, key=lambda k: self.cooldowns.get(k, 0))
 
     def mark_rate_limited(self, key, cooldown_seconds=45, reason=None):
-        self.cooldowns[key] = time.time() + cooldown_seconds
+        with _GLOBAL_COOLDOWN_LOCK:
+            self.cooldowns[key] = time.time() + cooldown_seconds
         if reason: self.last_error = reason
 
     def mark_error(self, key, cooldown_seconds=8, reason=None):
-        self.cooldowns[key] = time.time() + cooldown_seconds
+        with _GLOBAL_COOLDOWN_LOCK:
+            self.cooldowns[key] = time.time() + cooldown_seconds
         if reason: self.last_error = reason
 
     def mark_success(self, key):
-        self.cooldowns.pop(key, None)
+        with _GLOBAL_COOLDOWN_LOCK:
+            self.cooldowns.pop(key, None)
 
     def all_cooling_down(self):
         now = time.time()
@@ -680,8 +706,29 @@ class GeminiKeyPool:
         remaining = [self.cooldowns.get(k, 0) - now for k in self.keys]
         return max(0.5, min(remaining)) if remaining else 0.5
 
+    def get_status(self):
+        """Return a list of status dicts for the UI to display."""
+        now = time.time()
+        status = []
+        for k in self.keys:
+            cd = self.cooldowns.get(k, 0)
+            is_active = cd <= now
+            remaining = max(0, cd - now)
+            status.append({
+                "key": k[:6] + "..." + k[-4:] if len(k) > 10 else "****",
+                "status": "✅ Active" if is_active else "⏳ Cooling Down",
+                "cooldown": f"{int(remaining)}s" if remaining > 0 else "-"
+            })
+        return status
+
 def invalidate_model_cache(api_key):
     VALID_MODELS_CACHE.pop(api_key, None)
+
+def reset_global_cooldowns():
+    """Emergency reset of all key cooldowns."""
+    with _GLOBAL_COOLDOWN_LOCK:
+        _GLOBAL_GEMINI_COOLDOWNS.clear()
+    logging.info("🚨 Emergency Reset: Global cooldowns cleared.")
 
 async def get_working_gemini_url(api_key):
     if api_key in VALID_MODELS_CACHE:
@@ -830,10 +877,10 @@ def process_single_chunk(args):
 # =====================================================================
 # ADVANCED SYNC PIPELINE (EMBEDS TB AS INTRO COVER)
 # =====================================================================
-async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_video, output_video_path, voice_config, user_speed_val, user_id, progress_cb=None, background_music_path=None, background_music_volume=0.0, work_dir=None):
+async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_video, output_video_path, voice_config, user_speed_val, user_id, progress_cb=None, background_music_path=None, background_music_volume=0.0, work_dir=None, fallback_gemini_keys_str=""):
     work_dir = ensure_work_dir(work_dir)
     clean_groq_key = str(groq_key).strip()
-    gemini_pool = GeminiKeyPool(gemini_keys_str)
+    gemini_pool = GeminiKeyPool(gemini_keys_str, fallback_gemini_keys_str)
     total_video_duration = get_media_duration(input_video)
 
     sub_enabled = user_sub_mode.get(user_id, False)
