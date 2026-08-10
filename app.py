@@ -653,7 +653,7 @@ with st.sidebar:
         sub_y_percent = _nudge_slider(T["subtitle_pos"], "sub_y_percent", 45, 88, 82)
         sub_font_size = _nudge_slider(T["subtitle_size"], "sub_font_size", 24, 60, 35)
         color_values = ["yellow", "white", "#00E5FF", "#39FF14", "#FF6EC7"]
-        sub_color = st.selectbox(T["subtitle_color"], color_values, format_func=_named_color, value=st.session_state.get("sub_color", None), key="sub_color", on_change=_on_pref_change)
+        sub_color = st.selectbox(T["subtitle_color"], color_values, format_func=_named_color, index=color_values.index(st.session_state.sub_color) if st.session_state.sub_color in color_values else 0, key="sub_color", on_change=_on_pref_change)
         
         st.divider()
         blur_enabled = st.toggle(T["blur"], value=st.session_state.get("blur_enabled", False), key="blur_enabled", on_change=_on_pref_change, help=T["tip_blur"])
@@ -673,14 +673,14 @@ with st.sidebar:
         font_labels = [str(idx + 1) for idx, _ in enumerate(font_files)] or ["Default"]
         if st.session_state.get("font_choice") not in font_labels:
             st.session_state.font_choice = font_labels[0]
-        font_choice = st.selectbox(T["font"], font_labels, value=st.session_state.get("font_choice", None), key="font_choice", on_change=_on_pref_change)
+        font_choice = st.selectbox(T["font"], font_labels, index=font_labels.index(st.session_state.font_choice) if st.session_state.font_choice in font_labels else 0, key="font_choice", on_change=_on_pref_change)
         
         st.divider()
         wm_text = st.text_input(T["wm_text"], key="wm_text", max_chars=80, on_change=_on_pref_change, help=T["tip_wm"])
         wm_pos_labels = {"bounce": "🔁 Bounce", "topleft": "↖️ Top left", "topright": "↗️ Top right", "bottom": "⬇️ Bottom center"}
         if st.session_state.get("wm_pos") not in wm_pos_labels:
             st.session_state.wm_pos = "bounce"
-        wm_pos = st.selectbox(T["wm_pos"], list(wm_pos_labels), format_func=lambda x: wm_pos_labels[x], value=st.session_state.get("wm_pos", None), key="wm_pos", on_change=_on_pref_change)
+        wm_pos = st.selectbox(T["wm_pos"], list(wm_pos_labels), format_func=lambda x: wm_pos_labels[x], index=list(wm_pos_labels).index(st.session_state.wm_pos) if st.session_state.wm_pos in list(wm_pos_labels) else 0, key="wm_pos", on_change=_on_pref_change)
         st.text_input(T["download_name"], key="download_name", max_chars=100, on_change=_on_pref_change, help="Letters, Burmese text, numbers, spaces, _ and - are allowed.")
         logo_file = st.file_uploader(T["logo"], type=["png", "jpg", "jpeg"], key="logo_upload")
         
