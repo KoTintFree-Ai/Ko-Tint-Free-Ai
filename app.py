@@ -123,6 +123,21 @@ TEXT = {
         "advanced": "အသေးစိတ် Video Controls",
         "calibration": "Preview Calibration",
         "calibration_help": "စာတန်းနှင့် blur နေရာကို slider ဖြင့် ကြိုတင်ချိန်ပါ။",
+        "guide": "❓ အသုံးပြုပုံ လမ်းညွှန်",
+        "guide_text": """
+### **အဆင့်ဆင့် အသုံးပြုပုံ**
+1.  **API Keys ထည့်သွင်းပါ**: ဘေးဘက် (Sidebar) ရှိ **API Keys** အကွက်တွင် Gemini Key (၅ ခုခန့်) နှင့် Groq Key (၁ ခု) ကို ထည့်ပါ။
+2.  **Video ရွေးချယ်ပါ**: ဗီဒီယိုဖိုင်ကို တိုက်ရိုက်တင်ပါ (သို့မဟုတ်) YouTube URL ကို ထည့်ပါ။
+3.  **စိတ်ကြိုက်ပြင်ဆင်ပါ**: အသံအမျိုးအစား၊ စာတန်းထိုးအရောင်နှင့် နေရာ၊ Blur Mask စသည်တို့ကို ချိန်ညှိပါ။
+4.  **Recap ထုတ်လုပ်ပါ**: အောက်ခြေရှိ **🚀 Recap ထုတ်မည်** ခလုတ်ကို နှိပ်ပြီး ခဏစောင့်ပါ။
+5.  **Download ရယူပါ**: အားလုံးပြီးပါက **⬇️ MP4 Download** ခလုတ်ဖြင့် ဗီဒီယိုကို သိမ်းဆည်းပါ။
+
+---
+### **အသုံးဝင်သော အကြံပြုချက်များ (Pro Tips)**
+*   **Key Limit ကျော်ခြင်း**: Key များစွာကို ကော်မာ (,) ခံပြီး ထည့်ထားရင် Rendering ပိုမြန်ပါတယ်။
+*   **Emergency Mode**: ကိုယ်ပိုင် key တွေ Limit ပြည့်သွားရင် **"အရေးပေါ် Secrets သုံးမည်"** ကို ဖွင့်သုံးနိုင်ပါတယ်။
+*   **Settings မှတ်ထားရန်**: အောက်ဆုံးက **"Save All Settings Now"** ကို နှိပ်ထားရင် နောက်တစ်ခါ ပြန်ဝင်တဲ့အခါ ဘာမှပြန်ပြင်စရာ မလိုတော့ပါဘူး။
+""",
     },
     "English": {
         "settings": "⚙️ Settings",
@@ -182,6 +197,21 @@ TEXT = {
         "advanced": "Advanced video controls",
         "calibration": "Preview calibration",
         "calibration_help": "Use the sliders to position subtitles and blur before rendering.",
+        "guide": "❓ User Guide",
+        "guide_text": """
+### **Step-by-Step Guide**
+1.  **Enter API Keys**: In the sidebar, enter Gemini keys (recommended 5) and Groq key (1).
+2.  **Select Video**: Upload a file or paste a YouTube URL.
+3.  **Customize**: Adjust voice, subtitle colors, positions, and blur masks.
+4.  **Generate**: Click **🚀 Generate Recap** and wait for the process to finish.
+5.  **Download**: Click **⬇️ Download MP4** to save your video.
+
+---
+### **Pro Tips**
+*   **Speed Up**: Use multiple keys separated by commas for faster rendering.
+*   **Emergency Mode**: Enable **"Emergency Secrets Fallback"** if your personal keys hit limits.
+*   **Remember Settings**: Use **"Save All Settings Now"** to keep your preferences for the next visit.
+""",
     },
 }
 
@@ -213,34 +243,49 @@ for _pref_key, _pref_value in _REMEMBERED_DEFAULTS.items():
     if _pref_key not in st.session_state and _pref_value is not None:
         st.session_state[_pref_key] = _pref_value
 
-# Browser-local storage survives a tab close and is isolated per browser profile.
-# Only UI preferences are stored; API keys and uploaded media are never stored.
+# 1. Load from Query Params first (Robust across refreshes for non-sensitive data)
+QUERY_PARAMS_KEYS = ("ui_lang", "theme", "platform_label", "resolution_label", "voice_key", "speed_label")
+for qk in QUERY_PARAMS_KEYS:
+    if qk in st.query_params:
+        val = st.query_params[qk]
+        # Type conversion for common types
+        if val.lower() == "true": val = True
+        elif val.lower() == "false": val = False
+        st.session_state[qk] = val
+
+# 2. Browser-local storage (Survives tab close, used for keys if enabled)
 PREFERENCE_KEYS = tuple(_REMEMBERED_DEFAULTS.keys()) + (
     "ui_lang", "theme", "sub_y_percent", "sub_font_size", "blur_y_percent",
     "blur_strength", "blur_height", "blur_width", "title_size", "title_width",
 )
+
 if LOCAL_STORAGE is not None and not st.session_state.get("_preferences_loaded", False):
     try:
-        _stored_pref = LOCAL_STORAGE.getItem(PREFERENCES_STORAGE_KEY, key="_stored_preferences_read")
-        if _stored_pref is None:
-            _stored_pref = st.session_state.get("_stored_preferences_read")
-        if isinstance(_stored_pref, str):
-            _stored_pref = json.loads(_stored_pref)
-        if isinstance(_stored_pref, dict):
-            for _pref_key in PREFERENCE_KEYS:
-                if _pref_key in _stored_pref and _stored_pref[_pref_key] is not None:
-                    st.session_state[_pref_key] = _stored_pref[_pref_key]
-            if st.session_state.get("remember_api_keys"):
-                st.session_state["gemini_keys_input"] = str(_stored_pref.get("gemini_keys", ""))
-                st.session_state["groq_key_input"] = str(_stored_pref.get("groq_key", ""))
-            st.session_state["_preferences_loaded"] = True
-        elif st.session_state.get("_preferences_load_attempts", 0) < 2:
-            st.session_state["_preferences_load_attempts"] = st.session_state.get("_preferences_load_attempts", 0) + 1
-            st.rerun()
-        else:
-            st.session_state["_preferences_loaded"] = True
+        # We MUST render the component to get the data
+        _stored_pref = LOCAL_STORAGE.getItem(PREFERENCES_STORAGE_KEY, key="ls_init_load")
+        if _stored_pref:
+            if isinstance(_stored_pref, str):
+                _stored_pref = json.loads(_stored_pref)
+            if isinstance(_stored_pref, dict):
+                for _pref_key in PREFERENCE_KEYS:
+                    if _pref_key in _stored_pref and _stored_pref[_pref_key] is not None:
+                        # Don't overwrite query params if they exist
+                        if _pref_key not in st.query_params:
+                            st.session_state[_pref_key] = _stored_pref[_pref_key]
+                if st.session_state.get("remember_api_keys"):
+                    st.session_state["gemini_keys_input"] = str(_stored_pref.get("gemini_keys", ""))
+                    st.session_state["groq_key_input"] = str(_stored_pref.get("groq_key", ""))
+                st.session_state["_preferences_loaded"] = True
+        
+        # Retry logic if not loaded yet
+        if not st.session_state.get("_preferences_loaded", False):
+            if st.session_state.get("_preferences_load_attempts", 0) < 3:
+                st.session_state["_preferences_load_attempts"] = st.session_state.get("_preferences_load_attempts", 0) + 1
+                time.sleep(0.1)
+                st.rerun()
+            else:
+                st.session_state["_preferences_loaded"] = True
     except Exception:
-        # The app remains usable if the optional browser component is blocked.
         st.session_state["_preferences_loaded"] = True
 
 
@@ -248,24 +293,29 @@ T = TEXT[st.session_state.ui_lang]
 
 
 def _save_preferences():
-    if LOCAL_STORAGE is None:
-        return
-    _payload = {key: st.session_state.get(key) for key in PREFERENCE_KEYS if key in st.session_state}
-    # Always try to save the remember_api_keys state itself
-    _payload["remember_api_keys"] = st.session_state.get("remember_api_keys", False)
-    
-    if st.session_state.get("remember_api_keys"):
-        _payload["gemini_keys"] = st.session_state.get("gemini_keys_input", "")
-        _payload["groq_key"] = st.session_state.get("groq_key_input", "")
-    else:
-        # If not remembering, clear them from storage
-        _payload["gemini_keys"] = ""
-        _payload["groq_key"] = ""
+    # 1. Save non-sensitive to Query Params (URL)
+    new_query_params = {}
+    for qk in QUERY_PARAMS_KEYS:
+        if qk in st.session_state:
+            new_query_params[qk] = str(st.session_state[qk])
+    st.query_params.update(new_query_params)
+
+    # 2. Save all to Local Storage
+    if LOCAL_STORAGE is not None:
+        _payload = {key: st.session_state.get(key) for key in PREFERENCE_KEYS if key in st.session_state}
+        _payload["remember_api_keys"] = st.session_state.get("remember_api_keys", False)
         
-    try:
-        LOCAL_STORAGE.setItem(PREFERENCES_STORAGE_KEY, json.dumps(_payload, ensure_ascii=False))
-    except Exception:
-        pass
+        if st.session_state.get("remember_api_keys"):
+            _payload["gemini_keys"] = st.session_state.get("gemini_keys_input", "")
+            _payload["groq_key"] = st.session_state.get("groq_key_input", "")
+        else:
+            _payload["gemini_keys"] = ""
+            _payload["groq_key"] = ""
+            
+        try:
+            LOCAL_STORAGE.setItem(PREFERENCES_STORAGE_KEY, json.dumps(_payload, ensure_ascii=False))
+        except Exception:
+            pass
 
 def _on_pref_change():
     _save_preferences()
@@ -514,6 +564,9 @@ if "last_job" not in st.session_state:
     st.session_state.last_job = None
 
 st.markdown('<div class="hero"><h1>🎬 Ko Tint Free AI</h1><p>AI Movie Recap · Burmese voiceover · Subtitle · Video export</p></div>', unsafe_allow_html=True)
+
+with st.expander(T["guide"], expanded=False):
+    st.markdown(T["guide_text"])
 
 col1, col2, col3 = st.columns([1.35, 1, 1])
 with col1:
