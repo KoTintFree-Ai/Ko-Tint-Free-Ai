@@ -647,8 +647,8 @@ with st.sidebar:
                 st.toast("❌ No settings found in browser.", icon="⚠️")
 
 # _save_preferences() # REMOVED: Saving should only happen on change, not on every rerun
-	
-	if "result_path" not in st.session_state:
+
+if "result_path" not in st.session_state:
     st.session_state.result_path = None
 if "last_job" not in st.session_state:
     st.session_state.last_job = None
