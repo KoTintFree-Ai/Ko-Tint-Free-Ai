@@ -17,11 +17,16 @@ except Exception:
     psutil = None
 
 import engine
+import threading
 
 try:
     from streamlit_local_storage import LocalStorage
 except Exception:
     LocalStorage = None
+
+# Global state for tracking online users
+if not hasattr(st, "_global_user_tracking"):
+    st._global_user_tracking = {"sessions": {}, "lock": threading.Lock()}
 
 APP_ROOT = Path(__file__).resolve().parent
 WORK_ROOT = APP_ROOT / "streamlit_jobs"
@@ -48,6 +53,22 @@ USER_ID = f"streamlit_{SESSION_ID}"
 LOCAL_STORAGE = LocalStorage() if LocalStorage is not None else None
 PREFERENCES_STORAGE_KEY = "ko_tint_free_ai_preferences_v1"
 
+
+def _update_online_status():
+    """Track current user as online."""
+    now = time.time()
+    with st._global_user_tracking["lock"]:
+        st._global_user_tracking["sessions"][SESSION_ID] = now
+        # Clean up sessions older than 5 minutes
+        expired = [sid for sid, last_seen in st._global_user_tracking["sessions"].items() if now - last_seen > 300]
+        for sid in expired:
+            del st._global_user_tracking["sessions"][sid]
+
+def _get_online_count():
+    with st._global_user_tracking["lock"]:
+        return len(st._global_user_tracking["sessions"])
+
+_update_online_status()
 
 def _cleanup_old_job_roots(max_age_hours=24):
     """Remove abandoned session/job folders while preserving the active session."""
@@ -123,6 +144,16 @@ TEXT = {
         "advanced": "အသေးစိတ် Video Controls",
         "calibration": "Preview Calibration",
         "calibration_help": "စာတန်းနှင့် blur နေရာကို slider ဖြင့် ကြိုတင်ချိန်ပါ။",
+        "online_users": "👥 လက်ရှိအသုံးပြုသူ",
+        "tip_lang": "ဘာသာစကားပြောင်းရန်",
+        "tip_theme": "အလင်း/အမှောင် ပြောင်းရန်",
+        "tip_keys": "Gemini API key များကို ကော်မာခံပြီး ၅ ခုခန့်ထည့်ပါ။",
+        "tip_groq": "အသံဖမ်းယူရန် Groq API key ထည့်ပါ။",
+        "tip_remember": "နောက်တစ်ခါပြန်ဝင်ရင် key ရိုက်စရာမလိုအောင် မှတ်ထားမည်။",
+        "tip_fallback": "ကိုယ့် key တွေ limit ပြည့်ရင် shared key တွေကို အရန်သုံးမည်။",
+        "tip_platform": "ဗီဒီယိုတင်မည့်နေရာအလိုက် အရွယ်အစားရွေးပါ။",
+        "tip_voice": "နောက်ခံစကားပြောအသံကို ရွေးပါ။",
+        "tip_speed": "စကားပြောအမြန်နှုန်းကို ချိန်ပါ။",
         "guide": "❓ အသုံးပြုပုံ လမ်းညွှန်",
         "guide_text": """
 ### **အဆင့်ဆင့် အသုံးပြုပုံ**
@@ -197,6 +228,16 @@ TEXT = {
         "advanced": "Advanced video controls",
         "calibration": "Preview calibration",
         "calibration_help": "Use the sliders to position subtitles and blur before rendering.",
+        "online_users": "👥 Online Users",
+        "tip_lang": "Change UI language",
+        "tip_theme": "Switch dark/light mode",
+        "tip_keys": "Enter ~5 Gemini keys separated by commas.",
+        "tip_groq": "Enter Groq key for transcription.",
+        "tip_remember": "Save keys in browser for next visit.",
+        "tip_fallback": "Use shared keys if yours hit limits.",
+        "tip_platform": "Select target aspect ratio.",
+        "tip_voice": "Select AI voiceover.",
+        "tip_speed": "Adjust talking speed.",
         "guide": "❓ User Guide",
         "guide_text": """
 ### **Step-by-Step Guide**
@@ -243,17 +284,7 @@ for _pref_key, _pref_value in _REMEMBERED_DEFAULTS.items():
     if _pref_key not in st.session_state and _pref_value is not None:
         st.session_state[_pref_key] = _pref_value
 
-# 1. Load from Query Params first (Robust across refreshes for non-sensitive data)
-QUERY_PARAMS_KEYS = ("ui_lang", "theme", "platform_label", "resolution_label", "voice_key", "speed_label")
-for qk in QUERY_PARAMS_KEYS:
-    if qk in st.query_params:
-        val = st.query_params[qk]
-        # Type conversion for common types
-        if val.lower() == "true": val = True
-        elif val.lower() == "false": val = False
-        st.session_state[qk] = val
-
-# 2. Browser-local storage (Survives tab close, used for keys if enabled)
+# 1. Browser-local storage (Load FIRST to initialize session state)
 PREFERENCE_KEYS = tuple(_REMEMBERED_DEFAULTS.keys()) + (
     "ui_lang", "theme", "sub_y_percent", "sub_font_size", "blur_y_percent",
     "blur_strength", "blur_height", "blur_width", "title_size", "title_width",
@@ -261,7 +292,6 @@ PREFERENCE_KEYS = tuple(_REMEMBERED_DEFAULTS.keys()) + (
 
 if LOCAL_STORAGE is not None and not st.session_state.get("_preferences_loaded", False):
     try:
-        # We MUST render the component to get the data
         _stored_pref = LOCAL_STORAGE.getItem(PREFERENCES_STORAGE_KEY, key="ls_init_load")
         if _stored_pref:
             if isinstance(_stored_pref, str):
@@ -269,24 +299,31 @@ if LOCAL_STORAGE is not None and not st.session_state.get("_preferences_loaded",
             if isinstance(_stored_pref, dict):
                 for _pref_key in PREFERENCE_KEYS:
                     if _pref_key in _stored_pref and _stored_pref[_pref_key] is not None:
-                        # Don't overwrite query params if they exist
-                        if _pref_key not in st.query_params:
-                            st.session_state[_pref_key] = _stored_pref[_pref_key]
+                        st.session_state[_pref_key] = _stored_pref[_pref_key]
                 if st.session_state.get("remember_api_keys"):
                     st.session_state["gemini_keys_input"] = str(_stored_pref.get("gemini_keys", ""))
                     st.session_state["groq_key_input"] = str(_stored_pref.get("groq_key", ""))
                 st.session_state["_preferences_loaded"] = True
         
-        # Retry logic if not loaded yet
+        # Retry logic with longer delay for cloud stability
         if not st.session_state.get("_preferences_loaded", False):
-            if st.session_state.get("_preferences_load_attempts", 0) < 3:
+            if st.session_state.get("_preferences_load_attempts", 0) < 5:
                 st.session_state["_preferences_load_attempts"] = st.session_state.get("_preferences_load_attempts", 0) + 1
-                time.sleep(0.1)
+                time.sleep(0.3)
                 st.rerun()
             else:
                 st.session_state["_preferences_loaded"] = True
     except Exception:
         st.session_state["_preferences_loaded"] = True
+
+# 2. Load from Query Params (Overwrite storage if present, robust for links/refreshes)
+QUERY_PARAMS_KEYS = ("ui_lang", "theme", "platform_label", "resolution_label", "voice_key", "speed_label")
+for qk in QUERY_PARAMS_KEYS:
+    if qk in st.query_params:
+        val = st.query_params[qk]
+        if val.lower() == "true": val = True
+        elif val.lower() == "false": val = False
+        st.session_state[qk] = val
 
 
 T = TEXT[st.session_state.ui_lang]
@@ -435,7 +472,12 @@ def _validate_api_keys(gemini_text, groq_text):
 
 with st.sidebar:
     st.header("Ko Tint Free AI")
-    st.session_state.ui_lang = st.selectbox(T["language"], ["မြန်မာ", "English"], index=["မြန်မာ", "English"].index(st.session_state.ui_lang), on_change=_on_pref_change)
+    
+    # Online User Counter
+    online_count = _get_online_count()
+    st.caption(f"{T['online_users']}: **{online_count}**")
+    
+    st.session_state.ui_lang = st.selectbox(T["language"], ["မြန်မာ", "English"], index=["မြန်မာ", "English"].index(st.session_state.ui_lang), on_change=_on_pref_change, help=T["tip_lang"])
     T = TEXT[st.session_state.ui_lang]
     
     # Group 1: API Keys & Security
@@ -444,10 +486,10 @@ with st.sidebar:
         remember_api_keys = st.checkbox(
             T["remember_keys"], key="remember_api_keys",
             on_change=_on_pref_change,
-            help="Stores keys in this browser's local storage. Do not enable on shared/public computers.",
+            help=T["tip_remember"],
         )
-        gemini_keys_text = st.text_input(T["keys"], type="password", key="gemini_keys_input", on_change=_on_pref_change, help="Separate multiple keys with commas.")
-        groq_key = st.text_input(T["groq"], type="password", key="groq_key_input", on_change=_on_pref_change)
+        gemini_keys_text = st.text_input(T["keys"], type="password", key="gemini_keys_input", on_change=_on_pref_change, help=T["tip_keys"])
+        groq_key = st.text_input(T["groq"], type="password", key="groq_key_input", on_change=_on_pref_change, help=T["tip_groq"])
         
         # Hybrid Key Management: Merge Secrets and UI input
         secrets_gemini = st.secrets.get("GEMINI_KEYS", "")
@@ -456,7 +498,7 @@ with st.sidebar:
         # Emergency Controls (Inside Security)
         st.divider()
         st.subheader("🚨 Emergency Fallback")
-        emergency_fallback = st.toggle("အရေးပေါ် Secrets ကို အသုံးပြုမည်", value=False, help="သင်၏ UI key များ အလုပ်မလုပ်တော့မှသာ Secrets ထဲမှ key များကို Fallback အဖြစ် အသုံးပြုပါမည်။")
+        emergency_fallback = st.toggle("အရေးပေါ် Secrets ကို အသုံးပြုမည်", value=False, help=T["tip_fallback"])
         if st.button("Reset All Cooldowns", use_container_width=True, help="Key များ အားလုံးကို Active ပြန်ဖြစ်အောင် လုပ်မည်။"):
             engine.reset_global_cooldowns()
             st.toast("🚨 Cooldowns reset successfully!", icon="🔥")
@@ -484,12 +526,12 @@ with st.sidebar:
 
     # Group 2: General Settings
     with st.expander("⚙️ General Settings", expanded=True):
-        st.session_state.theme = st.radio(T["theme"], ["dark", "light"], format_func=lambda x: T["dark"] if x == "dark" else T["light"], horizontal=True, index=0 if st.session_state.theme == "dark" else 1, on_change=_on_pref_change)
+        st.session_state.theme = st.radio(T["theme"], ["dark", "light"], format_func=lambda x: T["dark"] if x == "dark" else T["light"], horizontal=True, index=0 if st.session_state.theme == "dark" else 1, on_change=_on_pref_change, help=T["tip_theme"])
         
         platform_options = ["YouTube / 16:9", "TikTok / 9:16", "Facebook / 9:16"]
         if st.session_state.get("platform_label") not in platform_options:
             st.session_state.platform_label = platform_options[0]
-        platform_label = st.selectbox(T["platform"], platform_options, key="platform_label", on_change=_on_pref_change)
+        platform_label = st.selectbox(T["platform"], platform_options, key="platform_label", on_change=_on_pref_change, help=T["tip_platform"])
         
         resolution_options = ["720p", "1080p"]
         if st.session_state.get("resolution_label") not in resolution_options:
@@ -506,12 +548,12 @@ with st.sidebar:
             suffix = raw_name[raw_name.find("("):].strip() if "(" in raw_name else ""
             return f"{number} {suffix}".strip()
             
-        voice_key = st.selectbox(T["voice"], voice_keys, format_func=_voice_number_label, key="voice_key", on_change=_on_pref_change)
+        voice_key = st.selectbox(T["voice"], voice_keys, format_func=_voice_number_label, key="voice_key", on_change=_on_pref_change, help=T["tip_voice"])
         
         speed_options = list(engine.SPEED_MULTIPLIERS)
         if st.session_state.get("speed_label") not in speed_options:
             st.session_state.speed_label = speed_options[0]
-        speed_label = st.selectbox(T["speed"], speed_options, key="speed_label", on_change=_on_pref_change)
+        speed_label = st.selectbox(T["speed"], speed_options, key="speed_label", on_change=_on_pref_change, help=T["tip_speed"])
 
     # Group 3: Advanced Controls
     with st.expander(T["advanced"], expanded=False):
