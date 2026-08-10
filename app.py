@@ -26,15 +26,23 @@ _STORAGE_DIR = Path(os.path.join(tempfile.gettempdir(), "ko_tint_storage"))
 _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 def _get_user_key():
-    """Generate a unique key per user session using Streamlit's built-in session ID."""
-    return st.session_id[:8] if st.session_id else "default"
+    """Generate a unique key per user session. Uses session_state if available, else fallback."""
+    try:
+        # Use a per-user unique identifier stored in session_state
+        if "_user_unique_id" not in st.session_state:
+            import uuid as _uuid
+            st.session_state["_user_unique_id"] = _uuid.uuid4().hex[:8]
+        return st.session_state["_user_unique_id"]
+    except Exception:
+        return "default"
 
 def _get_storage_file():
     """Get per-user storage file path."""
     _uid = _get_user_key()
     return _STORAGE_DIR / f"ko_tint_preferences_{_uid}.json"
 
-STORAGE_FILE = _get_storage_file()
+# Lazy initialization - will be resolved on first use
+STORAGE_FILE = None  # Will be set via _get_storage_file() when needed
 
 def _save_to_backend_file(payload_dict):
     """Save preferences to a JSON file on the server (backend), per-user."""
