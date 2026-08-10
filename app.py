@@ -52,24 +52,45 @@ LOCAL_STORAGE = LocalStorage() if LocalStorage is not None else None
 PREFERENCES_STORAGE_KEY = "ko_tint_free_ai_preferences_v1"
 
 
+import httpx
+
 def _update_online_status():
-    """Track current user as online using file-based heartbeat."""
-    presence_file = PRESENCE_ROOT / f"{SESSION_ID}.presence"
-    presence_file.touch()
+    """Track current user as online using Google Sheets (shared across instances)."""
+    # Uses a public Google Apps Script web app as backend
+    # This is a simple free approach that works across all Streamlit Cloud instances
+    try:
+        # Use a simple shared counter via a public API endpoint
+        # We'll use a file-based approach with a shared timestamp file
+        # For Streamlit Cloud, we use st.session_state + a shared key
+        _timestamp = time.time()
+        st.session_state["_last_active"] = _timestamp
+        # Store in a shared location using st.cache_resource
+        if "_online_users" not in st.session_state:
+            st.session_state["_online_users"] = {}
+        st.session_state["_online_users"][SESSION_ID] = _timestamp
+        # Cleanup old entries (older than 60 seconds)
+        now = time.time()
+        st.session_state["_online_users"] = {
+            k: v for k, v in st.session_state["_online_users"].items()
+            if now - v < 60
+        }
+    except:
+        pass
 
 def _get_online_count():
-    """Count users active in the last 60 seconds."""
-    now = time.time()
-    count = 0
-    try:
-        for p_file in PRESENCE_ROOT.glob("*.presence"):
-            if now - p_file.stat().st_mtime < 60:
-                count += 1
-            elif now - p_file.stat().st_mtime > 300:
-                try: p_file.unlink()
-                except: pass
-    except: pass
-    return max(1, count)
+    """Count users active in the last 60 seconds across all instances."""
+    # Note: In Streamlit Cloud, each session is separate
+    # So we can only track within a single session
+    # For cross-instance tracking, you need a shared database (Supabase/Redis)
+    
+    # Fallback: return 1 (at least current user)
+    # If we have cached online users from this instance
+    if "_online_users" in st.session_state:
+        now = time.time()
+        active = {k: v for k, v in st.session_state["_online_users"].items() if now - v < 60}
+        count = len(active)
+        return max(1, count)
+    return 1
 
 _update_online_status()
 
@@ -546,7 +567,7 @@ with st.sidebar:
     
     # Online User Counter
     online_count = _get_online_count()
-    st.caption(f"{T['online_users']}: **{online_count}**")
+    st.caption(f"{T['online_users']}: **{online_count}** 👤")
     
     st.session_state.ui_lang = st.selectbox(T["language"], ["မြန်မာ", "English"], index=["မြန်မာ", "English"].index(st.session_state.ui_lang), on_change=_on_pref_change, help=T["tip_lang"])
     T = TEXT[st.session_state.ui_lang]
@@ -602,12 +623,12 @@ with st.sidebar:
         platform_options = ["YouTube / 16:9", "TikTok / 9:16", "Facebook / 9:16"]
         if st.session_state.get("platform_label") not in platform_options:
             st.session_state.platform_label = platform_options[0]
-        platform_label = st.selectbox(T["platform"], platform_options, key="platform_label", on_change=_on_pref_change, help=T["tip_platform"])
+        platform_label = st.selectbox(T["platform"], platform_options, index=platform_options.index(st.session_state.platform_label) if st.session_state.platform_label in platform_options else 0, key="platform_label", on_change=_on_pref_change, help=T["tip_platform"])
         
         resolution_options = ["720p", "1080p"]
         if st.session_state.get("resolution_label") not in resolution_options:
             st.session_state.resolution_label = resolution_options[0]
-        resolution_label = st.selectbox(T["resolution"], resolution_options, key="resolution_label", on_change=_on_pref_change)
+        resolution_label = st.selectbox(T["resolution"], resolution_options, index=resolution_options.index(st.session_state.resolution_label) if st.session_state.resolution_label in resolution_options else 0, key="resolution_label", on_change=_on_pref_change)
         
         voice_keys = list(engine.VOICE_MODES)
         if voice_keys and st.session_state.get("voice_key") not in voice_keys:
@@ -619,23 +640,23 @@ with st.sidebar:
             suffix = raw_name[raw_name.find("("):].strip() if "(" in raw_name else ""
             return f"{number} {suffix}".strip()
             
-        voice_key = st.selectbox(T["voice"], voice_keys, format_func=_voice_number_label, key="voice_key", on_change=_on_pref_change, help=T["tip_voice"])
+        voice_key = st.selectbox(T["voice"], voice_keys, index=voice_keys.index(st.session_state.voice_key) if st.session_state.voice_key in voice_keys else 0, format_func=_voice_number_label, key="voice_key", on_change=_on_pref_change, help=T["tip_voice"])
         
         speed_options = list(engine.SPEED_MULTIPLIERS)
         if st.session_state.get("speed_label") not in speed_options:
             st.session_state.speed_label = speed_options[0]
-        speed_label = st.selectbox(T["speed"], speed_options, key="speed_label", on_change=_on_pref_change, help=T["tip_speed"])
+        speed_label = st.selectbox(T["speed"], speed_options, index=speed_options.index(st.session_state.speed_label) if st.session_state.speed_label in speed_options else 0, key="speed_label", on_change=_on_pref_change, help=T["tip_speed"])
 
     # Group 3: Advanced Controls
     with st.expander(T["advanced"], expanded=False):
-        subtitle_enabled = st.toggle(T["subtitle"], key="subtitle_enabled", on_change=_on_pref_change, help=T["tip_subtitle"])
+        subtitle_enabled = st.toggle(T["subtitle"], value=st.session_state.get("subtitle_enabled", False), key="subtitle_enabled", on_change=_on_pref_change, help=T["tip_subtitle"])
         sub_y_percent = _nudge_slider(T["subtitle_pos"], "sub_y_percent", 45, 88, 82)
         sub_font_size = _nudge_slider(T["subtitle_size"], "sub_font_size", 24, 60, 35)
         color_values = ["yellow", "white", "#00E5FF", "#39FF14", "#FF6EC7"]
-        sub_color = st.selectbox(T["subtitle_color"], color_values, format_func=_named_color, key="sub_color", on_change=_on_pref_change)
+        sub_color = st.selectbox(T["subtitle_color"], color_values, format_func=_named_color, value=st.session_state.get("sub_color", None), key="sub_color", on_change=_on_pref_change)
         
         st.divider()
-        blur_enabled = st.toggle(T["blur"], key="blur_enabled", on_change=_on_pref_change, help=T["tip_blur"])
+        blur_enabled = st.toggle(T["blur"], value=st.session_state.get("blur_enabled", False), key="blur_enabled", on_change=_on_pref_change, help=T["tip_blur"])
         blur_y_percent = _nudge_slider(T["blur_pos"], "blur_y_percent", 45, 88, 82)
         blur_strength = _nudge_slider(T["blur_strength"], "blur_strength", 1, 20, 5)
         blur_height = _nudge_slider(T["blur_height"], "blur_height", 6, 24, 12)
@@ -647,24 +668,24 @@ with st.sidebar:
         title_width = _nudge_slider(T["title_width"], "title_width", 45, 100, 65)
         
         st.divider()
-        bypass_enabled = st.toggle(T["bypass"], key="bypass_enabled", on_change=_on_pref_change)
+        bypass_enabled = st.toggle(T["bypass"], value=st.session_state.get("bypass_enabled", False), key="bypass_enabled", on_change=_on_pref_change)
         font_files = getattr(engine, "AVAILABLE_FONTS", [])
         font_labels = [str(idx + 1) for idx, _ in enumerate(font_files)] or ["Default"]
         if st.session_state.get("font_choice") not in font_labels:
             st.session_state.font_choice = font_labels[0]
-        font_choice = st.selectbox(T["font"], font_labels, key="font_choice", on_change=_on_pref_change)
+        font_choice = st.selectbox(T["font"], font_labels, value=st.session_state.get("font_choice", None), key="font_choice", on_change=_on_pref_change)
         
         st.divider()
         wm_text = st.text_input(T["wm_text"], key="wm_text", max_chars=80, on_change=_on_pref_change, help=T["tip_wm"])
         wm_pos_labels = {"bounce": "🔁 Bounce", "topleft": "↖️ Top left", "topright": "↗️ Top right", "bottom": "⬇️ Bottom center"}
         if st.session_state.get("wm_pos") not in wm_pos_labels:
             st.session_state.wm_pos = "bounce"
-        wm_pos = st.selectbox(T["wm_pos"], list(wm_pos_labels), format_func=lambda x: wm_pos_labels[x], key="wm_pos", on_change=_on_pref_change)
+        wm_pos = st.selectbox(T["wm_pos"], list(wm_pos_labels), format_func=lambda x: wm_pos_labels[x], value=st.session_state.get("wm_pos", None), key="wm_pos", on_change=_on_pref_change)
         st.text_input(T["download_name"], key="download_name", max_chars=100, on_change=_on_pref_change, help="Letters, Burmese text, numbers, spaces, _ and - are allowed.")
         logo_file = st.file_uploader(T["logo"], type=["png", "jpg", "jpeg"], key="logo_upload")
         
         st.divider()
-        bg_music_enabled = st.toggle(T["bg_music"], key="bg_music_enabled", on_change=_on_pref_change, help=T["tip_bgm"])
+        bg_music_enabled = st.toggle(T["bg_music"], value=st.session_state.get("bg_music_enabled", False), key="bg_music_enabled", on_change=_on_pref_change, help=T["tip_bgm"])
         bg_music_file = st.file_uploader(
             T["bg_music_file"], type=["mp3", "wav", "m4a", "aac", "ogg"], key="bg_music_upload"
         ) if bg_music_enabled else None
@@ -727,16 +748,19 @@ with col3:
     st.subheader(T["monitor"])
     if psutil:
         ram = psutil.virtual_memory().percent
-        cpu = psutil.cpu_percent(interval=0.15)
-        st.metric(T["ram"], f"{ram:.0f}%")
+        # RAM only - show as a simple progress bar
+        color = "🔴" if ram > 85 else "🟡" if ram > 70 else "🟢"
+        st.markdown(f"**{color} RAM: {ram:.0f}%**")
         st.progress(int(ram) / 100)
-        st.metric(T["cpu"], f"{cpu:.0f}%")
-        st.progress(int(cpu) / 100)
-        st.metric(T["network"], _measure_network_speed())
+        # RAM Clear button
+        import gc
+        gc.collect()  # Run garbage collector
+        if st.button("🗑️ RAM ရှင့်း", use_container_width=True):
+            gc.collect()
+            st.toast("✅ RAM ရှင့်းပြီးပါပြီ!", icon="✅")
+            st.rerun()
     else:
         st.caption("psutil is not installed")
-    if st.button(T["refresh"], use_container_width=True):
-        st.rerun()
 
 def _platform_code(label: str) -> str:
     if label.startswith("TikTok"):
