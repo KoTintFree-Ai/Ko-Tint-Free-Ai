@@ -44,6 +44,7 @@ def _load_from_backend_file():
     except Exception:
         return None
 
+
 # Remove old localStorage component (not reliable on Streamlit Cloud)
 LocalStorage = None
 
@@ -427,21 +428,6 @@ for qk in QUERY_PARAMS_KEYS:
         elif val.lower() == "false": val = False
         st.session_state[qk] = val
 
-# 3. Apply saved preferences from query params (after Load button press)
-if st.session_state.get("_apply_from_query", False):
-    _apply_query_params_to_session()
-    # Also apply extra keys not in QUERY_PARAMS_KEYS
-    _stored = _load_from_backend_file()
-    if isinstance(_stored, dict):
-        for _pk in PREFERENCE_KEYS:
-            if _pk in _stored and _stored[_pk] is not None and _pk not in QUERY_PARAMS_KEYS:
-                st.session_state[_pk] = _stored[_pk]
-    st.session_state.pop("_apply_from_query", None)
-    st.rerun()
-
-
-T = TEXT[st.session_state.ui_lang]
-
 
 def _load_preferences_via_query():
     """Load preferences from backend file via query params (avoids widget write-after-creation error)."""
@@ -477,6 +463,22 @@ def _apply_query_params_to_session():
             if val.lower() == "true": val = True
             elif val.lower() == "false": val = False
             st.session_state[qk] = val
+
+
+# 3. Apply saved preferences from query params (after Load button press)
+if st.session_state.get("_apply_from_query", False):
+    _apply_query_params_to_session()
+    # Also apply extra keys not in QUERY_PARAMS_KEYS
+    _stored = _load_from_backend_file()
+    if isinstance(_stored, dict):
+        for _pk in PREFERENCE_KEYS:
+            if _pk in _stored and _stored[_pk] is not None and _pk not in QUERY_PARAMS_KEYS:
+                st.session_state[_pk] = _stored[_pk]
+    st.session_state.pop("_apply_from_query", None)
+    st.rerun()
+
+
+T = TEXT[st.session_state.ui_lang]
 
 
 def _save_preferences():
