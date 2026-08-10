@@ -399,17 +399,60 @@ st.markdown(
     .hero p {{ margin: .45rem 0 0; color: #dbeafe; }}
     [data-testid="stFileUploader"] {{ background: {card}; border-radius: 14px; padding: .4rem; }}
     
-    /* Ensure sidebar is always visible and handles zoom better */
-    [data-testid="stSidebar"] {{
-        min-width: 320px !important;
-        max-width: 350px !important;
-    }}
-    
-    /* Responsive adjustment: prevent sidebar from disappearing on wide screens with zoom */
+    /* ===== RESPONSIVE DESIGN ===== */
+    /* Desktop (1200px+) */
     @media (min-width: 1200px) {{
         [data-testid="stSidebar"] {{
-            margin-left: 0px !important;
+            min-width: 320px !important;
+            max-width: 350px !important;
         }}
+    }}
+    
+    /* Tablet (768px - 1199px) */
+    @media (max-width: 1199px) and (min-width: 768px) {{
+        [data-testid="stSidebar"] {{
+            min-width: 280px !important;
+            max-width: 300px !important;
+        }}
+        .block-container {{ max-width: 100%; padding: 1rem; }}
+        .hero h1 {{ font-size: 1.8rem; }}
+    }}
+    
+    /* Mobile (< 768px) */
+    @media (max-width: 767px) {{
+        [data-testid="stSidebar"] {{
+            min-width: 100vw !important;
+            max-width: 100vw !important;
+            width: 100vw !important;
+        }}
+        .block-container {{ 
+            max-width: 100%; 
+            padding: 0.5rem; 
+        }}
+        .hero {{ 
+            padding: 1rem; 
+            border-radius: 12px; 
+            margin-bottom: 0.8rem;
+        }}
+        .hero h1 {{ font-size: 1.5rem; }}
+        .hero p {{ font-size: 0.85rem; }}
+        [data-testid="stFileUploader"] {{ border-radius: 10px; }}
+        
+        /* Make buttons and inputs touch-friendly on mobile */
+        button[kind="primary"] {{ 
+            min-height: 44px; 
+            font-size: 1rem; 
+        }}
+        input[type="text"], input[type="password"], textarea {{ 
+            font-size: 16px !important;
+        }}
+    }}
+    
+    /* Extra small screens (< 480px) */
+    @media (max-width: 479px) {{
+        .hero h1 {{ font-size: 1.3rem; }}
+        .hero p {{ font-size: 0.75rem; }}
+        .block-container {{ padding: 0.3rem; }}
     }}
     </style>
     """,
