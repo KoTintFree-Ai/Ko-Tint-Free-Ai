@@ -1042,9 +1042,26 @@ if st.session_state.result_path and os.path.exists(st.session_state.result_path)
     st.video(st.session_state.result_path)
     generated_caption = st.session_state.get("generated_caption", "")
     generated_hashtags = st.session_state.get("generated_hashtags", "")
-    if generated_caption or generated_hashtags:
+    
+    # Auto-append music credit to caption
+    _music_credit = ""
+    if st.session_state.get("bg_music_enabled"):
+        _preset = st.session_state.get("bg_music_preset", "none")
+        _music_titles = {
+            "music_impact_prelude.mp3": "Impact Prelude",
+            "music_dark_times.mp3": "Dark Times",
+            "music_gymnopedie.mp3": "Gymnopedie No 1",
+            "music_five_armies.mp3": "Five Armies",
+            "music_ghost_dance.mp3": "Ghost Dance",
+        }
+        if _preset in _music_titles:
+            _song_name = _music_titles[_preset]
+            _music_credit = f"🎵 Music: \"{_song_name}\" by Kevin MacLeod (incompetech.com) CC BY 4.0"
+    
+    if generated_caption or generated_hashtags or _music_credit:
         st.subheader("📣 Caption & Hashtags" if st.session_state.ui_lang == "English" else "📣 Caption နှင့် Hashtags")
-        telegram_caption = "\n\n".join(part for part in (generated_caption, generated_hashtags) if part)
+        _parts = [p for p in (generated_caption, generated_hashtags, _music_credit) if p]
+        telegram_caption = "\n\n".join(_parts)
         if telegram_caption:
             st.code(telegram_caption, language=None)
     with open(st.session_state.result_path, "rb") as f:
