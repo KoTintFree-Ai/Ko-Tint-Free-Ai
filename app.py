@@ -167,6 +167,9 @@ TEXT = {
         "bg_music": "🎵 Background Music ဖွင့်မည်",
         "bg_music_file": "Background Music ဖိုင်ထည့်ပါ",
         "bg_music_volume": "Background Music အသံအတိုးအကျယ်",
+        "bg_music_preset": "🎶 Built-in Music",
+        "bg_preset_none": "မရွေးရသေး (None)",
+        "tip_bgm_presets": "Built-in royalty-free music (CC BY 4.0 - Kevin MacLeod)",
         "upload": "Video Upload လုပ်ပါ",
         "youtube": "သို့မဟုတ် YouTube URL ထည့်ပါ",
         "generate": "🚀 Recap ထုတ်မည်",
@@ -258,6 +261,9 @@ TEXT = {
         "bg_music": "🎵 Enable background music",
         "bg_music_file": "Upload background music",
         "bg_music_volume": "Background music volume",
+        "bg_music_preset": "🎶 Built-in Music Presets",
+        "bg_preset_none": "None",
+        "tip_bgm_presets": "Built-in royalty-free music (CC BY 4.0 - Kevin MacLeod)",
         "upload": "Upload a video",
         "youtube": "Or paste a YouTube URL",
         "generate": "🚀 Generate recap",
@@ -336,6 +342,7 @@ _REMEMBERED_DEFAULTS = {
     "wm_text": "Recap",
     "wm_pos": "bounce",
     "bg_music_enabled": False,
+    "bg_music_preset": "none",
     "bg_music_volume": 0.15,
     "download_name": "ko_tint_free_ai_recap",
     "remember_api_keys": False,
@@ -686,9 +693,39 @@ with st.sidebar:
         
         st.divider()
         bg_music_enabled = st.toggle(T["bg_music"], value=st.session_state.get("bg_music_enabled", False), key="bg_music_enabled", on_change=_on_pref_change, help=T["tip_bgm"])
-        bg_music_file = st.file_uploader(
-            T["bg_music_file"], type=["mp3", "wav", "m4a", "aac", "ogg"], key="bg_music_upload"
-        ) if bg_music_enabled else None
+        
+        # Built-in music presets (royalty-free, CC BY 4.0)
+        _music_presets = {
+            "none": T["bg_preset_none"],
+            "music_impact_prelude.mp3": "Impact Prelude - Cinematic",
+            "music_dark_times.mp3": "Dark Times - Suspense",
+            "music_gymnopedie.mp3": "Gymnopedie No 1 - Emotional",
+            "music_five_armies.mp3": "Five Armies - Epic",
+            "music_ghost_dance.mp3": "Ghost Dance - Horror",
+        }
+        
+        if bg_music_enabled:
+            # Preset selectbox
+            preset_keys = list(_music_presets.keys())
+            if st.session_state.get("bg_music_preset") not in preset_keys:
+                st.session_state.bg_music_preset = "none"
+            bg_music_preset = st.selectbox(
+                T["bg_music_preset"],
+                preset_keys,
+                format_func=lambda x: _music_presets.get(x, x),
+                index=preset_keys.index(st.session_state.bg_music_preset) if st.session_state.bg_music_preset in preset_keys else 0,
+                key="bg_music_preset",
+                on_change=_on_pref_change,
+                help=T["tip_bgm_presets"]
+            )
+            
+            bg_music_file = st.file_uploader(
+                T["bg_music_file"], type=["mp3", "wav", "m4a", "aac", "ogg"], key="bg_music_upload"
+            )
+        else:
+            bg_music_preset = "none"
+            bg_music_file = None
+        
         bg_music_volume = st.slider(
             T["bg_music_volume"], min_value=0.0, max_value=1.0, step=0.05,
             key="bg_music_volume", on_change=_on_pref_change
@@ -929,11 +966,22 @@ if start:
             status_box.info("🎧 Extracting source audio...")
             engine.extract_audio_ffmpeg(str(input_path), str(audio_path))
             bg_path_arg = None
-            if bg_music_enabled and bg_music_file is not None:
-                bg_suffix = Path(bg_music_file.name).suffix or ".mp3"
-                background_music_path = background_music_path.with_suffix(bg_suffix)
-                background_music_path.write_bytes(bg_music_file.getvalue())
-                bg_path_arg = str(background_music_path)
+            if bg_music_enabled:
+                # Priority: uploaded file > built-in preset
+                if bg_music_file is not None:
+                    bg_suffix = Path(bg_music_file.name).suffix or ".mp3"
+                    background_music_path = background_music_path.with_suffix(bg_suffix)
+                    background_music_path.write_bytes(bg_music_file.getvalue())
+                    bg_path_arg = str(background_music_path)
+                elif bg_music_preset and bg_music_preset != "none":
+                    # Look for built-in music in app root /music folder
+                    music_dir = APP_ROOT / "music"
+                    music_file = music_dir / bg_music_preset
+                    if music_file.exists():
+                        # Copy to job dir for FFmpeg access
+                        shutil.copyfile(str(music_file), str(background_music_path.with_suffix(".mp3")))
+                        bg_path_arg = str(background_music_path.with_suffix(".mp3"))
+                        st.session_state["_bg_preset_used"] = bg_music_preset
             pipeline_result = asyncio.run(_run_pipeline(
                 str(input_path), str(audio_path), str(output_path), status_box, progress_bar,
                 background_music_path=bg_path_arg, background_music_volume=bg_music_volume,
