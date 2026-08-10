@@ -25,41 +25,23 @@ import hashlib
 _STORAGE_DIR = Path(os.path.join(tempfile.gettempdir(), "ko_tint_storage"))
 _STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
-def _get_user_key():
-    """Generate a unique key per user session. Uses session_state if available, else fallback."""
-    try:
-        # Use a per-user unique identifier stored in session_state
-        if "_user_unique_id" not in st.session_state:
-            import uuid as _uuid
-            st.session_state["_user_unique_id"] = _uuid.uuid4().hex[:8]
-        return st.session_state["_user_unique_id"]
-    except Exception:
-        return "default"
-
-def _get_storage_file():
-    """Get per-user storage file path."""
-    _uid = _get_user_key()
-    return _STORAGE_DIR / f"ko_tint_preferences_{_uid}.json"
-
-# Lazy initialization - will be resolved on first use
-STORAGE_FILE = None  # Will be set via _get_storage_file() when needed
+# Single shared file - Streamlit session_state is already per-user isolated on Cloud
+STORAGE_FILE = _STORAGE_DIR / "ko_tint_preferences.json"
 
 def _save_to_backend_file(payload_dict):
-    """Save preferences to a JSON file on the server (backend), per-user."""
+    """Save preferences to a JSON file on the server (backend)."""
     try:
-        _file = _get_storage_file()
-        with open(_file, 'w', encoding='utf-8') as f:
+        with open(STORAGE_FILE, 'w', encoding='utf-8') as f:
             json.dump(payload_dict, f, ensure_ascii=False, indent=2)
         return True
     except Exception:
         return False
 
 def _load_from_backend_file():
-    """Load preferences from a JSON file on the server (backend), per-user."""
+    """Load preferences from a JSON file on the server (backend)."""
     try:
-        _file = _get_storage_file()
-        if os.path.exists(_file):
-            with open(_file, 'r', encoding='utf-8') as f:
+        if os.path.exists(STORAGE_FILE):
+            with open(STORAGE_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
         return None
     except Exception:
