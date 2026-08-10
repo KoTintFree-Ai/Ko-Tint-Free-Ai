@@ -475,13 +475,12 @@ def extract_preview_frame(video_path, out_path, dim_w, dim_h, percent=0.3):
     ts = min(max(dur * percent, 0.3), max(dur - 0.3, 0.3))
     cmd = [
         'ffmpeg', '-y', '-ss', f"{ts:.2f}", '-i', video_path, '-frames:v', '1',
-        '-vf', f"scale={dim_w}:{dim_h}:force_original_aspect_ratio=decrease:force_divisible_by=2",
+        '-vf', f"scale={dim_w}:{dim_h}:force_original_aspect_ratio=decrease,pad={dim_w}:{dim_h}:-1:-1:color=black",
         out_path
     ]
     run_ffmpeg(cmd, label="preview_frame")
 
 def render_calibration_preview(frame_path, out_path, blur_y, sub_y, blur_on, sub_font_size=36, title_text="Preview Title", title_size=42, title_width=85, blur_height=12, blur_width=100):
-    # No padding or scaling - show the original frame exactly as extracted
     parts = []
     if blur_on:
         blur_h = max(2.0, min(float(blur_height), 40.0))
@@ -519,7 +518,7 @@ def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920,
     # အလယ်ကတ်ပြားအတွက် ပုံထုတ်မည် (ယခင်ထက် ပိုကြီးပြီး ပိုကျယ်မည်)
     center_w = int(w * 0.90)
     center_w = center_w if center_w % 2 == 0 else center_w + 1
-    center_h = int(center_w * h / w)
+    center_h = int(center_w * 1.2) 
     center_h = center_h if center_h % 2 == 0 else center_h + 1
     
     extract_preview_frame(video_path, insert_path, center_w, center_h, percent=0.6)
@@ -578,9 +577,7 @@ def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920,
         title_box_h = 250
         title_box_y = h - title_box_h - 40
 
-    # Dynamic font size: scale based on title box height
-    title_font_size = max(16, min(int(title_box_h * 0.55), 72))
-    title_font = QFont(font_fam, title_font_size, QFont.Black)
+    title_font = QFont(font_fam, 50, QFont.Black)
     painter.setFont(title_font)
     
     # Shadow/Outline
@@ -1177,7 +1174,6 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
     if progress_cb:
         await progress_cb("🎵 အဆင့် ၇/၇ — Thumbnail နှင့် background music ထည့်ပြီး အပြီးသတ်နေပါသည်...")
     # 📌 TB Thumbnail ကိုဖန်တီးပြီး Video အစမှာ Cover အဖြစ် တွဲထည့်ခြင်း
-    # Use video resolution (dim_w x dim_h) for the thumbnail to match video aspect ratio
     tb_img_path = os.path.join(work_dir, f"tb_embed_{int(time.time() * 1000)}.jpg")
     create_thumbnail(input_video, story_title, tb_img_path, font_fam=selected_font_fam, w=dim_w, h=dim_h, work_dir=work_dir)
     
