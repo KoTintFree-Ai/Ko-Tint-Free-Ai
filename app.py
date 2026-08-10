@@ -701,14 +701,22 @@ with st.sidebar:
         if st.button("💾 Save", use_container_width=True, help="ဆက်တင်များကို အခုချက်ချင်း သိမ်းဆည်းမည်။"):
             _save_preferences()
             st.toast("✅ Saved!", icon="💾")
+            time.sleep(0.3)
+            st.rerun()  # Rerun to ensure localStorage completes
     with col_load:
         if st.button("🔄 Load", use_container_width=True, help="Browser မှ ဆက်တင်များကို ပြန်လည်ဆွဲတင်မည်။"):
-            if _load_preferences_from_storage():
-                st.toast("✅ Settings Loaded!", icon="🔄")
+            # Try loading with a small delay to allow localStorage to complete
+            loaded = _load_preferences_from_storage()
+            if not loaded:
+                # Retry once after a brief pause
                 time.sleep(0.5)
+                loaded = _load_preferences_from_storage()
+            if loaded:
+                st.toast("✅ Settings Loaded!", icon="🔄")
+                time.sleep(0.3)
                 st.rerun()
             else:
-                st.toast("❌ No settings found in browser.", icon="⚠️")
+                st.toast("❌ No settings found in browser. Please Save first.", icon="⚠️")
 
 # _save_preferences() # REMOVED: Saving should only happen on change, not on every rerun
 
