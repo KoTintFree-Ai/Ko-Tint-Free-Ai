@@ -577,7 +577,39 @@ def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920,
         title_box_h = 250
         title_box_y = h - title_box_h - 40
 
-    title_font = QFont(font_fam, 50, QFont.Black)
+    # Dynamic font size based on video width for consistent appearance
+    # Base: 1080px wide = font size 50
+    # Scale proportionally: 1920 wide = ~90, 720 wide = ~33
+    _base_font_size = int(50.0 * w / 1080.0)
+    _base_font_size = max(28, min(_base_font_size, 96))
+    
+    # Auto-fit: shrink font if text is too long to fit in box
+    _font_size = _base_font_size
+    while _font_size > 24:
+        _test_font = QFont(font_fam, _font_size, QFont.Black)
+        _test_metrics = QFontMetrics(_test_font)
+        _max_line_width = w - 100  # margin 40+40
+        _lines = []
+        _words = title_text.strip().split()
+        _cur_line = ""
+        for _wd in _words:
+            _test_line = (_cur_line + " " + _wd).strip()
+            if _test_metrics.horizontalAdvance(_test_line) > _max_line_width and _cur_line:
+                _lines.append(_cur_line)
+                _cur_line = _wd
+            else:
+                _cur_line = _test_line
+        if _cur_line:
+            _lines.append(_cur_line)
+        _total_text_h = len(_lines) * _test_metrics.height() * 1.2
+        if _total_text_h <= title_box_h and _font_size == _base_font_size:
+            break  # Fits at base size, no need to shrink
+        elif _total_text_h <= title_box_h:
+            break  # Fits at current size
+        else:
+            _font_size -= 2
+    
+    title_font = QFont(font_fam, _font_size, QFont.Black)
     painter.setFont(title_font)
     
     # Shadow/Outline
