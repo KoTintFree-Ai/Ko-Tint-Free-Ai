@@ -432,7 +432,18 @@ T = TEXT[st.session_state.ui_lang]
 
 
 def _save_preferences():
-    # 1. Save non-sensitive to Query Params (URL)
+    # 1. Save to backend file (server-side persistence)
+    _payload = {}
+    for _pk in PREFERENCE_KEYS:
+        if _pk in st.session_state:
+            _payload[_pk] = st.session_state[_pk]
+    # Also save API keys if remember is enabled
+    if st.session_state.get("remember_api_keys"):
+        _payload["gemini_keys"] = st.session_state.get("gemini_keys_input", "")
+        _payload["groq_key"] = st.session_state.get("groq_key_input", "")
+    _save_to_backend_file(_payload)
+    
+    # 2. Save non-sensitive to Query Params (URL)
     new_query_params = {}
     for qk in QUERY_PARAMS_KEYS:
         if qk in st.session_state:
@@ -784,7 +795,7 @@ with st.sidebar:
                 time.sleep(0.3)
                 st.rerun()
             else:
-                st.toast("❌ No settings found in browser. Please Save first.", icon="⚠️")
+                st.toast("❌ No settings found. Please Save first.", icon="⚠️")
 
 # _save_preferences() # REMOVED: Saving should only happen on change, not on every rerun
 
