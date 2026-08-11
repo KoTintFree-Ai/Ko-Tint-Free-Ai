@@ -1286,7 +1286,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
         import shutil
         shutil.rmtree(job_dir, ignore_errors=True)
 
-    return story_title, story_hook, story_hashtags, tb_img_path
+    return story_title, story_caption, story_hashtags, tb_img_path
 
 # =====================================================================
 # TELEGRAM BOT ARCHITECTURE (WITH MEMORY SESSION)
@@ -1747,7 +1747,7 @@ async def process_recap_job(job_item, user_id):
         try: await status.edit(f"⚡ [Auto-Queue Engine] ဘာသာစကားအားလုံးကို လျင်မြန်စွာ ညှိယူဖန်တီးနေပါသည်... (Speed: {selected_speed})")
         except MessageNotModifiedError: pass
 
-        story_title, story_hook, story_hashtags, tb_path = await advanced_sync_pipeline(
+        story_title, story_caption, story_hashtags, tb_path = await advanced_sync_pipeline(
             extracted_audio_path, u_gemini, u_groq, input_video, output_video, selected_voice_config, selected_speed, user_id, progress_cb=update_progress
         )
 
@@ -1774,7 +1774,7 @@ async def process_recap_job(job_item, user_id):
             
             caption_text = (
                 f"🎬 **{story_title}**\n\n"
-                f"💡 {story_hook}\n\n"
+                f"💡 {story_caption}\n\n"
                 f"{story_hashtags}\n\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"📊 **Video Information**\n"
