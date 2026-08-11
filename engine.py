@@ -508,10 +508,11 @@ def render_calibration_preview(frame_path, out_path, blur_y, sub_y, blur_on, sub
 # 🖼️ TB THUMBNAIL GENERATOR (MODERN PREMIUM CARD STYLE)
 # =====================================================================
 def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920, work_dir=None, best_percent=0.5):
+    """Creates a FULL-SCREEN thumbnail with no borders or inset cards."""
     work_dir = ensure_work_dir(work_dir)
     bg_path = os.path.join(work_dir, f"tb_bg_{int(time.time() * 1000)}.jpg")
     
-    # Use the best frame as the FULL BACKGROUND
+    # Extract the best frame as the FULL BACKGROUND
     extract_preview_frame(video_path, bg_path, w, h, percent=best_percent)
 
     img = QImage(w, h, QImage.Format_ARGB32)
@@ -526,90 +527,71 @@ def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920,
     else: 
         img.fill(Qt.black)
 
-    # 2. Cinematic Gradient Overlay (Bottom-up for text readability)
-    overlay_grad = QLinearGradient(0, h * 0.4, 0, h)
+    # 2. Strong Bottom-up Gradient Overlay for text readability
+    overlay_grad = QLinearGradient(0, h * 0.3, 0, h)
     overlay_grad.setColorAt(0.0, QColor(0, 0, 0, 0))    # Transparent top
-    overlay_grad.setColorAt(0.7, QColor(0, 0, 0, 180))  # Semi-dark middle
-    overlay_grad.setColorAt(1.0, QColor(0, 0, 0, 240))  # Dark bottom for text
+    overlay_grad.setColorAt(0.6, QColor(0, 0, 0, 150))  # Semi-dark middle
+    overlay_grad.setColorAt(1.0, QColor(0, 0, 0, 250))  # Very dark bottom for text
     painter.setBrush(QBrush(overlay_grad))
     painter.setPen(Qt.NoPen)
     painter.drawRect(0, 0, w, h)
 
-    # 4. Bold & Clean Title Area (White to Yellow Gradient)
-    title_box_y = h - 500
-    title_box_h = h - title_box_y - 40
-    if title_box_h < 200: 
-        title_box_h = 250
-        title_box_y = h - title_box_h - 40
-
-    # Dynamic font size based on video width for consistent appearance
-    # Base: 1080px wide = font size 50
-    # Scale proportionally: 1920 wide = ~90, 720 wide = ~33
-    _base_font_size = int(50.0 * w / 1080.0)
-    _base_font_size = max(28, min(_base_font_size, 96))
+    # 3. Bold & Punchy Title (White to Yellow Gradient)
+    # Positioned near the bottom but with enough margin
+    title_box_y = h - 600
+    title_box_h = 500
     
-    # Auto-fit: shrink font if text is too long to fit in box
-    _font_size = _base_font_size
-    while _font_size > 24:
+    # Scale font size based on video width
+    _font_size = int(65.0 * w / 1080.0) # Larger font for impact
+    _font_size = max(32, min(_font_size, 110))
+    
+    # Auto-fit text
+    while _font_size > 28:
         _test_font = QFont(font_fam, _font_size, QFont.Black)
         _test_metrics = QFontMetrics(_test_font)
-        _max_line_width = w - 100  # margin 40+40
+        _max_w = w - 120
         _lines = []
         _words = title_text.strip().split()
-        _cur_line = ""
+        _cur = ""
         for _wd in _words:
-            _test_line = (_cur_line + " " + _wd).strip()
-            if _test_metrics.horizontalAdvance(_test_line) > _max_line_width and _cur_line:
-                _lines.append(_cur_line)
-                _cur_line = _wd
-            else:
-                _cur_line = _test_line
-        if _cur_line:
-            _lines.append(_cur_line)
-        _total_text_h = len(_lines) * _test_metrics.height() * 1.2
-        if _total_text_h <= title_box_h and _font_size == _base_font_size:
-            break  # Fits at base size, no need to shrink
-        elif _total_text_h <= title_box_h:
-            break  # Fits at current size
-        else:
-            _font_size -= 2
+            _t = (_cur + " " + _wd).strip()
+            if _test_metrics.horizontalAdvance(_t) > _max_w and _cur:
+                _lines.append(_cur)
+                _cur = _wd
+            else: _cur = _t
+        if _cur: _lines.append(_cur)
+        if (len(_lines) * _test_metrics.height() * 1.1) <= title_box_h: break
+        _font_size -= 2
     
-    title_font = QFont(font_fam, _font_size, QFont.Black)
-    painter.setFont(title_font)
+    painter.setFont(QFont(font_fam, _font_size, QFont.Black))
     
-    # Shadow/Outline
-    offsets = [(-3,-3), (-3,3), (3,-3), (3,3), (-5,0), (5,0), (0,-5), (0,5), (6,6)]
+    # Thick Black Shadow for maximum readability
+    offsets = [(-4,-4), (-4,4), (4,-4), (4,4), (-6,0), (6,0), (0,-6), (0,6), (8,8)]
     for ox, oy in offsets:
-        painter.setPen(QColor("black"))
-        painter.drawText(40 + ox, title_box_y + oy, w - 80, title_box_h, Qt.AlignCenter | Qt.TextWordWrap, title_text.strip())
+        painter.setPen(QColor(0, 0, 0, 255))
+        painter.drawText(60 + ox, title_box_y + oy, w - 120, title_box_h, Qt.AlignCenter | Qt.TextWordWrap, title_text.strip())
 
-    # Main Text (White to Yellow Vertical Gradient)
+    # Main Text Gradient
     text_grad = QLinearGradient(0, title_box_y, 0, title_box_y + title_box_h)
     text_grad.setColorAt(0.0, QColor("#FFFFFF"))
-    text_grad.setColorAt(1.0, QColor("#FFEA00"))
-    
+    text_grad.setColorAt(1.0, QColor("#FFD600")) # Vibrant Yellow
     painter.setPen(QPen(QBrush(text_grad), 0))
-    painter.drawText(40, title_box_y, w - 80, title_box_h, Qt.AlignCenter | Qt.TextWordWrap, title_text.strip())
+    painter.drawText(60, title_box_y, w - 120, title_box_h, Qt.AlignCenter | Qt.TextWordWrap, title_text.strip())
 
-    # 5. Add "FULL STORY" Badge for professional look
-    badge_w, badge_h = int(w * 0.25), int(h * 0.04)
-    badge_x, badge_y = 40, 40
-    badge_path = QPainterPath()
-    badge_path.addRoundedRect(badge_x, badge_y, badge_w, badge_h, 10, 10)
-    painter.setBrush(QColor(255, 0, 0, 230)) # Red Badge
+    # 4. "FULL STORY" Badge (Top Left)
+    badge_w, badge_h = int(w * 0.28), int(h * 0.045)
+    badge_x, badge_y = 50, 50
+    painter.setBrush(QColor(220, 20, 60, 240)) # Deep Red
     painter.setPen(Qt.NoPen)
-    painter.drawPath(badge_path)
+    painter.drawRoundedRect(badge_x, badge_y, badge_w, badge_h, 12, 12)
     
-    badge_font = QFont(font_fam, int(badge_h * 0.6), QFont.Bold)
-    painter.setFont(badge_font)
+    painter.setFont(QFont(font_fam, int(badge_h * 0.55), QFont.Bold))
     painter.setPen(QColor("white"))
     painter.drawText(badge_x, badge_y, badge_w, badge_h, Qt.AlignCenter, "FULL STORY")
 
     painter.end()
-    img.save(out_path, "JPEG")
-    
+    img.save(out_path, "JPEG", 95)
     if os.path.exists(bg_path): os.remove(bg_path)
-    if os.path.exists(insert_path): os.remove(insert_path)
 
 # =====================================================================
 # AI TRANSLATION TIMELINE 
@@ -785,24 +767,22 @@ async def get_working_gemini_url(api_key):
 
 async def generate_title_hook_hashtags(story_text, gemini_pool):
     prompt = f"""
-    [SYSTEM INSTRUCTION: You are a fast, viral Content Creator and Movie Specialist.]
-    Based on this Burmese movie recap summary, generate a separate Caption, a Video Title, exactly 3 highly effective hashtags, and a punchy Thumbnail Title.
+    [SYSTEM INSTRUCTION: You are a viral Content Creator. You are STRICTLY FORBIDDEN from using the words "ဇာတ်လမ်း" (Story) or "ရုပ်ရှင်" (Movie) in titles or thumbnail text.]
+    Based on this movie recap summary, generate:
+    1. CAPTION: A short, engaging social media summary (2 sentences).
+    2. VIDEO_TITLE: A viral, punchy title. !!! STRICTLY FORBIDDEN: Do NOT use "ဇာတ်လမ်း" or "ရုပ်ရှင်" !!!
+    3. HASHTAGS: Exactly 3 trending and highly effective hashtags.
+    4. THUMBNAIL_TITLE: An extreme click-worthy title (MAX 4-5 words). !!! STRICTLY FORBIDDEN: Do NOT use "ဇာတ်လမ်း" or "ရုပ်ရှင်" !!!
     
     Story Summary:
     {story_text[:2500]}
     
-    Requirements:
-    1. CAPTION: A brief, engaging summary of the story for social media (2-3 sentences).
-    2. VIDEO_TITLE: A catchy title for the video. DO NOT use words like "ဇာတ်လမ်း" (Story) or "ရုပ်ရှင်" (Movie). Make it direct and intriguing.
-    3. HASHTAGS: Provide exactly 3 hashtags that are trending for movie recap content.
-    4. THUMBNAIL_TITLE: A very short, punchy title for the thumbnail (MAX 5 words). NO generic words like "ဇာတ်လမ်း". Make it extreme and click-worthy.
-    
-    Output EXACTLY in this JSON format without any extra markdown or text:
+    Output JSON format:
     {{
-        "caption": "စိတ်ဝင်စားစရာကောင်းသော ဇာတ်လမ်းအကျွှန်းချုပ် (Social Media အတွက်)",
-        "video_title": "ဆွဲဆောင်မှုရှိသော ခေါင်းစဉ် (ဇာတ်လမ်း/ရုပ်ရှင် စသည့်စကားလုံးများ လုံးဝမပါရ)",
+        "caption": "စိတ်ဝင်စားစရာကောင်းသော အကျဉ်းချုပ်",
+        "video_title": "ဆွဲဆောင်မှုရှိသော ခေါင်းစဉ် (ဇာတ်လမ်း/ရုပ်ရှင် လုံးဝမပါရ)",
         "hashtags": "#Hashtag1 #Hashtag2 #Hashtag3",
-        "thumbnail_title": "အလွန်တိုတောင်းပြီး ဆွဲဆောင်မှုရှိသော Thumbnail စာသား"
+        "thumbnail_title": "အလွန်တိုတောင်းသော Thumbnail စာသား"
     }}
     """
     attempts = len(gemini_pool.all_keys) * 3
@@ -821,7 +801,18 @@ async def generate_title_hook_hashtags(story_text, gemini_pool):
                     raw = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
                     raw = re.sub(r'```json|```', '', raw).strip()
                     data = json.loads(raw)
-                    return data.get("caption", "ဒီဇာတ်လမ်းလေးက သင့်ကို အံ့သြသွားစေပါလိမ့်မယ်။"), data.get("video_title", "🎬 စိတ်ဝင်စားဖွယ် အကျဉ်းချုပ်"), data.get("hashtags", "#MovieRecap #Myanmar #AIStory"), data.get("thumbnail_title", data.get("video_title", "🎬 စိတ်ဝင်စားဖွယ် အကျဉ်းချုပ်"))
+                    cap = data.get("caption", "ဒီအဖြစ်အပျက်က သင့်ကို အံ့သြသွားစေပါလိမ့်မယ်။")
+                    v_title = data.get("video_title", "🎬 စိတ်ဝင်စားဖွယ် အကျဉ်းချုပ်")
+                    tags = data.get("hashtags", "#MovieRecap #Myanmar #AIStory")
+                    t_title = data.get("thumbnail_title", v_title)
+                    
+                    # STRIKE TEAM: Force remove forbidden words from titles and hashtags
+                    for forbidden in ["ဇာတ်လမ်း", "ရုပ်ရှင်"]:
+                        v_title = v_title.replace(forbidden, "").replace("  ", " ").strip()
+                        t_title = t_title.replace(forbidden, "").replace("  ", " ").strip()
+                        tags = tags.replace(forbidden, "").replace("  ", " ").strip()
+                    
+                    return cap, v_title, tags, t_title
                 elif res.status_code == 404:
                     invalidate_model_cache(current_key)
                     gemini_pool.mark_error(current_key, cooldown_seconds=2, reason=f"Model not found (404)")
