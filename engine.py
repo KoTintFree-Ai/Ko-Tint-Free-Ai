@@ -304,7 +304,8 @@ def create_text_image_full(text, font_size, text_color, outline_color, outline_w
         lines = text.split('\n')
 
         max_line_w = int(max(fm.horizontalAdvance(line) for line in lines))
-        total_h = int(len(lines) * fm.height())
+        line_h = int(fm.height() * 0.95)
+        total_h = int(len(lines) * line_h)
         x = int((width - max_line_w) / 2)
 
         if align == "bottom": y = int(height - margin_v - total_h)
@@ -350,7 +351,7 @@ def create_text_image_full(text, font_size, text_color, outline_color, outline_w
             painter.setPen(Qt.NoPen)
             painter.setBrush(t_brush)
             painter.drawPath(path)
-            current_y += int(fm.height())
+            current_y += line_h
     finally:
         if painter.isActive(): painter.end()
     return img
@@ -1126,7 +1127,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
     if user_title_mode.get(user_id, True) and story_title and story_title.strip():
         title_path = os.path.join(job_dir, f"title_{user_id}.png")
         title_size = max(18, min(int(user_title_size.get(user_id, 30)), 64))
-        title_width = max(25, min(float(user_title_width.get(user_id, 65)), 100.0))
+        title_width = max(25, min(float(user_title_width.get(user_id, 85)), 100.0))
         title_img = create_text_image_full(
             text=story_title.strip(), font_size=title_size, text_color="#00E5FF", outline_color="black", outline_width=max(2, int(title_size * 0.12)),
             use_box=False, box_color="black", box_alpha="0.0", box_border=0,
