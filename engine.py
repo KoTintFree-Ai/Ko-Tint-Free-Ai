@@ -1019,23 +1019,23 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
         for idx in chunk_indices:
             original_segments_text += f"[{idx}] {timeline_data[idx]['text'].strip()}\n"
 
-	        prompt = f"""
-	[SYSTEM INSTRUCTION: You are a fast, highly accurate Audio-to-Burmese Translator. Ignore background noise. Translate the text directly into smooth and natural Burmese. Do NOT add extra words, explanations, or expansions that are not in the original text.]
-	
-	[Recap အတွက် ဘာသာပြန်]
-	အောက်ပါ နံပါတ်စဉ်တပ်ထားသော မူရင်းစာတန်းထိုးများကို AI Voiceover ဖြင့် အသံပြန်သွင်းရန် မြန်မာလို အချောမွေ့ဆုံး ဘာသာပြန်ပေးပါ။
-	
-	"{original_segments_text}"
-	
-	စည်းကမ်းချက်များ-
-	၁။ စာအုပ်သုံး (သည်၊ ၏) မသုံးဘဲ ရုပ်ရှင် Recap narrator တစ်ယောက်လို ပြေပြေပြစ်ပြစ် ပြောပြသလို စကားပြောဟန်ဖြင့် ဘာသာပြန်ပါ။
-	၂။ {gender_rule}
-	   ⚠️ "ဗျာ"၊ "ပေါ့ဗျာ"၊ "ရှင့်"၊ "လေ" ကဲ့သို့ sentence-ending particle များကို ၁၀ ကြောင်းလျှင် ၁ ကြောင်းထက် ပို၍ လုံးဝ မသုံးပါနှင့်။
-	၃။ မြန်မာလို အသံထွက် (Transliterate) အတိုင်းသာ ရေးပါ။ အင်္ဂလိပ်စာလုံး လုံးဝမပါစေရ။
-	၄။ စကားပြောများကိုသာ တိုက်ရိုက်ဘာသာပြန်ပါ။ မူရင်းစာသားတွင် မပါသော အပိုစကားလုံးများ၊ ချဲ့ထွင်ပြောဆိုချက်များနှင့် ရှင်းလင်းချက်များကို လုံးဝ (လုံးဝ) ထည့်မရေးပါနှင့်။
-	၅။ ⚠️ မူလစာကြောင်းများ၏ နံပါတ်စဉ်များ (ဥပမာ - [0], [1]) ကို မပျောက်စေဘဲ အတိအကျ ပြန်ထည့်ပေးပါ။ တစ်ကြောင်းမှ မကျန်စေရပါ။
-	၆။ (အရေးကြီးသည်) စာကြောင်းတစ်ကြောင်းလျှင် စကားလုံး ၁၅ လုံးမှ ၂၀ လုံးထက် မပိုစေရ။ (မြန်မာစာလုံးများကို Space ခြား၍ ရေးပေးပါ)
-	"""
+            prompt = f"""
+    [SYSTEM INSTRUCTION: You are a fast, highly accurate Audio-to-Burmese Translator. Ignore background noise. Translate the text directly into smooth and natural Burmese. Do NOT add extra words, explanations, or expansions that are not in the original text.]
+    
+    [Recap အတွက် ဘာသာပြန်]
+    အောက်ပါ နံပါတ်စဉ်တပ်ထားသော မူရင်းစာတန်းထိုးများကို AI Voiceover ဖြင့် အသံပြန်သွင်းရန် မြန်မာလို အချောမွေ့ဆုံး ဘာသာပြန်ပေးပါ။
+    
+    "{original_segments_text}"
+    
+    စည်းကမ်းချက်များ-
+    ၁။ စာအုပ်သုံး (သည်၊ ၏) မသုံးဘဲ ရုပ်ရှင် Recap narrator တစ်ယောက်လို ပြေပြေပြစ်ပြစ် ပြောပြသလို စကားပြောဟန်ဖြင့် ဘာသာပြန်ပါ။
+    ၂။ {gender_rule}
+       ⚠️ "ဗျာ"၊ "ပေါ့ဗျာ"၊ "ရှင့်"၊ "လေ" ကဲ့သို့ sentence-ending particle များကို ၁၀ ကြောင်းလျှင် ၁ ကြောင်းထက် ပို၍ လုံးဝ မသုံးပါနှင့်။
+    ၃။ မြန်မာလို အသံထွက် (Transliterate) အတိုင်းသာ ရေးပါ။ အင်္ဂလိပ်စာလုံး လုံးဝမပါစေရ။
+    ၄။ စကားပြောများကိုသာ တိုက်ရိုက်ဘာသာပြန်ပါ။ မူရင်းစာသားတွင် မပါသော အပိုစကားလုံးများ၊ ချဲ့ထွင်ပြောဆိုချက်များနှင့် ရှင်းလင်းချက်များကို လုံးဝ (လုံးဝ) ထည့်မရေးပါနှင့်။
+    ၅။ ⚠️ မူလစာကြောင်းများ၏ နံပါတ်စဉ်များ (ဥပမာ - [0], [1]) ကို မပျောက်စေဘဲ အတိအကျ ပြန်ထည့်ပေးပါ။ တစ်ကြောင်းမှ မကျန်စေရပါ။
+    ၆။ (အရေးကြီးသည်) စာကြောင်းတစ်ကြောင်းလျှင် စကားလုံး ၁၅ လုံးမှ ၂၀ လုံးထက် မပိုစေရ။ (မြန်မာစာလုံးများကို Space ခြား၍ ရေးပေးပါ)
+    """
         success = False
         max_retries = max(len(gemini_pool.all_keys) * 3, 6)
 
