@@ -507,21 +507,21 @@ def render_calibration_preview(frame_path, out_path, blur_y, sub_y, blur_on, sub
 # =====================================================================
 # 🖼️ TB THUMBNAIL GENERATOR (MODERN PREMIUM CARD STYLE)
 # =====================================================================
-def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920, work_dir=None):
+def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920, work_dir=None, best_percent=0.5):
     work_dir = ensure_work_dir(work_dir)
     bg_path = os.path.join(work_dir, f"tb_bg_{int(time.time() * 1000)}.jpg")
     insert_path = os.path.join(work_dir, f"tb_in_{int(time.time() * 1000)}.jpg")
     
     # နောက်ခံအတွက် ဗီဒီယိုအစောပိုင်းမှ ပုံထုတ်မည်
-    extract_preview_frame(video_path, bg_path, w, h, percent=0.2)
+    extract_preview_frame(video_path, bg_path, w, h, percent=max(0.05, best_percent - 0.2))
     
-    # အလယ်ကတ်ပြားအတွက် ပုံထုတ်မည် (ယခင်ထက် ပိုကြီးပြီး ပိုကျယ်မည်)
+    # အလယ်ကတ်ပြားအတွက် ပုံထုတ်မည် (Gemini ရွေးပေးသော အကောင်းဆုံးပုံ)
     center_w = int(w * 0.90)
     center_w = center_w if center_w % 2 == 0 else center_w + 1
     center_h = int(center_w * 1.2) 
     center_h = center_h if center_h % 2 == 0 else center_h + 1
     
-    extract_preview_frame(video_path, insert_path, center_w, center_h, percent=0.6)
+    extract_preview_frame(video_path, insert_path, center_w, center_h, percent=best_percent)
 
     img = QImage(w, h, QImage.Format_ARGB32)
     painter = QPainter(img)
@@ -934,6 +934,45 @@ def process_single_chunk(args):
 # =====================================================================
 # ADVANCED SYNC PIPELINE (EMBEDS TB AS INTRO COVER)
 # =====================================================================
+async def select_best_thumbnail_frame(video_path, gemini_pool, work_dir, w=1080, h=1920):
+    """Use Gemini to pick the most engaging frame from 5 candidates."""
+    try:
+        duration = get_media_duration(video_path)
+        candidates = [0.1, 0.3, 0.5, 0.7, 0.9]
+        frame_paths = []
+        
+        # Extract 5 small frames for Gemini to look at
+        for i, p in enumerate(candidates):
+            fpath = os.path.join(work_dir, f"candidate_frame_{i}.jpg")
+            extract_preview_frame(video_path, fpath, 512, 512, percent=p) # Small size for speed
+            if os.path.exists(fpath):
+                frame_paths.append((i, fpath, p))
+
+        if not frame_paths: return 0.5 # Fallback to middle
+
+        # Prepare images for Gemini
+        parts = [{"text": "You are a Movie Marketing Expert. Look at these 5 frames from a movie and pick the ONE that is most visually striking and engaging for a YouTube/TikTok thumbnail. Reply ONLY with the index number (0, 1, 2, 3, or 4)."}]
+        for i, fpath, _ in frame_paths:
+            with open(fpath, "rb") as f:
+                img_data = base64.b64encode(f.read()).decode("utf-8")
+                parts.append({"inline_data": {"mime_type": "image/jpeg", "data": img_data}})
+
+        current_key = gemini_pool.get_key()
+        url = await get_working_gemini_url(current_key)
+        
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            res = await client.post(url, json={"contents": [{"parts": parts}]})
+            if res.status_code == 200:
+                raw_text = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                match = re.search(r'(\d)', raw_text)
+                if match:
+                    idx = int(match.group(1))
+                    if 0 <= idx < len(frame_paths):
+                        return frame_paths[idx][2]
+    except Exception as e:
+        logging.error(f"Gemini frame selection failed: {e}")
+    return 0.5 # Fallback to middle
+
 async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_video, output_video_path, voice_config, user_speed_val, user_id, progress_cb=None, background_music_path=None, background_music_volume=0.0, work_dir=None, fallback_gemini_keys_str=""):
     work_dir = ensure_work_dir(work_dir)
     clean_groq_key = str(groq_key).strip()
@@ -1228,9 +1267,13 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
 
     if progress_cb:
         await progress_cb("🎵 အဆင့် ၇/၇ — Thumbnail နှင့် background music ထည့်ပြီး အပြီးသတ်နေပါသည်...")
+    
+    # Use Gemini to pick the best frame for the thumbnail
+    best_frame_percent = await select_best_thumbnail_frame(input_video, gemini_pool, work_dir, w=dim_w, h=dim_h)
+    
     # 📌 TB Thumbnail ကိုဖန်တီးပြီး Video အစမှာ Cover အဖြစ် တွဲထည့်ခြင်း
     tb_img_path = os.path.join(work_dir, f"tb_embed_{int(time.time() * 1000)}.jpg")
-    create_thumbnail(input_video, thumbnail_title, tb_img_path, font_fam=selected_font_fam, w=dim_w, h=dim_h, work_dir=work_dir)
+    create_thumbnail(input_video, thumbnail_title, tb_img_path, font_fam=selected_font_fam, w=dim_w, h=dim_h, work_dir=work_dir, best_percent=best_frame_percent)
     
     tb_vid = os.path.join(work_dir, f"tb_vid_{int(time.time() * 1000)}.mp4")
     tb_audio = os.path.join(work_dir, f"tb_audio_{int(time.time() * 1000)}.mp3")
