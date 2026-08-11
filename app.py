@@ -840,7 +840,7 @@ st.markdown('<div class="hero"><h1>🎬 Ko Tint Free AI</h1><p>AI Movie Recap ·
 with st.expander(T["guide"], expanded=False):
     st.markdown(T["guide_text"])
 
-col1, col2, col3 = st.columns([1.35, 1, 1])
+col1, col3 = st.columns([2.35, 1])
 with col1:
     uploaded = st.file_uploader(T["upload"], type=["mp4", "mov", "mkv", "webm", "avi"])
     youtube_url = st.text_input(T["youtube"])
@@ -848,7 +848,7 @@ with col1:
         upload_sig = (uploaded.name, int(getattr(uploaded, "size", 0)))
         if st.session_state.get("uploaded_sig") != upload_sig:
             upload_suffix = Path(uploaded.name).suffix or ".mp4"
-            upload_path = SESSION_ROOT / f"uploaded_source{upload_suffix}"
+            upload_path = SESSION_ROOT / f"upload_{uuid.uuid4().hex}{upload_suffix}"
             with open(upload_path, "wb") as upload_handle:
                 upload_handle.write(uploaded.getbuffer())
             st.session_state.uploaded_name = uploaded.name
@@ -859,9 +859,6 @@ with col1:
     persisted_upload_path = Path(st.session_state.get("uploaded_path", ""))
     persisted_upload = persisted_upload_path.exists()
     persisted_upload_name = st.session_state.get("uploaded_name", persisted_upload_path.name or "source.mp4")
-with col2:
-    st.subheader(T["workflow"])
-    st.markdown(T["workflow_text"])
 with col3:
     st.subheader(T["monitor"])
     if psutil:
