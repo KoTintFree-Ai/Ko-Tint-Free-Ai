@@ -757,22 +757,23 @@ async def get_working_gemini_url(api_key):
 
 async def generate_title_hook_hashtags(story_text, gemini_pool):
     prompt = f"""
-    [SYSTEM INSTRUCTION: You are a viral Content Creator. You are STRICTLY FORBIDDEN from using the words "ဇာတ်လမ်း" (Story) or "ရုပ်ရှင်" (Movie) in titles or thumbnail text.]
+    [SYSTEM INSTRUCTION: You are a high-end viral Content Creator. You are STRICTLY FORBIDDEN from using generic words like "ဇာတ်လမ်း" (Story), "ရုပ်ရှင်" (Movie), "ဇာတ်ကြောင်း" (Narrative), or "အကျဉ်းချုပ်" (Summary). Focus on the emotion, conflict, or the most shocking part of the story.]
+    
     Based on this movie recap summary, generate:
-    1. CAPTION: A short, engaging social media summary (2 sentences).
-    2. VIDEO_TITLE: A viral, punchy title. !!! STRICTLY FORBIDDEN: Do NOT use "ဇာတ်လမ်း" or "ရုပ်ရှင်" !!!
-    3. HASHTAGS: Exactly 3 trending and highly effective hashtags.
-    4. THUMBNAIL_TITLE: An extreme click-worthy title (MAX 4-5 words). !!! STRICTLY FORBIDDEN: Do NOT use "ဇာတ်လမ်း" or "ရုပ်ရှင်" !!!
+    1. CAPTION: A short, viral social media caption. DO NOT use generic summary words. Focus on the hook.
+    2. VIDEO_TITLE: A shocking, punchy title that forces people to watch. !!! FORBIDDEN: "ဇာတ်လမ်း", "ရုပ်ရှင်", "ဇာတ်ကြောင်း", "အကျဉ်းချုပ်" !!!
+    3. HASHTAGS: 3 high-reach hashtags.
+    4. THUMBNAIL_TITLE: Extreme click-bait (3-5 words). !!! FORBIDDEN: "ဇာတ်လမ်း", "ရုပ်ရှင်", "ဇာတ်ကြောင်း", "အကျဉ်းချုပ်" !!!
     
     Story Summary:
     {story_text[:2500]}
     
     Output JSON format:
     {{
-        "caption": "စိတ်ဝင်စားစရာကောင်းသော အကျဉ်းချုပ်",
-        "video_title": "ဆွဲဆောင်မှုရှိသော ခေါင်းစဉ် (ဇာတ်လမ်း/ရုပ်ရှင် လုံးဝမပါရ)",
+        "caption": "စိတ်လှုပ်ရှားစရာကောင်းသော caption",
+        "video_title": "ရင်ခုန်စရာကောင်းသော ခေါင်းစဉ် (generic စကားလုံးများ လုံးဝမပါရ)",
         "hashtags": "#Hashtag1 #Hashtag2 #Hashtag3",
-        "thumbnail_title": "အလွန်တိုတောင်းသော Thumbnail စာသား"
+        "thumbnail_title": "အလွန်ဆွဲဆောင်မှုရှိသော Thumbnail စာသား"
     }}
     """
     attempts = len(gemini_pool.all_keys) * 3
@@ -797,7 +798,7 @@ async def generate_title_hook_hashtags(story_text, gemini_pool):
                     t_title = data.get("thumbnail_title", v_title)
                     
                     # STRIKE TEAM: Force remove forbidden words from titles and hashtags
-                    for forbidden in ["ဇာတ်လမ်း", "ရုပ်ရှင်"]:
+                    for forbidden in ["ဇာတ်လမ်း", "ရုပ်ရှင်", "ဇာတ်ကြောင်း", "အကျဉ်းချုပ်"]:
                         v_title = v_title.replace(forbidden, "").replace("  ", " ").strip()
                         t_title = t_title.replace(forbidden, "").replace("  ", " ").strip()
                         tags = tags.replace(forbidden, "").replace("  ", " ").strip()
@@ -815,7 +816,7 @@ async def generate_title_hook_hashtags(story_text, gemini_pool):
         except Exception:
             gemini_pool.mark_error(current_key)
             continue
-    return "🎬 စိတ်ဝင်စားဖွယ် ရုပ်ရှင်အကျဉ်းချုပ်", "ဒီဇာတ်လမ်းလေးက သင့်ကို အံ့သြသွားစေပါလိမ့်မယ်။", "#MovieRecap #Myanmar #AIStory"
+    return "🎬 စိတ်ဝင်စားဖွယ်ရာ", "ဒီအဖြစ်အပျက်က သင့်ကို အံ့သြသွားစေပါလိမ့်မယ်။", "#Recap #Viral #Story"
 
 def _parse_rate_percent(rate_str):
     try: return float(str(rate_str).replace("%", "").replace("+", ""))
