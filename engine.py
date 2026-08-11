@@ -510,68 +510,33 @@ def render_calibration_preview(frame_path, out_path, blur_y, sub_y, blur_on, sub
 def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920, work_dir=None, best_percent=0.5):
     work_dir = ensure_work_dir(work_dir)
     bg_path = os.path.join(work_dir, f"tb_bg_{int(time.time() * 1000)}.jpg")
-    insert_path = os.path.join(work_dir, f"tb_in_{int(time.time() * 1000)}.jpg")
     
-    # နောက်ခံအတွက် ဗီဒီယိုအစောပိုင်းမှ ပုံထုတ်မည်
-    extract_preview_frame(video_path, bg_path, w, h, percent=max(0.05, best_percent - 0.2))
-    
-    # အလယ်ကတ်ပြားအတွက် ပုံထုတ်မည် (Gemini ရွေးပေးသော အကောင်းဆုံးပုံ)
-    center_w = int(w * 0.90)
-    center_w = center_w if center_w % 2 == 0 else center_w + 1
-    center_h = int(center_w * 1.2) 
-    center_h = center_h if center_h % 2 == 0 else center_h + 1
-    
-    extract_preview_frame(video_path, insert_path, center_w, center_h, percent=best_percent)
+    # Use the best frame as the FULL BACKGROUND
+    extract_preview_frame(video_path, bg_path, w, h, percent=best_percent)
 
     img = QImage(w, h, QImage.Format_ARGB32)
     painter = QPainter(img)
     painter.setRenderHint(QPainter.Antialiasing)
     painter.setRenderHint(QPainter.TextAntialiasing)
 
-    # 1. Background ပုံထည့်မည်
+    # 1. Full Screen Background
     if os.path.exists(bg_path):
         bg_img = QImage(bg_path)
         painter.drawImage(0, 0, bg_img)
     else: 
-        img.fill(Qt.darkGray)
+        img.fill(Qt.black)
 
-    # 2. Cinematic Gradient Overlay (Dark Purple to Black)
-    overlay_grad = QLinearGradient(0, 0, w, h)
-    overlay_grad.setColorAt(0.0, QColor(20, 10, 40, 200)) # Dark Purple tint
-    overlay_grad.setColorAt(1.0, QColor(0, 0, 0, 220))    # Deep Black
+    # 2. Cinematic Gradient Overlay (Bottom-up for text readability)
+    overlay_grad = QLinearGradient(0, h * 0.4, 0, h)
+    overlay_grad.setColorAt(0.0, QColor(0, 0, 0, 0))    # Transparent top
+    overlay_grad.setColorAt(0.7, QColor(0, 0, 0, 180))  # Semi-dark middle
+    overlay_grad.setColorAt(1.0, QColor(0, 0, 0, 240))  # Dark bottom for text
     painter.setBrush(QBrush(overlay_grad))
     painter.setPen(Qt.NoPen)
     painter.drawRect(0, 0, w, h)
 
-    # 3. Main Card ထည့်မည် (Inset Image)
-    if os.path.exists(insert_path):
-        ins_img = QImage(insert_path)
-        ix = int((w - center_w) / 2)
-        iy = int((h - center_h) / 2) - 50 # အပေါ်နည်းနည်းတိုးထားမည် (အောက်မှာ စာအတွက် နေရာချန်ရန်)
-
-        # ကတ်ပြားအတွက် အနောက်အရိပ် (Drop Shadow)
-        for i in range(1, 10):
-            shadow_path = QPainterPath()
-            shadow_path.addRoundedRect(ix - i, iy + i, center_w + i*2, center_h + i*2, 40, 40)
-            painter.setPen(Qt.NoPen)
-            painter.setBrush(QColor(0, 0, 0, 30))
-            painter.drawPath(shadow_path)
-
-        # ပုံကို ထောင့်ဝိုင်း (Rounded Corners) ဖြင့် ဖြတ်ထည့်မည်
-        path = QPainterPath()
-        path.addRoundedRect(ix, iy, center_w, center_h, 40, 40)
-        painter.save()
-        painter.setClipPath(path)
-        painter.drawImage(ix, iy, ins_img)
-        painter.restore()
-
-        # အဖြူရောင် ဘောင်အထူ (Clean White/Silver Border)
-        painter.setPen(QPen(QColor(255, 255, 255, 230), 8))
-        painter.setBrush(Qt.NoBrush)
-        painter.drawRoundedRect(ix, iy, center_w, center_h, 40, 40)
-
     # 4. Bold & Clean Title Area (White to Yellow Gradient)
-    title_box_y = iy + center_h + 40 if os.path.exists(insert_path) else h - 400
+    title_box_y = h - 500
     title_box_h = h - title_box_y - 40
     if title_box_h < 200: 
         title_box_h = 250
@@ -821,23 +786,23 @@ async def get_working_gemini_url(api_key):
 async def generate_title_hook_hashtags(story_text, gemini_pool):
     prompt = f"""
     [SYSTEM INSTRUCTION: You are a fast, viral Content Creator and Movie Specialist.]
-    Based on this Burmese movie recap summary, generate a relevant Title, an engaging Hook, exactly 3 highly effective hashtags, and a punchy Thumbnail Title.
+    Based on this Burmese movie recap summary, generate a separate Caption, a Video Title, exactly 3 highly effective hashtags, and a punchy Thumbnail Title.
     
     Story Summary:
     {story_text[:2500]}
     
     Requirements:
-    1. TITLE: Must be DIRECTLY RELATED to the story content. Do not use generic clickbait. Make it concise (10-15 words).
-    2. HOOK: One engaging sentence that summarizes the core conflict or excitement of the story.
-    3. HASHTAGS: Provide exactly 3 hashtags that are trending and highly effective for movie recap content.
-    4. THUMBNAIL_TITLE: A very short, punchy, and attention-grabbing title for the thumbnail (MAX 5-7 words). It must make people want to click.
+    1. CAPTION: A brief, engaging summary of the story for social media (2-3 sentences).
+    2. VIDEO_TITLE: A catchy title for the video. DO NOT use words like "ဇာတ်လမ်း" (Story) or "ရုပ်ရှင်" (Movie). Make it direct and intriguing.
+    3. HASHTAGS: Provide exactly 3 hashtags that are trending for movie recap content.
+    4. THUMBNAIL_TITLE: A very short, punchy title for the thumbnail (MAX 5 words). NO generic words like "ဇာတ်လမ်း". Make it extreme and click-worthy.
     
     Output EXACTLY in this JSON format without any extra markdown or text:
     {{
-        "title": "ဇာတ်လမ်းနှင့် တိုက်ရိုက်သက်ဆိုင်သော မြန်မာခေါင်းစဉ်",
-        "hook": "ဇာတ်လမ်း၏ စိတ်ဝင်စားစရာအကောင်းဆုံးအချက်ကို ဖော်ပြသော မြန်မာစာကြောင်း ၁ ကြောင်း",
-        "hashtags": "#TrendingHashtag1 #TrendingHashtag2 #TrendingHashtag3",
-        "thumbnail_title": "ဆွဲဆောင်မှုရှိသော သမားရိုးကျမဟုတ်သည့် Thumbnail ခေါင်းစဉ်တို"
+        "caption": "စိတ်ဝင်စားစရာကောင်းသော ဇာတ်လမ်းအကျွှန်းချုပ် (Social Media အတွက်)",
+        "video_title": "ဆွဲဆောင်မှုရှိသော ခေါင်းစဉ် (ဇာတ်လမ်း/ရုပ်ရှင် စသည့်စကားလုံးများ လုံးဝမပါရ)",
+        "hashtags": "#Hashtag1 #Hashtag2 #Hashtag3",
+        "thumbnail_title": "အလွန်တိုတောင်းပြီး ဆွဲဆောင်မှုရှိသော Thumbnail စာသား"
     }}
     """
     attempts = len(gemini_pool.all_keys) * 3
@@ -856,7 +821,7 @@ async def generate_title_hook_hashtags(story_text, gemini_pool):
                     raw = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
                     raw = re.sub(r'```json|```', '', raw).strip()
                     data = json.loads(raw)
-                    return data.get("title", "🎬 စိတ်ဝင်စားဖွယ် ရုပ်ရှင်အကျဉ်းချုပ်"), data.get("hook", "ဒီဇာတ်လမ်းလေးက သင့်ကို အံ့သြသွားစေပါလိမ့်မယ်။"), data.get("hashtags", "#MovieRecap #Myanmar #AIStory"), data.get("thumbnail_title", data.get("title", "🎬 စိတ်ဝင်စားဖွယ် ရုပ်ရှင်အကျဉ်းချုပ်"))
+                    return data.get("caption", "ဒီဇာတ်လမ်းလေးက သင့်ကို အံ့သြသွားစေပါလိမ့်မယ်။"), data.get("video_title", "🎬 စိတ်ဝင်စားဖွယ် အကျဉ်းချုပ်"), data.get("hashtags", "#MovieRecap #Myanmar #AIStory"), data.get("thumbnail_title", data.get("video_title", "🎬 စိတ်ဝင်စားဖွယ် အကျဉ်းချုပ်"))
                 elif res.status_code == 404:
                     invalidate_model_cache(current_key)
                     gemini_pool.mark_error(current_key, cooldown_seconds=2, reason=f"Model not found (404)")
@@ -1076,7 +1041,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
 
     if progress_cb:
         await progress_cb("🎙️ အဆင့် ၄/၇ — မြန်မာအသံဖိုင်များကို ထုတ်လုပ်နေပါသည်...")
-    story_title, story_hook, story_hashtags, thumbnail_title = await generate_title_hook_hashtags(full_translated_text, gemini_pool)
+    story_caption, story_title, story_hashtags, thumbnail_title = await generate_title_hook_hashtags(full_translated_text, gemini_pool)
     audio_files_map = {}
     tts_semaphore = asyncio.Semaphore(TTS_WORKERS)
     selected_rate = voice_config.get("rate", "+15%")
