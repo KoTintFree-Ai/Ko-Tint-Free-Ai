@@ -579,17 +579,6 @@ def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920,
     painter.setPen(QPen(QBrush(text_grad), 0))
     painter.drawText(60, title_box_y, w - 120, title_box_h, Qt.AlignCenter | Qt.TextWordWrap, title_text.strip())
 
-    # 4. "FULL STORY" Badge (Top Left)
-    badge_w, badge_h = int(w * 0.28), int(h * 0.045)
-    badge_x, badge_y = 50, 50
-    painter.setBrush(QColor(220, 20, 60, 240)) # Deep Red
-    painter.setPen(Qt.NoPen)
-    painter.drawRoundedRect(badge_x, badge_y, badge_w, badge_h, 12, 12)
-    
-    painter.setFont(QFont(font_fam, int(badge_h * 0.55), QFont.Bold))
-    painter.setPen(QColor("white"))
-    painter.drawText(badge_x, badge_y, badge_w, badge_h, Qt.AlignCenter, "FULL STORY")
-
     painter.end()
     img.save(out_path, "JPEG", 95)
     if os.path.exists(bg_path): os.remove(bg_path)
