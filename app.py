@@ -1060,7 +1060,8 @@ if start:
                 work_dir=str(TEMP_ROOT)
             ))
         if isinstance(pipeline_result, (tuple, list)) and len(pipeline_result) >= 3:
-            st.session_state.generated_caption = pipeline_result[1] or ""
+            # pipeline_result[0] is story_caption, [1] is story_title
+            st.session_state.generated_caption = f"📌 {pipeline_result[1]}\n\n{pipeline_result[0]}"
             st.session_state.generated_hashtags = pipeline_result[2] or ""
         else:
             st.session_state.generated_caption = ""
