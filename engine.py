@@ -626,6 +626,20 @@ def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920,
     painter.setPen(QPen(QBrush(text_grad), 0))
     painter.drawText(40, title_box_y, w - 80, title_box_h, Qt.AlignCenter | Qt.TextWordWrap, title_text.strip())
 
+    # 5. Add "FULL STORY" Badge for professional look
+    badge_w, badge_h = int(w * 0.25), int(h * 0.04)
+    badge_x, badge_y = 40, 40
+    badge_path = QPainterPath()
+    badge_path.addRoundedRect(badge_x, badge_y, badge_w, badge_h, 10, 10)
+    painter.setBrush(QColor(255, 0, 0, 230)) # Red Badge
+    painter.setPen(Qt.NoPen)
+    painter.drawPath(badge_path)
+    
+    badge_font = QFont(font_fam, int(badge_h * 0.6), QFont.Bold)
+    painter.setFont(badge_font)
+    painter.setPen(QColor("white"))
+    painter.drawText(badge_x, badge_y, badge_w, badge_h, Qt.AlignCenter, "FULL STORY")
+
     painter.end()
     img.save(out_path, "JPEG")
     
@@ -806,15 +820,24 @@ async def get_working_gemini_url(api_key):
 
 async def generate_title_hook_hashtags(story_text, gemini_pool):
     prompt = f"""
-    [SYSTEM INSTRUCTION: You are a fast, viral Content Creator.]
-    Based on this Burmese movie recap summary, generate an engaging Title, a Hook, and exactly 3 relevant hashtags.
+    [SYSTEM INSTRUCTION: You are a fast, viral Content Creator and Movie Specialist.]
+    Based on this Burmese movie recap summary, generate a relevant Title, an engaging Hook, exactly 3 highly effective hashtags, and a punchy Thumbnail Title.
+    
     Story Summary:
     {story_text[:2500]}
+    
+    Requirements:
+    1. TITLE: Must be DIRECTLY RELATED to the story content. Do not use generic clickbait. Make it concise (10-15 words).
+    2. HOOK: One engaging sentence that summarizes the core conflict or excitement of the story.
+    3. HASHTAGS: Provide exactly 3 hashtags that are trending and highly effective for movie recap content.
+    4. THUMBNAIL_TITLE: A very short, punchy, and attention-grabbing title for the thumbnail (MAX 5-7 words). It must make people want to click.
+    
     Output EXACTLY in this JSON format without any extra markdown or text:
     {{
-        "title": "မြန်မာဆွဲဆောင်မှုရှိသော ဇာတ်လမ်းခေါင်းစဉ် (စာလုံးရေ ၁၀ လုံးမှ ၁၅ လုံးဝန်းကျင်သာ အတိအကျရေးပါ၊ တိုတိုရှင်းရှင်းရေးပါ)",
-        "hook": "ဆွဲဆောင်မှုရှိသော မြန်မာစာကြောင်း ၁ ကြောင်း",
-        "hashtags": "#MovieRecap #TikTokMovie #AIStory"
+        "title": "ဇာတ်လမ်းနှင့် တိုက်ရိုက်သက်ဆိုင်သော မြန်မာခေါင်းစဉ်",
+        "hook": "ဇာတ်လမ်း၏ စိတ်ဝင်စားစရာအကောင်းဆုံးအချက်ကို ဖော်ပြသော မြန်မာစာကြောင်း ၁ ကြောင်း",
+        "hashtags": "#TrendingHashtag1 #TrendingHashtag2 #TrendingHashtag3",
+        "thumbnail_title": "ဆွဲဆောင်မှုရှိသော သမားရိုးကျမဟုတ်သည့် Thumbnail ခေါင်းစဉ်တို"
     }}
     """
     attempts = len(gemini_pool.all_keys) * 3
@@ -833,7 +856,7 @@ async def generate_title_hook_hashtags(story_text, gemini_pool):
                     raw = res.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
                     raw = re.sub(r'```json|```', '', raw).strip()
                     data = json.loads(raw)
-                    return data.get("title", "🎬 စိတ်ဝင်စားဖွယ် ရုပ်ရှင်အကျဉ်းချုပ်"), data.get("hook", "ဒီဇာတ်လမ်းလေးက သင့်ကို အံ့သြသွားစေပါလိမ့်မယ်။"), data.get("hashtags", "#MovieRecap #Myanmar #AIStory")
+                    return data.get("title", "🎬 စိတ်ဝင်စားဖွယ် ရုပ်ရှင်အကျဉ်းချုပ်"), data.get("hook", "ဒီဇာတ်လမ်းလေးက သင့်ကို အံ့သြသွားစေပါလိမ့်မယ်။"), data.get("hashtags", "#MovieRecap #Myanmar #AIStory"), data.get("thumbnail_title", data.get("title", "🎬 စိတ်ဝင်စားဖွယ် ရုပ်ရှင်အကျဉ်းချုပ်"))
                 elif res.status_code == 404:
                     invalidate_model_cache(current_key)
                     gemini_pool.mark_error(current_key, cooldown_seconds=2, reason=f"Model not found (404)")
@@ -957,23 +980,23 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
         for idx in chunk_indices:
             original_segments_text += f"[{idx}] {timeline_data[idx]['text'].strip()}\n"
 
-        prompt = f"""
-[SYSTEM INSTRUCTION: You are a fast, highly accurate Audio-to-Burmese Translator. Ignore background noise. Translate the text directly into smooth and natural Burmese.]
-
-[Recap အတွက် ဘာသာပြန်]
-အောက်ပါ နံပါတ်စဉ်တပ်ထားသော မူရင်းစာတန်းထိုးများကို AI Voiceover ဖြင့် အသံပြန်သွင်းရန် မြန်မာလို အချောမွေ့ဆုံး ဘာသာပြန်ပေးပါ။
-
-"{original_segments_text}"
-
-စည်းကမ်းချက်များ-
-၁။ စာအုပ်သုံး (သည်၊ ၏) မသုံးဘဲ ရုပ်ရှင် Recap narrator တစ်ယောက်လို ပြေပြေပြစ်ပြစ် ပြောပြသလို စကားပြောဟန်ဖြင့် ဘာသာပြန်ပါ။
-၂။ {gender_rule}
-   ⚠️ "ဗျာ"၊ "ပေါ့ဗျာ"၊ "ရှင့်"၊ "လေ" ကဲ့သို့ sentence-ending particle များကို ၁၀ ကြောင်းလျှင် ၁ ကြောင်းထက် ပို၍ လုံးဝ မသုံးပါနှင့်။
-၃။ မြန်မာလို အသံထွက် (Transliterate) အတိုင်းသာ ရေးပါ။ အင်္ဂလိပ်စာလုံး လုံးဝမပါစေရ။
-၄။ စကားပြောများကိုသာ တိုက်ရိုက်ဘာသာပြန်ပါ။
-၅။ ⚠️ မူလစာကြောင်းများ၏ နံပါတ်စဉ်များ (ဥပမာ - [0], [1]) ကို မပျောက်စေဘဲ အတိအကျ ပြန်ထည့်ပေးပါ။ တစ်ကြောင်းမှ မကျန်စေရပါ။
-၆။ (အရေးကြီးသည်) စာကြောင်းတစ်ကြောင်းလျှင် စကားလုံး ၁၅ လုံးမှ ၂၀ လုံးထက် မပိုစေရ။ (မြန်မာစာလုံးများကို Space ခြား၍ ရေးပေးပါ)
-"""
+	        prompt = f"""
+	[SYSTEM INSTRUCTION: You are a fast, highly accurate Audio-to-Burmese Translator. Ignore background noise. Translate the text directly into smooth and natural Burmese. Do NOT add extra words, explanations, or expansions that are not in the original text.]
+	
+	[Recap အတွက် ဘာသာပြန်]
+	အောက်ပါ နံပါတ်စဉ်တပ်ထားသော မူရင်းစာတန်းထိုးများကို AI Voiceover ဖြင့် အသံပြန်သွင်းရန် မြန်မာလို အချောမွေ့ဆုံး ဘာသာပြန်ပေးပါ။
+	
+	"{original_segments_text}"
+	
+	စည်းကမ်းချက်များ-
+	၁။ စာအုပ်သုံး (သည်၊ ၏) မသုံးဘဲ ရုပ်ရှင် Recap narrator တစ်ယောက်လို ပြေပြေပြစ်ပြစ် ပြောပြသလို စကားပြောဟန်ဖြင့် ဘာသာပြန်ပါ။
+	၂။ {gender_rule}
+	   ⚠️ "ဗျာ"၊ "ပေါ့ဗျာ"၊ "ရှင့်"၊ "လေ" ကဲ့သို့ sentence-ending particle များကို ၁၀ ကြောင်းလျှင် ၁ ကြောင်းထက် ပို၍ လုံးဝ မသုံးပါနှင့်။
+	၃။ မြန်မာလို အသံထွက် (Transliterate) အတိုင်းသာ ရေးပါ။ အင်္ဂလိပ်စာလုံး လုံးဝမပါစေရ။
+	၄။ စကားပြောများကိုသာ တိုက်ရိုက်ဘာသာပြန်ပါ။ မူရင်းစာသားတွင် မပါသော အပိုစကားလုံးများ၊ ချဲ့ထွင်ပြောဆိုချက်များနှင့် ရှင်းလင်းချက်များကို လုံးဝ (လုံးဝ) ထည့်မရေးပါနှင့်။
+	၅။ ⚠️ မူလစာကြောင်းများ၏ နံပါတ်စဉ်များ (ဥပမာ - [0], [1]) ကို မပျောက်စေဘဲ အတိအကျ ပြန်ထည့်ပေးပါ။ တစ်ကြောင်းမှ မကျန်စေရပါ။
+	၆။ (အရေးကြီးသည်) စာကြောင်းတစ်ကြောင်းလျှင် စကားလုံး ၁၅ လုံးမှ ၂၀ လုံးထက် မပိုစေရ။ (မြန်မာစာလုံးများကို Space ခြား၍ ရေးပေးပါ)
+	"""
         success = False
         max_retries = max(len(gemini_pool.all_keys) * 3, 6)
 
@@ -1014,7 +1037,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
 
     if progress_cb:
         await progress_cb("🎙️ အဆင့် ၄/၇ — မြန်မာအသံဖိုင်များကို ထုတ်လုပ်နေပါသည်...")
-    story_title, story_hook, story_hashtags = await generate_title_hook_hashtags(full_translated_text, gemini_pool)
+    story_title, story_hook, story_hashtags, thumbnail_title = await generate_title_hook_hashtags(full_translated_text, gemini_pool)
     audio_files_map = {}
     tts_semaphore = asyncio.Semaphore(TTS_WORKERS)
     selected_rate = voice_config.get("rate", "+15%")
@@ -1207,7 +1230,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
         await progress_cb("🎵 အဆင့် ၇/၇ — Thumbnail နှင့် background music ထည့်ပြီး အပြီးသတ်နေပါသည်...")
     # 📌 TB Thumbnail ကိုဖန်တီးပြီး Video အစမှာ Cover အဖြစ် တွဲထည့်ခြင်း
     tb_img_path = os.path.join(work_dir, f"tb_embed_{int(time.time() * 1000)}.jpg")
-    create_thumbnail(input_video, story_title, tb_img_path, font_fam=selected_font_fam, w=dim_w, h=dim_h, work_dir=work_dir)
+    create_thumbnail(input_video, thumbnail_title, tb_img_path, font_fam=selected_font_fam, w=dim_w, h=dim_h, work_dir=work_dir)
     
     tb_vid = os.path.join(work_dir, f"tb_vid_{int(time.time() * 1000)}.mp4")
     tb_audio = os.path.join(work_dir, f"tb_audio_{int(time.time() * 1000)}.mp3")
