@@ -751,7 +751,7 @@ with st.sidebar:
         st.divider()
         title_enabled = st.toggle(T["title"], key="title_enabled", on_change=_on_pref_change, help=T["tip_title"])
         title_size = _nudge_slider(T["title_size"], "title_size", 24, 64, 30)
-        title_width = _nudge_slider(T["title_width"], "title_width", 45, 100, 65)
+        title_width = _nudge_slider(T["title_width"], "title_width", 45, 100, 90)
         
         st.divider()
         bypass_enabled = st.toggle(T["bypass"], value=st.session_state.get("bypass_enabled", False), key="bypass_enabled", on_change=_on_pref_change)
