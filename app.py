@@ -752,6 +752,13 @@ with st.sidebar:
         title_enabled = st.toggle(T["title"], key="title_enabled", on_change=_on_pref_change, help=T["tip_title"])
         title_size = _nudge_slider(T["title_size"], "title_size", 24, 64, 30)
         title_width = _nudge_slider(T["title_width"], "title_width", 45, 100, 90)
+        thumbnail_enabled = st.toggle(
+            "🖼️ Thumbnail ရွေးချယ်ခွင့် ဖွင့်မည်",
+            value=st.session_state.get("thumbnail_enabled", True),
+            key="thumbnail_enabled",
+            on_change=_on_pref_change,
+            help="ဖွင့်ထားလျှင် Gemini Title ပါသော Thumbnail ပုံ ၅ ပုံကို ပြပြီး ကိုယ်တိုင်ရွေးနိုင်မည်။ ပိတ်ထားလျှင် Thumbnail မပြပါ။"
+        )
         
         st.divider()
         bypass_enabled = st.toggle(T["bypass"], value=st.session_state.get("bypass_enabled", False), key="bypass_enabled", on_change=_on_pref_change)
@@ -960,7 +967,7 @@ def _redacted_error(exc):
     return text[-1600:] or "Unknown error"
 
 
-async def _run_pipeline(input_video: str, audio_path: str, output_path: str, status_box, progress_bar, background_music_path=None, background_music_volume=0.0, work_dir=None):
+async def _run_pipeline(input_video: str, audio_path: str, output_path: str, status_box, progress_bar, background_music_path=None, background_music_volume=0.0, thumbnail_enabled=True, work_dir=None):
     async def progress(message: str):
         status_box.info(message)
         import re
@@ -1000,6 +1007,7 @@ async def _run_pipeline(input_video: str, audio_path: str, output_path: str, sta
         progress_cb=progress,
         background_music_path=background_music_path,
         background_music_volume=background_music_volume,
+        thumbnail_enabled=thumbnail_enabled,
         work_dir=work_dir,
         fallback_gemini_keys_str=fallback_gemini,
     )
@@ -1054,15 +1062,27 @@ if start:
             pipeline_result = asyncio.run(_run_pipeline(
                 str(input_path), str(audio_path), str(output_path), status_box, progress_bar,
                 background_music_path=bg_path_arg, background_music_volume=bg_music_volume,
+                thumbnail_enabled=thumbnail_enabled,
                 work_dir=str(TEMP_ROOT)
             ))
         if isinstance(pipeline_result, (tuple, list)) and len(pipeline_result) >= 3:
             # pipeline_result[0] is story_caption, [1] is story_title
             st.session_state.generated_caption = f"📌 {pipeline_result[1]}\n\n{pipeline_result[0]}"
             st.session_state.generated_hashtags = pipeline_result[2] or ""
+            st.session_state.thumbnail_candidates = []
+            if len(pipeline_result) >= 4 and isinstance(pipeline_result[3], (tuple, list)):
+                for index, candidate in enumerate(pipeline_result[3], start=1):
+                    if candidate and os.path.exists(candidate):
+                        saved_candidate = SESSION_ROOT / f"thumbnail_candidate_{uuid.uuid4().hex}_{index}.jpg"
+                        shutil.copyfile(candidate, saved_candidate)
+                        st.session_state.thumbnail_candidates.append(str(saved_candidate))
+            st.session_state.thumbnail_embedded = False
+            st.session_state.thumbnail_choice = 0
         else:
             st.session_state.generated_caption = ""
             st.session_state.generated_hashtags = ""
+            st.session_state.thumbnail_candidates = []
+            st.session_state.thumbnail_embedded = False
         final_output = SESSION_ROOT / f"recap_{uuid.uuid4().hex}.mp4"
         shutil.move(str(output_path), str(final_output))
         progress_bar.progress(100)
@@ -1079,6 +1099,40 @@ if start:
 if st.session_state.result_path and os.path.exists(st.session_state.result_path):
     st.divider()
     st.subheader(T["ready"])
+
+    # Show Gemini-generated candidates and let the user choose the one to embed.
+    _thumbnail_candidates = [
+        path for path in st.session_state.get("thumbnail_candidates", []) if os.path.exists(path)
+    ]
+    if _thumbnail_candidates and not st.session_state.get("thumbnail_embedded", False):
+        st.subheader("🖼️ Gemini ထုတ်ပေးသော Thumbnail ကို ရွေးချယ်ပါ")
+        _labels = [f"ပုံ {index}" for index in range(1, len(_thumbnail_candidates) + 1)]
+        _selected_label = st.radio(
+            "ထည့်မည့်ပုံကို ရွေးပါ",
+            _labels,
+            horizontal=True,
+            index=int(st.session_state.get("thumbnail_choice", 0)),
+            key="thumbnail_choice_label"
+        )
+        _selected_index = _labels.index(_selected_label)
+        st.session_state.thumbnail_choice = _selected_index
+        st.image(_thumbnail_candidates[_selected_index], caption=f"{_selected_label} — Gemini Title ပါပြီးသား", use_container_width=True)
+        if st.button("✅ ဒီ Thumbnail ကို Video အစမှာ ထည့်မည်", type="primary", use_container_width=True):
+            try:
+                engine.prepend_thumbnail_to_video(
+                    st.session_state.result_path,
+                    _thumbnail_candidates[_selected_index],
+                    st.session_state.result_path,
+                    work_dir=str(TEMP_ROOT)
+                )
+                st.session_state.thumbnail_embedded = True
+                st.success("✅ ရွေးထားသော Thumbnail ကို Video ထဲ ထည့်ပြီးပါပြီ။")
+                st.rerun()
+            except Exception as thumbnail_error:
+                st.error(f"Thumbnail ထည့်မရပါ: {thumbnail_error}")
+    elif _thumbnail_candidates and st.session_state.get("thumbnail_embedded", False):
+        st.success("✅ သင်ရွေးထားသော Thumbnail ကို Video အစမှာ ထည့်ပြီးပါပြီ။")
+
     st.video(st.session_state.result_path)
     generated_caption = st.session_state.get("generated_caption", "")
     generated_hashtags = st.session_state.get("generated_hashtags", "")
