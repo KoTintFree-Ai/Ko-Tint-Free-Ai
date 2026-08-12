@@ -583,6 +583,48 @@ def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920,
     img.save(out_path, "JPEG", 95)
     if os.path.exists(bg_path): os.remove(bg_path)
 
+def create_thumbnail_candidates(video_path, title_text, out_dir, font_fam, w=1080, h=1920):
+    """Create five selectable full-screen thumbnail candidates from the source video."""
+    out_dir = ensure_work_dir(out_dir)
+    candidates = []
+    stamp = int(time.time() * 1000)
+    for index, percent in enumerate([0.10, 0.30, 0.50, 0.70, 0.90], start=1):
+        path = os.path.join(out_dir, f"thumbnail_candidate_{stamp}_{index}.jpg")
+        create_thumbnail(video_path, title_text, path, font_fam=font_fam, w=w, h=h, work_dir=out_dir, best_percent=percent)
+        if os.path.exists(path):
+            candidates.append(path)
+    return candidates
+
+
+def prepend_thumbnail_to_video(video_path, thumbnail_path, output_path, work_dir=None):
+    """Prepend the user's selected thumbnail as a one-second intro clip."""
+    work_dir = ensure_work_dir(work_dir)
+    stamp = int(time.time() * 1000)
+    intro_video = os.path.join(work_dir, f"selected_tb_{stamp}.mp4")
+    intro_audio = os.path.join(work_dir, f"selected_tb_audio_{stamp}.mp3")
+    concat_txt = os.path.join(work_dir, f"selected_tb_concat_{stamp}.txt")
+    merged_path = os.path.join(work_dir, f"selected_tb_merged_{stamp}.mp4")
+    try:
+        create_silent_audio(1.0, intro_audio)
+        run_ffmpeg([
+            "ffmpeg", "-y", "-loop", "1", "-t", "1.0", "-i", thumbnail_path,
+            "-i", intro_audio, "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-preset", "ultrafast", "-r", "30", "-c:a", "aac", "-ar", "44100", "-ac", "2",
+            intro_video
+        ], "create_selected_thumbnail_video")
+        with open(concat_txt, "w", encoding="utf-8") as f:
+            f.write(f"file '{os.path.abspath(intro_video)}'\n")
+            f.write(f"file '{os.path.abspath(video_path)}'\n")
+        run_ffmpeg([
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_txt,
+            "-c", "copy", merged_path
+        ], "prepend_selected_thumbnail")
+        os.replace(merged_path, output_path)
+    finally:
+        for path in (intro_video, intro_audio, concat_txt, merged_path):
+            if os.path.exists(path):
+                os.remove(path)
+
 # =====================================================================
 # AI TRANSLATION TIMELINE 
 # =====================================================================
@@ -920,7 +962,7 @@ async def select_best_thumbnail_frame(video_path, gemini_pool, work_dir, w=1080,
         logging.error(f"Gemini frame selection failed: {e}")
     return 0.5 # Fallback to middle
 
-async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_video, output_video_path, voice_config, user_speed_val, user_id, progress_cb=None, background_music_path=None, background_music_volume=0.0, work_dir=None, fallback_gemini_keys_str=""):
+async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_video, output_video_path, voice_config, user_speed_val, user_id, progress_cb=None, background_music_path=None, background_music_volume=0.0, thumbnail_enabled=True, work_dir=None, fallback_gemini_keys_str=""):
     work_dir = ensure_work_dir(work_dir)
     clean_groq_key = str(groq_key).strip()
     gemini_pool = GeminiKeyPool(gemini_keys_str, fallback_gemini_keys_str)
@@ -1212,38 +1254,16 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
         if os.path.exists(watermarked_temp): os.remove(watermarked_temp)
     else: os.replace(watermarked_temp, output_video_path)
 
-    if progress_cb:
-        await progress_cb("🎵 အဆင့် ၇/၇ — Thumbnail နှင့် background music ထည့်ပြီး အပြီးသတ်နေပါသည်...")
-    
-    # Use Gemini to pick the best frame for the thumbnail
-    best_frame_percent = await select_best_thumbnail_frame(input_video, gemini_pool, work_dir, w=dim_w, h=dim_h)
-    
-    # 📌 TB Thumbnail ကိုဖန်တီးပြီး Video အစမှာ Cover အဖြစ် တွဲထည့်ခြင်း
-    tb_img_path = os.path.join(work_dir, f"tb_embed_{int(time.time() * 1000)}.jpg")
-    create_thumbnail(input_video, thumbnail_title, tb_img_path, font_fam=selected_font_fam, w=dim_w, h=dim_h, work_dir=work_dir, best_percent=best_frame_percent)
-    
-    tb_vid = os.path.join(work_dir, f"tb_vid_{int(time.time() * 1000)}.mp4")
-    tb_audio = os.path.join(work_dir, f"tb_audio_{int(time.time() * 1000)}.mp3")
-    create_silent_audio(1.0, tb_audio)
-    
-    cmd_tb = [
-        'ffmpeg', '-y', '-loop', '1', '-t', '1.0', '-i', tb_img_path,
-        '-i', tb_audio,
-        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'ultrafast', '-r', '30',
-        '-c:a', 'aac', '-ar', '44100', '-ac', '2',
-        tb_vid
-    ]
-    run_ffmpeg(cmd_tb, "create_tb_vid")
-    
-    concat_txt = os.path.join(work_dir, f"final_concat_{int(time.time() * 1000)}.txt")
-    with open(concat_txt, "w", encoding="utf-8") as f:
-        f.write(f"file '{os.path.abspath(tb_vid)}'\n") 
-        f.write(f"file '{os.path.abspath(output_video_path)}'\n")
-        
-    final_merged = os.path.join(work_dir, f"final_merged_{int(time.time() * 1000)}.mp4")
-    run_ffmpeg(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', concat_txt, '-c', 'copy', final_merged], "final_tb_concat")
-    
-    os.replace(final_merged, output_video_path)
+    # Thumbnail toggle: generate candidates for the UI, but do not embed one yet.
+    thumbnail_candidates = []
+    if thumbnail_enabled:
+        if progress_cb:
+            await progress_cb("🎵 အဆင့် ၇/၇ — Thumbnail ပုံရွေးချယ်စရာများ ဖန်တီးနေပါသည်...")
+        thumbnail_candidates = create_thumbnail_candidates(
+            input_video, thumbnail_title, work_dir, selected_font_fam, w=dim_w, h=dim_h
+        )
+    elif progress_cb:
+        await progress_cb("🎵 အဆင့် ၇/၇ — background music ထည့်ပြီး အပြီးသတ်နေပါသည်...")
 
     # 📌 Optional Background Music Mixing (BGM)
     # The web UI passes an explicit uploaded path; never scan the working
@@ -1266,10 +1286,6 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
         except Exception as e:
             logging.error(f"BGM Mixing failed: {e}")
     
-    if os.path.exists(tb_vid): os.remove(tb_vid)
-    if os.path.exists(tb_audio): os.remove(tb_audio)
-    if os.path.exists(concat_txt): os.remove(concat_txt)
-
     for f in list(audio_files_map.values()) + ffmpeg_inputs + [merge_temp]:
         if os.path.exists(f): os.remove(f)
     if os.path.exists(concat_list_path): os.remove(concat_list_path)
@@ -1277,7 +1293,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
         import shutil
         shutil.rmtree(job_dir, ignore_errors=True)
 
-    return story_title, story_caption, story_hashtags, tb_img_path
+    return story_title, story_caption, story_hashtags, thumbnail_candidates
 
 # =====================================================================
 # TELEGRAM BOT ARCHITECTURE (WITH MEMORY SESSION)
