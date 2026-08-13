@@ -40,7 +40,10 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=lo
 # these with environment variables when more CPU/RAM is available.
 FFMPEG_THREADS = max(1, int(os.getenv("RECAP_FFMPEG_THREADS", "1")))
 CHUNK_WORKERS = max(1, min(int(os.getenv("RECAP_CHUNK_WORKERS", "1")), 4))
-TTS_WORKERS = max(1, min(int(os.getenv("RECAP_TTS_WORKERS", "3")), 5))
+# Edge TTS is mainly network-bound; four concurrent requests reduce wait time while remaining conservative for Cloud.
+TTS_WORKERS = max(1, min(int(os.getenv("RECAP_TTS_WORKERS", "4")), 5))
+# Kept small by default; rate-limit handling below applies longer waits only when needed.
+GEMINI_BATCH_DELAY = max(0.0, float(os.getenv("RECAP_GEMINI_BATCH_DELAY", "0.15")))
 MAX_WEB_JOBS = max(1, int(os.getenv("RECAP_MAX_CONCURRENT_JOBS", "1")))
 _WEB_JOB_SEMAPHORE = threading.BoundedSemaphore(MAX_WEB_JOBS)
 
@@ -465,14 +468,18 @@ def get_video_dimensions(platform, res):
     elif platform == "fb": return (720, 720) if res == "720" else (1080, 1080)
     return (1280, 720) if res == "720" else (1920, 1080)
 
-def extract_preview_frame(video_path, out_path, dim_w, dim_h, percent=0.3):
+def extract_preview_frame(video_path, out_path, dim_w, dim_h, percent=0.3, source_duration=None):
     dim_w = int(dim_w)
     dim_w = dim_w if dim_w % 2 == 0 else dim_w + 1
     dim_h = int(dim_h)
     dim_h = dim_h if dim_h % 2 == 0 else dim_h + 1
-    
-    try: dur = get_media_duration(video_path)
-    except Exception: dur = 3.0
+
+    # Candidate thumbnails share one source video; callers can provide its known duration
+    # to avoid launching an ffprobe subprocess for every preview frame.
+    try:
+        dur = float(source_duration) if source_duration is not None else get_media_duration(video_path)
+    except Exception:
+        dur = 3.0
     ts = min(max(dur * percent, 0.3), max(dur - 0.3, 0.3))
     cmd = [
         'ffmpeg', '-y', '-ss', f"{ts:.2f}", '-i', video_path, '-frames:v', '1',
@@ -508,13 +515,13 @@ def render_calibration_preview(frame_path, out_path, blur_y, sub_y, blur_on, sub
 # =====================================================================
 # 🖼️ TB THUMBNAIL GENERATOR (MODERN PREMIUM CARD STYLE)
 # =====================================================================
-def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920, work_dir=None, best_percent=0.5):
+def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920, work_dir=None, best_percent=0.5, source_duration=None):
     """Creates a FULL-SCREEN thumbnail with no borders or inset cards."""
     work_dir = ensure_work_dir(work_dir)
     bg_path = os.path.join(work_dir, f"tb_bg_{int(time.time() * 1000)}.jpg")
-    
-    # Extract the best frame as the FULL BACKGROUND
-    extract_preview_frame(video_path, bg_path, w, h, percent=best_percent)
+
+    # Extract the best frame as the FULL BACKGROUND.
+    extract_preview_frame(video_path, bg_path, w, h, percent=best_percent, source_duration=source_duration)
 
     img = QImage(w, h, QImage.Format_ARGB32)
     painter = QPainter(img)
@@ -584,15 +591,24 @@ def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920,
     if os.path.exists(bg_path): os.remove(bg_path)
 
 def create_thumbnail_candidates(video_path, title_text, out_dir, font_fam, w=1080, h=1920):
-    """Create five selectable full-screen thumbnail candidates from the source video."""
+    """Create lightweight thumbnail previews; full-size output is created only after user selection."""
     out_dir = ensure_work_dir(out_dir)
     candidates = []
     stamp = int(time.time() * 1000)
+    source_duration = get_media_duration(video_path)
+
+    # Small previews reduce five expensive full-resolution FFmpeg/PyQt render operations.
+    preview_w = 270 if w >= h else 480
+    preview_h = 480 if h >= w else 270
     for index, percent in enumerate([0.10, 0.30, 0.50, 0.70, 0.90], start=1):
         path = os.path.join(out_dir, f"thumbnail_candidate_{stamp}_{index}.jpg")
-        create_thumbnail(video_path, title_text, path, font_fam=font_fam, w=w, h=h, work_dir=out_dir, best_percent=percent)
+        create_thumbnail(
+            video_path, title_text, path, font_fam=font_fam,
+            w=preview_w, h=preview_h, work_dir=out_dir,
+            best_percent=percent, source_duration=source_duration
+        )
         if os.path.exists(path):
-            candidates.append(path)
+            candidates.append({"path": path, "percent": percent, "title": title_text})
     return candidates
 
 
@@ -913,8 +929,8 @@ def process_single_chunk(args):
             chunk_video_path
         ]
         run_ffmpeg(sync_cmd, label=f"chunk_{idx}_sync")
-        actual_dur = get_media_duration(chunk_video_path)
-        return (idx, chunk_video_path, actual_dur)
+        # FFmpeg already limits output to audio_dur; avoid one ffprobe subprocess per chunk.
+        return (idx, chunk_video_path, audio_dur)
     except Exception as e:
         logging.error(f"process_single_chunk idx={idx} failed: {e}")
         if os.path.exists(chunk_video_path): os.remove(chunk_video_path)
@@ -1061,7 +1077,8 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
                 continue
 
         if not success: raise Exception(f"Gemini API မအောင်မြင်ပါ။ Rate Limit ပြည့်နေနိုင်ပါသည်။")
-        if len(speech_indices) > batch_size: time.sleep(0.6)
+        if len(speech_indices) > batch_size and GEMINI_BATCH_DELAY:
+            await asyncio.sleep(GEMINI_BATCH_DELAY)
 
     if progress_cb:
         await progress_cb("🎙️ အဆင့် ၄/၇ — မြန်မာအသံဖိုင်များကို ထုတ်လုပ်နေပါသည်...")
