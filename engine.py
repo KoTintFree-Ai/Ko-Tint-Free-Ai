@@ -180,6 +180,32 @@ VOICE_MODES = {
     "v24": {"name": "📻 Thiha (Radio Style)",      "voice": "my-MM-ThihaNeural",                 "gender": "male",   "rate": "+20%", "pitch": "-1Hz"},
 }
 
+VOICE_PREVIEW_TEXT = "မင်္ဂလာပါ။ ဒီအသံနဲ့ စိတ်လှုပ်ရှားဖွယ် အဖြစ်အပျက်တွေကို သဘာဝကျကျ ပြောပြပေးမယ်နော်။"
+
+async def generate_voice_preview(voice_config, output_path, text=VOICE_PREVIEW_TEXT):
+    """Create one small reusable MP3 sample for a chosen Edge TTS voice."""
+    output_path = os.path.abspath(output_path)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    if os.path.exists(output_path) and os.path.getsize(output_path) > 500:
+        return output_path
+
+    temporary_path = f"{output_path}.part"
+    try:
+        comm = edge_tts.Communicate(
+            text=str(text).strip(),
+            voice=voice_config["voice"],
+            rate=voice_config.get("rate", "+0%"),
+            pitch=voice_config.get("pitch", "+0Hz"),
+        )
+        await comm.save(temporary_path)
+        if not os.path.exists(temporary_path) or os.path.getsize(temporary_path) <= 500:
+            raise RuntimeError("Voice preview audio could not be generated.")
+        os.replace(temporary_path, output_path)
+        return output_path
+    finally:
+        if os.path.exists(temporary_path):
+            os.remove(temporary_path)
+
 SPEED_RATES = {"1.0x": "+0%", "1.1x": "+15%", "1.2x": "+28%", "1.3x": "+40%", "1.4x": "+55%"}
 SPEED_MULTIPLIERS = {"1.0x": 1.0, "1.1x": 1.1, "1.2x": 1.2, "1.3x": 1.3, "1.4x": 1.4}
 
