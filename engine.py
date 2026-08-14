@@ -73,6 +73,7 @@ user_sub_color = {}
 user_title_mode = {}
 user_title_size = {}
 user_title_width = {}
+user_title_lines = {}
 user_blur_mode = {}
 user_blur_y = {}         
 user_blur_strength = {}
@@ -277,6 +278,28 @@ def wrap_burmese_text(text, fm, max_w):
         if current_line: lines.append(current_line)
     return '\n'.join(lines)
 
+def fit_title_to_line_limit(text, font_family, font_size, max_width, max_lines):
+    """Shrink a title font until the complete text fits the requested line count."""
+    clean_text = str(text or "").replace("$$", " ").replace("\n", " ").strip()
+    max_lines = max(1, min(int(max_lines or 2), 2))
+    max_width = max(120, int(max_width))
+    start_size = max(10, int(font_size))
+
+    for size in range(start_size, 9, -1):
+        font = QFont(font_family, size)
+        font.setBold(True)
+        metrics = QFontMetrics(font)
+        lines = [line for line in wrap_burmese_text(clean_text, metrics, max_width).split("\n") if line]
+        if lines and len(lines) <= max_lines:
+            return font, metrics, lines
+
+    font = QFont(font_family, 10)
+    font.setBold(True)
+    metrics = QFontMetrics(font)
+    lines = [line for line in wrap_burmese_text(clean_text, metrics, max_width).split("\n") if line]
+    return font, metrics, lines[:max_lines] or [clean_text]
+
+
 def split_burmese_text_chronologically(text, start_t, end_t, max_chars=45):
     words = text.split()
     if len(words) < 3 and len(text) > max_chars:
@@ -310,7 +333,7 @@ def split_burmese_text_chronologically(text, start_t, end_t, max_chars=45):
 
 def create_text_image_full(text, font_size, text_color, outline_color, outline_width,
                             use_box, box_color, box_alpha, box_border,
-                            width=1080, height=1920, align="bottom", margin_v=280, font_family="Arial", is_title=False, max_width_percent=100):
+                            width=1080, height=1920, align="bottom", margin_v=280, font_family="Arial", is_title=False, max_width_percent=100, max_lines=None):
     width = int(width)
     height = int(height)
     margin_v = int(margin_v)
@@ -329,8 +352,12 @@ def create_text_image_full(text, font_size, text_color, outline_color, outline_w
 
         text = text.replace("$$", "\n")
         usable_width = max(120, min(width - 60, int(width * max(0.25, min(float(max_width_percent), 100.0)) / 100.0)))
-        text = wrap_burmese_text(text, fm, usable_width)
-        lines = text.split('\n')
+        if is_title and max_lines:
+            font, fm, lines = fit_title_to_line_limit(text, font_family, font_size, usable_width, max_lines)
+            painter.setFont(font)
+        else:
+            text = wrap_burmese_text(text, fm, usable_width)
+            lines = text.split('\n')
 
         max_line_w = int(max(fm.horizontalAdvance(line) for line in lines))
         line_h = int(fm.height() * 0.95)
@@ -543,7 +570,7 @@ def render_calibration_preview(frame_path, out_path, blur_y, sub_y, blur_on, sub
 # =====================================================================
 # 🖼️ TB THUMBNAIL GENERATOR (MODERN PREMIUM CARD STYLE)
 # =====================================================================
-def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920, work_dir=None, best_percent=0.5, source_duration=None, blur_background=False):
+def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920, work_dir=None, best_percent=0.5, source_duration=None, blur_background=False, max_title_lines=2):
     """Creates a FULL-SCREEN thumbnail with no borders or inset cards."""
     work_dir = ensure_work_dir(work_dir)
     bg_path = os.path.join(work_dir, f"tb_bg_{int(time.time() * 1000)}.jpg")
@@ -580,42 +607,37 @@ def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920,
     title_box_y = h - 600
     title_box_h = 500
     
-    # Scale font size based on video width
-    _font_size = int(65.0 * w / 1080.0) # Larger font for impact
-    _font_size = max(32, min(_font_size, 110))
-    
-    # Auto-fit text
-    while _font_size > 28:
-        _test_font = QFont(font_fam, _font_size, QFont.Black)
-        _test_metrics = QFontMetrics(_test_font)
-        _max_w = w - 120
-        _lines = []
-        _words = title_text.strip().split()
-        _cur = ""
-        for _wd in _words:
-            _t = (_cur + " " + _wd).strip()
-            if _test_metrics.horizontalAdvance(_t) > _max_w and _cur:
-                _lines.append(_cur)
-                _cur = _wd
-            else: _cur = _t
-        if _cur: _lines.append(_cur)
-        if (len(_lines) * _test_metrics.height() * 1.1) <= title_box_h: break
-        _font_size -= 2
-    
-    painter.setFont(QFont(font_fam, _font_size, QFont.Black))
-    
-    # Thick Black Shadow for maximum readability
+    # Fit the title into the selected one-line/two-line limit by shrinking the font if needed.
+    _base_font_size = max(32, min(int(65.0 * w / 1080.0), 110))
+    _max_w = w - 120
+    _title_font, _title_metrics, _lines = fit_title_to_line_limit(
+        title_text, font_fam, _base_font_size, _max_w, max_title_lines
+    )
+    painter.setFont(_title_font)
+    _line_h = max(1, int(_title_metrics.height() * 1.10))
+    _total_h = len(_lines) * _line_h
+    _first_line_y = title_box_y + max(0, int((title_box_h - _total_h) / 2))
+
+    # Thick Black Shadow for maximum readability.
     offsets = [(-4,-4), (-4,4), (4,-4), (4,4), (-6,0), (6,0), (0,-6), (0,6), (8,8)]
     for ox, oy in offsets:
         painter.setPen(QColor(0, 0, 0, 255))
-        painter.drawText(60 + ox, title_box_y + oy, w - 120, title_box_h, Qt.AlignCenter | Qt.TextWordWrap, title_text.strip())
+        for _line_index, _line in enumerate(_lines):
+            painter.drawText(
+                60 + ox, _first_line_y + (_line_index * _line_h) + oy,
+                _max_w, _line_h, Qt.AlignCenter, _line
+            )
 
-    # Main Text Gradient
+    # Main text gradient.
     text_grad = QLinearGradient(0, title_box_y, 0, title_box_y + title_box_h)
     text_grad.setColorAt(0.0, QColor("#FFFFFF"))
-    text_grad.setColorAt(1.0, QColor("#FFD600")) # Vibrant Yellow
+    text_grad.setColorAt(1.0, QColor("#FFD600"))
     painter.setPen(QPen(QBrush(text_grad), 0))
-    painter.drawText(60, title_box_y, w - 120, title_box_h, Qt.AlignCenter | Qt.TextWordWrap, title_text.strip())
+    for _line_index, _line in enumerate(_lines):
+        painter.drawText(
+            60, _first_line_y + (_line_index * _line_h),
+            _max_w, _line_h, Qt.AlignCenter, _line
+        )
 
     painter.end()
     img.save(out_path, "JPEG", 95)
@@ -1186,11 +1208,12 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
         title_path = os.path.join(job_dir, f"title_{user_id}.png")
         title_size = max(18, min(int(user_title_size.get(user_id, 30)), 64))
         title_width = max(25, min(float(user_title_width.get(user_id, 85)), 100.0))
+        title_lines = max(1, min(int(user_title_lines.get(user_id, 2)), 2))
         title_img = create_text_image_full(
             text=story_title.strip(), font_size=title_size, text_color="#00E5FF", outline_color="black", outline_width=max(2, int(title_size * 0.12)),
             use_box=False, box_color="black", box_alpha="0.0", box_border=0,
             width=dim_w, height=dim_h, align="top", margin_v=dim_h * 0.08, font_family=selected_font_fam, is_title=True,
-            max_width_percent=title_width
+            max_width_percent=title_width, max_lines=title_lines
         )
         title_img.save(title_path, "PNG")
 
@@ -1316,7 +1339,8 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
         create_thumbnail(
             input_video, thumbnail_title, auto_thumbnail_path, selected_font_fam,
             w=dim_w, h=dim_h, work_dir=work_dir, best_percent=best_percent,
-            source_duration=total_video_duration, blur_background=True
+            source_duration=total_video_duration, blur_background=True,
+            max_title_lines=max(1, min(int(user_title_lines.get(user_id, 2)), 2))
         )
         prepend_thumbnail_to_video(output_video_path, auto_thumbnail_path, output_video_path, work_dir=work_dir)
 
