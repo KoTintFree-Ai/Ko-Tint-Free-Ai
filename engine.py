@@ -13,6 +13,7 @@ import subprocess
 import sys
 import base64
 import glob
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 import itertools
 from contextlib import contextmanager
@@ -39,21 +40,72 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=lo
 # Conservative defaults for two concurrent Streamlit users. Operators can raise
 # these with environment variables when more CPU/RAM is available.
 FFMPEG_THREADS = max(1, int(os.getenv("RECAP_FFMPEG_THREADS", "1")))
+FFMPEG_TIMEOUT = max(60, int(os.getenv("RECAP_FFMPEG_TIMEOUT", "900")))
+TTS_REQUEST_TIMEOUT = max(15, int(os.getenv("RECAP_TTS_REQUEST_TIMEOUT", "90")))
 CHUNK_WORKERS = max(1, min(int(os.getenv("RECAP_CHUNK_WORKERS", "1")), 4))
 # Edge TTS is mainly network-bound; four concurrent requests reduce wait time while remaining conservative for Cloud.
 TTS_WORKERS = max(1, min(int(os.getenv("RECAP_TTS_WORKERS", "4")), 5))
 # Kept small by default; rate-limit handling below applies longer waits only when needed.
 GEMINI_BATCH_DELAY = max(0.0, float(os.getenv("RECAP_GEMINI_BATCH_DELAY", "0.15")))
-MAX_WEB_JOBS = max(1, int(os.getenv("RECAP_MAX_CONCURRENT_JOBS", "1")))
+# Two users may translate and synthesize speech concurrently. Heavy FFmpeg work stays protected below.
+MAX_WEB_JOBS = max(1, int(os.getenv("RECAP_MAX_CONCURRENT_JOBS", "2")))
+# A finite wait prevents a later recap from appearing to queue forever behind a failed or stalled job.
+WEB_JOB_QUEUE_TIMEOUT = max(30, int(os.getenv("RECAP_JOB_QUEUE_TIMEOUT", "300")))
+# FFmpeg rendering is the main RAM/CPU peak on Streamlit Cloud, so one render runs at a time by default.
+MAX_FFMPEG_JOBS = max(1, int(os.getenv("RECAP_MAX_CONCURRENT_FFMPEG", "1")))
 _WEB_JOB_SEMAPHORE = threading.BoundedSemaphore(MAX_WEB_JOBS)
+_FFMPEG_SEMAPHORE = threading.BoundedSemaphore(MAX_FFMPEG_JOBS)
+_WEB_JOB_STATE_LOCK = threading.Lock()
+_ACTIVE_WEB_JOBS = {}
+
 
 @contextmanager
-def web_job_slot():
-    """Bound Streamlit jobs so concurrent users queue instead of exhausting RAM."""
-    _WEB_JOB_SEMAPHORE.acquire()
+def ffmpeg_slot():
+    """Serialize memory-heavy FFmpeg calls while allowing API/TTS stages for two users to overlap."""
+    _FFMPEG_SEMAPHORE.acquire()
     try:
         yield
     finally:
+        _FFMPEG_SEMAPHORE.release()
+
+
+def get_web_job_status():
+    """Return lightweight diagnostic information for the currently running Cloud jobs."""
+    with _WEB_JOB_STATE_LOCK:
+        now = time.monotonic()
+        return [
+            {"job_id": job_id, "elapsed_seconds": round(now - started_at, 1)}
+            for job_id, started_at in _ACTIVE_WEB_JOBS.items()
+        ]
+
+
+@contextmanager
+def web_job_slot(on_wait=None, queue_timeout=None):
+    """Bound Cloud jobs, show waiting only when necessary, and fail cleanly after a finite wait."""
+    timeout = WEB_JOB_QUEUE_TIMEOUT if queue_timeout is None else max(1, int(queue_timeout))
+    acquired = _WEB_JOB_SEMAPHORE.acquire(blocking=False)
+    waited = False
+    if not acquired:
+        waited = True
+        if callable(on_wait):
+            on_wait()
+        acquired = _WEB_JOB_SEMAPHORE.acquire(timeout=timeout)
+
+    if not acquired:
+        active = get_web_job_status()
+        elapsed = int(active[0]["elapsed_seconds"]) if active else 0
+        raise TimeoutError(
+            f"Queue wait timed out after {timeout} seconds; active job elapsed {elapsed} seconds."
+        )
+
+    job_id = uuid.uuid4().hex
+    with _WEB_JOB_STATE_LOCK:
+        _ACTIVE_WEB_JOBS[job_id] = time.monotonic()
+    try:
+        yield {"waited": waited, "job_id": job_id}
+    finally:
+        with _WEB_JOB_STATE_LOCK:
+            _ACTIVE_WEB_JOBS.pop(job_id, None)
         _WEB_JOB_SEMAPHORE.release()
 
 API_ID = int(os.getenv("TELEGRAM_API_ID", "0"))
@@ -483,12 +535,19 @@ def run_ffmpeg(cmd, label="ffmpeg"):
     if cmd and os.path.basename(str(cmd[0])) == "ffmpeg" and "-threads" not in cmd:
         insert_at = 2 if len(cmd) > 1 and cmd[1] == "-y" else 1
         cmd[insert_at:insert_at] = ["-threads", str(FFMPEG_THREADS)]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if result.returncode != 0:
-        tail = (result.stderr or "").strip()
-        tail = tail[-800:] if len(tail) > 800 else tail
-        raise RuntimeError(f"FFmpeg Error [{label}] (exit {result.returncode}):\n{tail}")
-    return result
+    with ffmpeg_slot():
+        try:
+            result = subprocess.run(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                timeout=FFMPEG_TIMEOUT
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"FFmpeg timed out after {FFMPEG_TIMEOUT} seconds [{label}].") from exc
+        if result.returncode != 0:
+            tail = (result.stderr or "").strip()
+            tail = tail[-800:] if len(tail) > 800 else tail
+            raise RuntimeError(f"FFmpeg Error [{label}] (exit {result.returncode}):\n{tail}")
+        return result
 
 def extract_audio_ffmpeg(video_path, audio_path):
     cmd = ['ffmpeg', '-y', '-i', video_path, '-vn', '-acodec', 'libmp3lame', '-q:a', '2', audio_path]
@@ -532,13 +591,15 @@ def extract_preview_frame(video_path, out_path, dim_w, dim_h, percent=0.3, sourc
     except Exception:
         dur = 3.0
     ts = min(max(dur * percent, 0.3), max(dur - 0.3, 0.3))
-    frame_filter = f"scale={dim_w}:{dim_h}:force_original_aspect_ratio=decrease,pad={dim_w}:{dim_h}:-1:-1:color=black"
+    # Use a sharp high-quality resize. Text contrast is handled later with a bottom gradient,
+    # so the subject frame must not be blurred for the automatic thumbnail.
+    frame_filter = f"scale={dim_w}:{dim_h}:force_original_aspect_ratio=decrease:flags=lanczos,pad={dim_w}:{dim_h}:-1:-1:color=black"
     if blur_background:
-        # A light cinematic blur keeps the automatic cover distinct from the opening video frame.
-        frame_filter += ",boxblur=12:2"
+        # Retained only for optional manual uses; automatic thumbnails deliberately keep the frame sharp.
+        frame_filter += ",boxblur=3:1"
     cmd = [
         'ffmpeg', '-y', '-ss', f"{ts:.2f}", '-i', video_path, '-frames:v', '1',
-        '-vf', frame_filter,
+        '-vf', frame_filter, '-q:v', '2',
         out_path
     ]
     run_ffmpeg(cmd, label="preview_frame")
@@ -640,7 +701,7 @@ def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920,
         )
 
     painter.end()
-    img.save(out_path, "JPEG", 95)
+    img.save(out_path, "JPEG", 100)
     if os.path.exists(bg_path): os.remove(bg_path)
 
 def prepend_thumbnail_to_video(video_path, thumbnail_path, output_path, work_dir=None):
@@ -1139,7 +1200,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
             for attempt in range(max_tts_retries):
                 try:
                     comm = edge_tts.Communicate(text=clean_text, voice=voice_config["voice"], rate=selected_rate, pitch=voice_config["pitch"])
-                    await comm.save(path)
+                    await asyncio.wait_for(comm.save(path), timeout=TTS_REQUEST_TIMEOUT)
                     if os.path.exists(path) and os.path.getsize(path) > 500:
                         rendered = True
                         break
@@ -1288,7 +1349,12 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
         ] + extra_flags + [watermarked_temp], label="blur_subtitle_watermark"
     )
 
-    speed_multiplier = SPEED_MULTIPLIERS.get(user_speed_val, 1.0)
+    # Accept either a UI label such as "1.2x" or a numeric multiplier from older app versions.
+    try:
+        speed_multiplier = float(SPEED_MULTIPLIERS.get(user_speed_val, user_speed_val))
+    except (TypeError, ValueError):
+        speed_multiplier = 1.0
+    speed_multiplier = max(0.75, min(speed_multiplier, 1.75))
     if abs(speed_multiplier - 1.0) > 0.001:
         video_pts_factor = 1.0 / speed_multiplier
         speed_cmd = [
@@ -1339,7 +1405,7 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
         create_thumbnail(
             input_video, thumbnail_title, auto_thumbnail_path, selected_font_fam,
             w=dim_w, h=dim_h, work_dir=work_dir, best_percent=best_percent,
-            source_duration=total_video_duration, blur_background=True,
+            source_duration=total_video_duration, blur_background=False,
             max_title_lines=max(1, min(int(user_title_lines.get(user_id, 2)), 2))
         )
         prepend_thumbnail_to_video(output_video_path, auto_thumbnail_path, output_video_path, work_dir=work_dir)
