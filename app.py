@@ -393,6 +393,7 @@ _REMEMBERED_DEFAULTS = {
     "sub_color": "yellow",
     "blur_enabled": False,
     "title_enabled": True,
+    "title_lines": 2,
     "bypass_enabled": False,
     "font_choice": "Default",
     "wm_text": "Recap",
@@ -410,7 +411,7 @@ for _pref_key, _pref_value in _REMEMBERED_DEFAULTS.items():
 # Browser localStorage-based persistence (fully per-user isolated)
 PREFERENCE_KEYS = tuple(_REMEMBERED_DEFAULTS.keys()) + (
     "ui_lang", "theme", "sub_y_percent", "sub_font_size", "blur_y_percent",
-    "blur_strength", "blur_height", "blur_width", "title_size", "title_width",
+    "blur_strength", "blur_height", "blur_width", "title_size", "title_width", "title_lines",
 )
 
 QUERY_PARAMS_KEYS = ("ui_lang", "theme", "platform_label", "resolution_label", "voice_key", "speed_label")
@@ -767,6 +768,16 @@ with st.sidebar:
         title_enabled = st.toggle(T["title"], key="title_enabled", on_change=_on_pref_change, help=T["tip_title"])
         title_size = _nudge_slider(T["title_size"], "title_size", 24, 64, 30)
         title_width = _nudge_slider(T["title_width"], "title_width", 45, 100, 90)
+        if st.session_state.get("title_lines") not in (1, 2):
+            st.session_state.title_lines = 2
+        title_lines = st.selectbox(
+            "🏷️ Title စာကြောင်းအရေအတွက်",
+            [1, 2],
+            format_func=lambda count: f"{count} ကြောင်း",
+            key="title_lines",
+            on_change=_on_pref_change,
+            help="၁ ကြောင်းရွေးလျှင် စာလုံးကို အလိုအလျောက်လျှော့ပြီး ၁ ကြောင်းအတွင်း ဆန့်ပေးမည်။ ၂ ကြောင်းရွေးလျှင် ၂ ကြောင်းအတွင်း ဆန့်ပေးမည်။"
+        )
         thumbnail_enabled = st.toggle(
             "🖼️ Automatic Blur Thumbnail ကို Video အစမှာ ထည့်မည်",
             value=st.session_state.get("thumbnail_enabled", True),
@@ -1003,6 +1014,7 @@ async def _run_pipeline(input_video: str, audio_path: str, output_path: str, sta
     engine.user_title_mode[USER_ID] = title_enabled
     engine.user_title_size[USER_ID] = title_size
     engine.user_title_width[USER_ID] = title_width
+    engine.user_title_lines[USER_ID] = title_lines
     engine.user_bypass_mode[USER_ID] = bypass_enabled
     engine.user_sub_color[USER_ID] = sub_color
     engine.user_wm_text[USER_ID] = wm_text or "Recap"
