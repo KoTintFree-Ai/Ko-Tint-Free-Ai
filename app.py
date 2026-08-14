@@ -19,6 +19,11 @@ except Exception:
 import engine
 import threading
 
+# Compatibility fallback: let an updated app run safely while Streamlit Cloud
+# is still restarting an older engine.py module.
+if not hasattr(engine, "user_title_lines"):
+    engine.user_title_lines = {}
+
 # Browser localStorage-based per-user storage
 # Each browser gets its own isolated storage via localStorage (no server-side sharing)
 # Uses st-local-storage component to bridge browser localStorage with Streamlit session_state
