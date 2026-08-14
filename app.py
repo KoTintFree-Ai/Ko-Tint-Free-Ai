@@ -723,11 +723,26 @@ with st.sidebar:
         def _voice_number_label(key):
             number = voice_keys.index(key) + 1
             raw_name = str(engine.VOICE_MODES[key].get("name", ""))
-            suffix = raw_name[raw_name.find("("):].strip() if "(" in raw_name else ""
-            return f"{number} {suffix}".strip()
-            
+            clean_name = raw_name.replace("🎙️", "").strip()
+            return f"{number}. {clean_name}"
+
         voice_key = st.selectbox(T["voice"], voice_keys, index=voice_keys.index(st.session_state.voice_key) if st.session_state.voice_key in voice_keys else 0, format_func=_voice_number_label, key="voice_key", on_change=_on_pref_change, help=T["tip_voice"])
-        
+
+        _preview_dir = SESSION_ROOT / "voice_previews"
+        _preview_path = _preview_dir / f"{voice_key}.mp3"
+        _voice_number = voice_keys.index(voice_key) + 1
+        if st.button(f"🔊 အသံနမူနာ နားထောင်ရန် (Voice {_voice_number})", key=f"voice_preview_{voice_key}", use_container_width=True):
+            try:
+                with st.spinner("အသံနမူနာ ထုတ်နေပါသည်..."):
+                    asyncio.run(engine.generate_voice_preview(engine.VOICE_MODES[voice_key], str(_preview_path)))
+                st.session_state.voice_preview_path = str(_preview_path)
+            except Exception as preview_error:
+                st.error(f"အသံနမူနာ ထုတ်မရပါ: {preview_error}")
+
+        if _preview_path.exists():
+            st.caption(f"🎧 Voice {_voice_number} နမူနာ")
+            st.audio(str(_preview_path), format="audio/mp3")
+
         speed_options = list(engine.SPEED_MULTIPLIERS)
         if st.session_state.get("speed_label") not in speed_options:
             st.session_state.speed_label = speed_options[0]
