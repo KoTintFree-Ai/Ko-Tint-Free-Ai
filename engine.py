@@ -468,22 +468,24 @@ def get_video_dimensions(platform, res):
     elif platform == "fb": return (720, 720) if res == "720" else (1080, 1080)
     return (1280, 720) if res == "720" else (1920, 1080)
 
-def extract_preview_frame(video_path, out_path, dim_w, dim_h, percent=0.3, source_duration=None):
+def extract_preview_frame(video_path, out_path, dim_w, dim_h, percent=0.3, source_duration=None, blur_background=False):
     dim_w = int(dim_w)
     dim_w = dim_w if dim_w % 2 == 0 else dim_w + 1
     dim_h = int(dim_h)
     dim_h = dim_h if dim_h % 2 == 0 else dim_h + 1
 
-    # Candidate thumbnails share one source video; callers can provide its known duration
-    # to avoid launching an ffprobe subprocess for every preview frame.
     try:
         dur = float(source_duration) if source_duration is not None else get_media_duration(video_path)
     except Exception:
         dur = 3.0
     ts = min(max(dur * percent, 0.3), max(dur - 0.3, 0.3))
+    frame_filter = f"scale={dim_w}:{dim_h}:force_original_aspect_ratio=decrease,pad={dim_w}:{dim_h}:-1:-1:color=black"
+    if blur_background:
+        # A light cinematic blur keeps the automatic cover distinct from the opening video frame.
+        frame_filter += ",boxblur=12:2"
     cmd = [
         'ffmpeg', '-y', '-ss', f"{ts:.2f}", '-i', video_path, '-frames:v', '1',
-        '-vf', f"scale={dim_w}:{dim_h}:force_original_aspect_ratio=decrease,pad={dim_w}:{dim_h}:-1:-1:color=black",
+        '-vf', frame_filter,
         out_path
     ]
     run_ffmpeg(cmd, label="preview_frame")
@@ -515,13 +517,16 @@ def render_calibration_preview(frame_path, out_path, blur_y, sub_y, blur_on, sub
 # =====================================================================
 # 🖼️ TB THUMBNAIL GENERATOR (MODERN PREMIUM CARD STYLE)
 # =====================================================================
-def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920, work_dir=None, best_percent=0.5, source_duration=None):
+def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920, work_dir=None, best_percent=0.5, source_duration=None, blur_background=False):
     """Creates a FULL-SCREEN thumbnail with no borders or inset cards."""
     work_dir = ensure_work_dir(work_dir)
     bg_path = os.path.join(work_dir, f"tb_bg_{int(time.time() * 1000)}.jpg")
 
-    # Extract the best frame as the FULL BACKGROUND.
-    extract_preview_frame(video_path, bg_path, w, h, percent=best_percent, source_duration=source_duration)
+    # Extract the selected frame as the full background.
+    extract_preview_frame(
+        video_path, bg_path, w, h, percent=best_percent,
+        source_duration=source_duration, blur_background=blur_background
+    )
 
     img = QImage(w, h, QImage.Format_ARGB32)
     painter = QPainter(img)
@@ -590,30 +595,8 @@ def create_thumbnail(video_path, title_text, out_path, font_fam, w=1080, h=1920,
     img.save(out_path, "JPEG", 95)
     if os.path.exists(bg_path): os.remove(bg_path)
 
-def create_thumbnail_candidates(video_path, title_text, out_dir, font_fam, w=1080, h=1920):
-    """Create lightweight thumbnail previews; full-size output is created only after user selection."""
-    out_dir = ensure_work_dir(out_dir)
-    candidates = []
-    stamp = int(time.time() * 1000)
-    source_duration = get_media_duration(video_path)
-
-    # Small previews reduce five expensive full-resolution FFmpeg/PyQt render operations.
-    preview_w = 270 if w >= h else 480
-    preview_h = 480 if h >= w else 270
-    for index, percent in enumerate([0.10, 0.30, 0.50, 0.70, 0.90], start=1):
-        path = os.path.join(out_dir, f"thumbnail_candidate_{stamp}_{index}.jpg")
-        create_thumbnail(
-            video_path, title_text, path, font_fam=font_fam,
-            w=preview_w, h=preview_h, work_dir=out_dir,
-            best_percent=percent, source_duration=source_duration
-        )
-        if os.path.exists(path):
-            candidates.append({"path": path, "percent": percent, "title": title_text})
-    return candidates
-
-
 def prepend_thumbnail_to_video(video_path, thumbnail_path, output_path, work_dir=None):
-    """Prepend the user's selected thumbnail as a one-second intro clip."""
+    """Prepend a generated thumbnail as a one-second intro clip."""
     work_dir = ensure_work_dir(work_dir)
     stamp = int(time.time() * 1000)
     intro_video = os.path.join(work_dir, f"selected_tb_{stamp}.mp4")
@@ -1271,15 +1254,9 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
         if os.path.exists(watermarked_temp): os.remove(watermarked_temp)
     else: os.replace(watermarked_temp, output_video_path)
 
-    # Thumbnail toggle: generate candidates for the UI, but do not embed one yet.
-    thumbnail_candidates = []
-    if thumbnail_enabled:
-        if progress_cb:
-            await progress_cb("🎵 အဆင့် ၇/၇ — Thumbnail ပုံရွေးချယ်စရာများ ဖန်တီးနေပါသည်...")
-        thumbnail_candidates = create_thumbnail_candidates(
-            input_video, thumbnail_title, work_dir, selected_font_fam, w=dim_w, h=dim_h
-        )
-    elif progress_cb:
+    # The automatic thumbnail is created after BGM mixing so it is prepended only once to the final video.
+    auto_thumbnail_path = None
+    if not thumbnail_enabled and progress_cb:
         await progress_cb("🎵 အဆင့် ၇/၇ — background music ထည့်ပြီး အပြီးသတ်နေပါသည်...")
 
     # 📌 Optional Background Music Mixing (BGM)
@@ -1302,15 +1279,29 @@ async def advanced_sync_pipeline(audio_path, gemini_keys_str, groq_key, input_vi
                 os.replace(bgm_mixed, output_video_path)
         except Exception as e:
             logging.error(f"BGM Mixing failed: {e}")
-    
-    for f in list(audio_files_map.values()) + ffmpeg_inputs + [merge_temp]:
-        if os.path.exists(f): os.remove(f)
+
+    if thumbnail_enabled:
+        if progress_cb:
+            await progress_cb("🖼️ အဆင့် ၇/၇ — Gemini ရွေးပေးသော Blur Thumbnail ကို Video အစမှာ ထည့်နေပါသည်...")
+        best_percent = await select_best_thumbnail_frame(
+            input_video, gemini_pool, work_dir, w=dim_w, h=dim_h
+        )
+        auto_thumbnail_path = os.path.join(work_dir, f"auto_thumbnail_{int(time.time() * 1000)}.jpg")
+        create_thumbnail(
+            input_video, thumbnail_title, auto_thumbnail_path, selected_font_fam,
+            w=dim_w, h=dim_h, work_dir=work_dir, best_percent=best_percent,
+            source_duration=total_video_duration, blur_background=True
+        )
+        prepend_thumbnail_to_video(output_video_path, auto_thumbnail_path, output_video_path, work_dir=work_dir)
+
+    for f in list(audio_files_map.values()) + ffmpeg_inputs + [merge_temp, auto_thumbnail_path]:
+        if f and os.path.exists(f): os.remove(f)
     if os.path.exists(concat_list_path): os.remove(concat_list_path)
     if os.path.isdir(job_dir):
         import shutil
         shutil.rmtree(job_dir, ignore_errors=True)
 
-    return story_title, story_caption, story_hashtags, thumbnail_candidates
+    return story_title, story_caption, story_hashtags
 
 # =====================================================================
 # TELEGRAM BOT ARCHITECTURE (WITH MEMORY SESSION)
