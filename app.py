@@ -753,11 +753,11 @@ with st.sidebar:
         title_size = _nudge_slider(T["title_size"], "title_size", 24, 64, 30)
         title_width = _nudge_slider(T["title_width"], "title_width", 45, 100, 90)
         thumbnail_enabled = st.toggle(
-            "🖼️ Thumbnail ရွေးချယ်ခွင့် ဖွင့်မည်",
+            "🖼️ Automatic Blur Thumbnail ကို Video အစမှာ ထည့်မည်",
             value=st.session_state.get("thumbnail_enabled", True),
             key="thumbnail_enabled",
             on_change=_on_pref_change,
-            help="ဖွင့်ထားလျှင် Gemini Title ပါသော Thumbnail ပုံ ၅ ပုံကို ပြပြီး ကိုယ်တိုင်ရွေးနိုင်မည်။ ပိတ်ထားလျှင် Thumbnail မပြပါ။"
+            help="ဖွင့်ထားလျှင် Gemini က ရွေးပေးသော Frame ကို Blur အုပ်ပြီး Title ထည့်ကာ Video အစမှာ အလိုအလျောက် ထည့်ပေးမည်။"
         )
         
         st.divider()
@@ -1070,18 +1070,7 @@ if start:
             st.session_state.generated_caption = f"📌 {pipeline_result[1]}\n\n{pipeline_result[0]}"
             st.session_state.generated_hashtags = pipeline_result[2] or ""
             st.session_state.thumbnail_candidates = []
-            if len(pipeline_result) >= 4 and isinstance(pipeline_result[3], (tuple, list)):
-                for index, candidate in enumerate(pipeline_result[3], start=1):
-                    candidate_path = candidate.get("path") if isinstance(candidate, dict) else candidate
-                    if candidate_path and os.path.exists(candidate_path):
-                        saved_candidate = SESSION_ROOT / f"thumbnail_candidate_{uuid.uuid4().hex}_{index}.jpg"
-                        shutil.copyfile(candidate_path, saved_candidate)
-                        st.session_state.thumbnail_candidates.append({
-                            "path": str(saved_candidate),
-                            "percent": float(candidate.get("percent", 0.5)) if isinstance(candidate, dict) else 0.5,
-                            "title": str(candidate.get("title", "")) if isinstance(candidate, dict) else "",
-                        })
-            st.session_state.thumbnail_embedded = False
+            st.session_state.thumbnail_embedded = bool(thumbnail_enabled)
             st.session_state.thumbnail_choice = 0
         else:
             st.session_state.generated_caption = ""
@@ -1105,61 +1094,9 @@ if st.session_state.result_path and os.path.exists(st.session_state.result_path)
     st.divider()
     st.subheader(T["ready"])
 
-    # Show Gemini-generated candidates and let the user choose the one to embed.
-    _thumbnail_candidates = []
-    for candidate in st.session_state.get("thumbnail_candidates", []):
-        if isinstance(candidate, dict) and os.path.exists(candidate.get("path", "")):
-            _thumbnail_candidates.append(candidate)
-        elif isinstance(candidate, str) and os.path.exists(candidate):
-            # Compatibility with previews created by earlier versions.
-            _thumbnail_candidates.append({"path": candidate, "percent": 0.5, "title": ""})
+    if st.session_state.get("thumbnail_embedded", False):
+        st.success("✅ Gemini ရွေးပေးသော Blur Thumbnail ကို Video အစမှာ အလိုအလျောက် ထည့်ပြီးပါပြီ။")
 
-    if _thumbnail_candidates and not st.session_state.get("thumbnail_embedded", False):
-        st.subheader("🖼️ Gemini ထုတ်ပေးသော Thumbnail ကို ရွေးချယ်ပါ")
-        _labels = [f"ပုံ {index}" for index in range(1, len(_thumbnail_candidates) + 1)]
-        _selected_label = st.radio(
-            "ထည့်မည့်ပုံကို ရွေးပါ",
-            _labels,
-            horizontal=True,
-            index=min(int(st.session_state.get("thumbnail_choice", 0)), len(_labels) - 1),
-            key="thumbnail_choice_label"
-        )
-        _selected_index = _labels.index(_selected_label)
-        _selected_candidate = _thumbnail_candidates[_selected_index]
-        st.session_state.thumbnail_choice = _selected_index
-        st.image(_selected_candidate["path"], caption=f"{_selected_label} — Gemini Title ပါပြီးသား", use_container_width=True)
-        if st.button("✅ ဒီ Thumbnail ကို Video အစမှာ ထည့်မည်", type="primary", use_container_width=True):
-            try:
-                # The selection UI uses a lightweight preview. Create the only full-resolution
-                # thumbnail here, after the user has chosen its frame.
-                _platform_code_value = _platform_code(platform_label)
-                _resolution_code_value = _resolution_code(resolution_label)
-                _thumb_w, _thumb_h = engine.get_video_dimensions(_platform_code_value, _resolution_code_value)
-                _full_thumbnail = SESSION_ROOT / f"thumbnail_selected_{uuid.uuid4().hex}.jpg"
-                _thumbnail_title = _selected_candidate.get("title") or st.session_state.get("generated_caption", "")
-                engine.create_thumbnail(
-                    st.session_state.result_path,
-                    _thumbnail_title,
-                    str(_full_thumbnail),
-                    font_fam=engine.get_user_font_family(USER_ID),
-                    w=_thumb_w,
-                    h=_thumb_h,
-                    work_dir=str(TEMP_ROOT),
-                    best_percent=float(_selected_candidate.get("percent", 0.5)),
-                )
-                engine.prepend_thumbnail_to_video(
-                    st.session_state.result_path,
-                    str(_full_thumbnail),
-                    st.session_state.result_path,
-                    work_dir=str(TEMP_ROOT)
-                )
-                st.session_state.thumbnail_embedded = True
-                st.success("✅ ရွေးထားသော Thumbnail ကို Video ထဲ ထည့်ပြီးပါပြီ။")
-                st.rerun()
-            except Exception as thumbnail_error:
-                st.error(f"Thumbnail ထည့်မရပါ: {thumbnail_error}")
-    elif _thumbnail_candidates and st.session_state.get("thumbnail_embedded", False):
-        st.success("✅ သင်ရွေးထားသော Thumbnail ကို Video အစမှာ ထည့်ပြီးပါပြီ။")
 
     st.video(st.session_state.result_path)
     generated_caption = st.session_state.get("generated_caption", "")
