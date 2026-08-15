@@ -391,7 +391,7 @@ if "theme" not in st.session_state:
 # Streamlit session_state, so these values do not leak between users.
 _REMEMBERED_DEFAULTS = {
     "platform_label": "YouTube / 16:9",
-    "resolution_label": "720p",
+    "resolution_label": "1080p",
     "voice_key": None,
     "speed_label": None,
     "subtitle_enabled": True,
@@ -717,9 +717,10 @@ with st.sidebar:
             st.session_state.platform_label = platform_options[0]
         platform_label = st.selectbox(T["platform"], platform_options, index=platform_options.index(st.session_state.platform_label) if st.session_state.platform_label in platform_options else 0, key="platform_label", on_change=_on_pref_change, help=T["tip_platform"])
         
-        resolution_options = ["720p", "1080p"]
+        # 1080p-only output policy. Any legacy 720p preference is normalized.
+        resolution_options = ["1080p"]
         if st.session_state.get("resolution_label") not in resolution_options:
-            st.session_state.resolution_label = resolution_options[0]
+            st.session_state.resolution_label = "1080p"
         resolution_label = st.selectbox(T["resolution"], resolution_options, index=resolution_options.index(st.session_state.resolution_label) if st.session_state.resolution_label in resolution_options else 0, key="resolution_label", on_change=_on_pref_change)
         
         voice_keys = list(engine.VOICE_MODES)
@@ -905,6 +906,13 @@ with col3:
         color = "🔴" if ram > 85 else "🟡" if ram > 70 else "🟢"
         st.markdown(f"**{color} RAM: {ram:.0f}%**")
         st.progress(int(ram) / 100)
+
+        # CPU usage bar
+        cpu = psutil.cpu_percent(interval=0.1)
+        cpu_color = "🔴" if cpu > 85 else "🟡" if cpu > 70 else "🟢"
+        st.markdown(f"**{cpu_color} {T['cpu']}: {cpu:.0f}%**")
+        st.progress(int(cpu) / 100)
+
         # RAM Clear button
         import gc
         gc.collect()  # Run garbage collector
@@ -924,7 +932,8 @@ def _platform_code(label: str) -> str:
 
 
 def _resolution_code(label: str) -> str:
-    return "1080" if label.startswith("1080") else "720"
+    # The application is intentionally locked to 1080p output.
+    return "1080"
 
 
 # Calibration preview: show the selected blur and subtitle positions before rendering.
@@ -985,6 +994,8 @@ def _friendly_processing_error(exc):
         return "Video rendering မအောင်မြင်ပါ။ Resolution, Blur, Title setting ကို လျှော့ပြီး ပြန်စမ်းပါ။"
     if "yt_dlp" in lowered or "download" in lowered:
         return "URL video download မအောင်မြင်ပါ။ Public YouTube URL သေချာစစ်ပြီး MP4 upload နဲ့ ပြန်စမ်းပါ။"
+    if "queue wait timed out" in lowered:
+        return "အရင် Video process တစ်ခု မပြီးသေးလို့ စောင့်ချိန်ကုန်သွားပါပြီ။ Streamlit Cloud ကို Reboot တစ်ကြိမ်လုပ်ပြီး ပြန်စမ်းပါ။"
     if "timeout" in lowered or "timed out" in lowered:
         return "Processing အချိန်ကုန်သွားပါပြီ။ Video တိုအောင် သို့မဟုတ် Resolution လျှော့ပြီး ပြန်စမ်းပါ။"
     return "Processing မအောင်မြင်ပါ။ Setting များစစ်ပြီး ပြန်စမ်းပါ။"
@@ -1034,7 +1045,7 @@ async def _run_pipeline(input_video: str, audio_path: str, output_path: str, sta
         input_video=input_video,
         output_video_path=output_path,
         voice_config=engine.VOICE_MODES[voice_key],
-        user_speed_val=engine.SPEED_MULTIPLIERS[speed_label],
+        user_speed_val=speed_label,
         user_id=USER_ID,
         progress_cb=progress,
         background_music_path=background_music_path,
@@ -1063,8 +1074,8 @@ if start:
     try:
         queued_text = "⏳ Your recap is queued because another job is running..." if st.session_state.ui_lang == "English" else "⏳ အခြား video တစ်ခု လုပ်နေသောကြောင့် သင့် recap ကို queue ထဲ ထည့်ထားပါသည်..."
         started_text = "🎬 Processing started..." if st.session_state.ui_lang == "English" else "🎬 Processing စတင်နေပါသည်..."
-        status_box.info(queued_text)
-        with engine.web_job_slot():
+        # Only show the queue notice if another recap really holds the shared Cloud worker.
+        with engine.web_job_slot(on_wait=lambda: status_box.info(queued_text)):
             status_box.info(started_text)
             if logo_file:
                 (TEMP_ROOT / f"logo_{USER_ID}.png").write_bytes(logo_file.getbuffer())
